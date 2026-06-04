@@ -33,23 +33,23 @@ const STORIES = [
 ];
 
 const PRODUCTS = [
-  { id: 1, name: "Ankara Dress", price: 180, seller: "Ama's Fashion", sellerId: 1, image: "👗", category: "Fashion", likes: 234, rating: 4.8, reviews: 45, premium: true, stock: 12 },
-  { id: 2, name: "Wireless Earbuds", price: 350, seller: "TechHub GH", sellerId: 2, image: "🎧", category: "Electronics", likes: 189, rating: 4.6, reviews: 32, premium: false, stock: 8 },
-  { id: 3, name: "Shea Butter Cream", price: 85, seller: "BeautyGlow", sellerId: 4, image: "🧴", category: "Beauty", likes: 412, rating: 4.9, reviews: 89, premium: true, stock: 25 },
-  { id: 4, name: "Smart Watch", price: 620, seller: "TechHub GH", sellerId: 2, image: "⌚", category: "Electronics", likes: 156, rating: 4.5, reviews: 28, premium: false, stock: 5 },
-  { id: 5, name: "Kente Bag", price: 220, seller: "Ama's Fashion", sellerId: 1, image: "👜", category: "Fashion", likes: 298, rating: 4.7, reviews: 61, premium: true, stock: 15 },
-  { id: 6, name: "Organic Honey", price: 120, seller: "FreshFarm", sellerId: 5, image: "🍯", category: "Food", likes: 334, rating: 4.9, reviews: 102, premium: false, stock: 30 },
-  { id: 7, name: "Football Boots", price: 280, seller: "SportZone", sellerId: 6, image: "👟", category: "Sports", likes: 145, rating: 4.4, reviews: 19, premium: false, stock: 7 },
-  { id: 8, name: "Natural Hair Oil", price: 95, seller: "BeautyGlow", sellerId: 4, image: "💆", category: "Beauty", likes: 267, rating: 4.8, reviews: 74, premium: true, stock: 20 },
+  { id: 1, name: "Ankara Dress", price: 180, seller: "Ama's Fashion", sellerId: 1, image: "https://images.unsplash.com/photo-1601924994987-69e26d50dc26?w=400&q=80", category: "Fashion", likes: 234, rating: 4.8, reviews: 45, premium: true, stock: 12 },
+  { id: 2, name: "Wireless Earbuds", price: 350, seller: "TechHub GH", sellerId: 2, image: "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=400&q=80", category: "Electronics", likes: 189, rating: 4.6, reviews: 32, premium: false, stock: 8 },
+  { id: 3, name: "Shea Butter Cream", price: 85, seller: "BeautyGlow", sellerId: 4, image: "https://images.unsplash.com/photo-1608248543803-ba4f8c70ae0b?w=400&q=80", category: "Beauty", likes: 412, rating: 4.9, reviews: 89, premium: true, stock: 25 },
+  { id: 4, name: "Smart Watch", price: 620, seller: "TechHub GH", sellerId: 2, image: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=400&q=80", category: "Electronics", likes: 156, rating: 4.5, reviews: 28, premium: false, stock: 5 },
+  { id: 5, name: "Kente Bag", price: 220, seller: "Ama's Fashion", sellerId: 1, image: "https://images.unsplash.com/photo-1548036328-c9fa89d128fa?w=400&q=80", category: "Fashion", likes: 298, rating: 4.7, reviews: 61, premium: true, stock: 15 },
+  { id: 6, name: "Organic Honey", price: 120, seller: "FreshFarm", sellerId: 5, image: "https://images.unsplash.com/photo-1587049352846-4a222e784d38?w=400&q=80", category: "Food", likes: 334, rating: 4.9, reviews: 102, premium: false, stock: 30 },
+  { id: 7, name: "Football Boots", price: 280, seller: "SportZone", sellerId: 6, image: "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400&q=80", category: "Sports", likes: 145, rating: 4.4, reviews: 19, premium: false, stock: 7 },
+  { id: 8, name: "Natural Hair Oil", price: 95, seller: "BeautyGlow", sellerId: 4, image: "https://images.unsplash.com/photo-1526413232644-8a40f03cc03b?w=400&q=80", category: "Beauty", likes: 267, rating: 4.8, reviews: 74, premium: true, stock: 20 },
 ];
 
 const SELLERS = [
-  { id: 1, name: "Ama's Fashion", owner: "Ama Mensah", avatar: "👗", category: "Fashion", followers: 1240, rating: 4.8, products: 24, premium: true, description: "Authentic African fashion and accessories.", verified: true },
-  { id: 2, name: "TechHub GH", owner: "Kwame Asante", avatar: "💻", category: "Electronics", followers: 890, rating: 4.6, products: 18, premium: false, description: "Latest gadgets and electronics at great prices.", verified: true },
-  { id: 3, name: "Kofi Eats", owner: "Kofi Boateng", avatar: "🍔", category: "Food", followers: 2100, rating: 4.9, products: 12, premium: true, description: "Authentic Ghanaian meals delivered fresh.", verified: true },
-  { id: 4, name: "BeautyGlow", owner: "Abena Osei", avatar: "💄", category: "Beauty", followers: 3400, rating: 4.9, products: 31, premium: true, description: "Natural beauty products made in Ghana.", verified: true },
-  { id: 5, name: "FreshFarm", owner: "Yaw Darko", avatar: "🥦", category: "Food", followers: 560, rating: 4.7, products: 8, premium: false, description: "Fresh organic produce from local farms.", verified: false },
-  { id: 6, name: "SportZone", owner: "Nana Adu", avatar: "⚽", category: "Sports", followers: 430, rating: 4.4, products: 15, premium: false, description: "Sports gear and equipment for all athletes.", verified: false },
+  { id: 1, name: "Ama's Fashion", owner: "Ama Mensah", avatar: "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=100&q=80", category: "Fashion", followers: 1240, rating: 4.8, products: 24, premium: true, description: "Authentic African fashion and accessories.", verified: true },
+  { id: 2, name: "TechHub GH", owner: "Kwame Asante", avatar: "https://images.unsplash.com/photo-1531297484001-80022131f5a1?w=100&q=80", category: "Electronics", followers: 890, rating: 4.6, products: 18, premium: false, description: "Latest gadgets and electronics at great prices.", verified: true },
+  { id: 3, name: "Kofi Eats", owner: "Kofi Boateng", avatar: "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=100&q=80", category: "Food", followers: 2100, rating: 4.9, products: 12, premium: true, description: "Authentic Ghanaian meals delivered fresh.", verified: true },
+  { id: 4, name: "BeautyGlow", owner: "Abena Osei", avatar: "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=100&q=80", category: "Beauty", followers: 3400, rating: 4.9, products: 31, premium: true, description: "Natural beauty products made in Ghana.", verified: true },
+  { id: 5, name: "FreshFarm", owner: "Yaw Darko", avatar: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?w=100&q=80", category: "Food", followers: 560, rating: 4.7, products: 8, premium: false, description: "Fresh organic produce from local farms.", verified: false },
+  { id: 6, name: "SportZone", owner: "Nana Adu", avatar: "https://images.unsplash.com/photo-1461896836934-ffe607ba8211?w=100&q=80", category: "Sports", followers: 430, rating: 4.4, products: 15, premium: false, description: "Sports gear and equipment for all athletes.", verified: false },
 ];
 
 const REELS = [
@@ -175,8 +175,8 @@ function ProductCard({ product, onAdd, onClick }) {
       onMouseEnter={e => e.currentTarget.style.transform = "translateY(-2px)"}
       onMouseLeave={e => e.currentTarget.style.transform = "translateY(0)"}
       onClick={() => onClick(product)}>
-      <div style={{ background: `${C.primary}10`, height: 140, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 64, position: "relative" }}>
-        {product.image}
+      <div style={{ height: 140, overflow: "hidden", position: "relative" }}>
+        <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display="none"; }} />
         {product.premium && <span style={{ position: "absolute", top: 8, right: 8, ...S.badge(C.premium) }}>⭐ Premium</span>}
         <button style={{ position: "absolute", top: 8, left: 8, background: "white", border: "none", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 16 }}
           onClick={e => { e.stopPropagation(); setLiked(!liked); }}>
@@ -237,7 +237,9 @@ function SellerCard({ seller, onFollow, onVisit }) {
   const [following, setFollowing] = useState(false);
   return (
     <div style={{ ...S.card, padding: 16, display: "flex", alignItems: "center", gap: 14 }}>
-      <div style={S.avatar(52)}>{seller.avatar}</div>
+      <div style={{ width: 52, height: 52, borderRadius: "50%", overflow: "hidden", flexShrink: 0 }}>
+        <img src={seller.avatar} alt={seller.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => { e.target.style.display="none"; }} />
+      </div>
       <div style={{ flex: 1 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <span style={{ fontWeight: 700, fontSize: 15 }}>{seller.name}</span>
@@ -358,7 +360,9 @@ function Home({ setPage, cart, setCart, setSelectedSeller }) {
       {selectedProduct && (
         <div style={S.modal} onClick={() => setSelectedProduct(null)}>
           <div style={S.modalBox} onClick={e => e.stopPropagation()}>
-            <div style={{ background: `${C.primary}15`, borderRadius: 12, height: 160, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 80, marginBottom: 16 }}>{selectedProduct.image}</div>
+            <div style={{ borderRadius: 12, height: 200, overflow: "hidden", marginBottom: 16 }}>
+              <img src={selectedProduct.image} alt={selectedProduct.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            </div>
             {selectedProduct.premium && <span style={{ ...S.badge(C.premium), marginBottom: 8 }}>⭐ Premium Store</span>}
             <h3 style={{ fontWeight: 800, fontSize: 20, margin: "8px 0 4px" }}>{selectedProduct.name}</h3>
             <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 12 }}>By {selectedProduct.seller}</div>
@@ -448,8 +452,8 @@ function StoreProfile({ seller, setPage, cart, setCart }) {
       </div>
 
       <div style={{ ...S.card, margin: "0 0 16px", padding: "50px 20px 20px", position: "relative" }}>
-        <div style={{ position: "absolute", top: -30, left: 20, width: 72, height: 72, borderRadius: "50%", background: C.white, border: `3px solid ${C.white}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
-          {s.avatar}
+        <div style={{ position: "absolute", top: -30, left: 20, width: 72, height: 72, borderRadius: "50%", overflow: "hidden", border: `3px solid ${C.white}`, boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
+          <img src={s.avatar} alt={s.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <div>
@@ -555,7 +559,9 @@ function Cart({ cart, setCart, setPage }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
             {cart.map(item => (
               <div key={item.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 14 }}>
-                <div style={{ width: 56, height: 56, borderRadius: 10, background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28 }}>{item.image}</div>
+                <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", flexShrink: 0 }}>
+                  <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 700, fontSize: 14 }}>{item.name}</div>
                   <div style={{ color: C.greyDark, fontSize: 12 }}>by {item.seller}</div>
@@ -1003,3 +1009,4 @@ export default function App() {
     </div>
   );
 }
+
