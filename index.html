@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>E-Connect – Social Commerce for African Businesses</title>
+    <meta name="description" content="E-Connect is a social commerce platform for small businesses in Ghana. Buy, sell, share reels and connect with local businesses." />
+
+    <!-- PWA -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#FF6B35" />
+
+    <!-- iOS PWA -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="E-Connect" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="E-Connect – Social Commerce" />
+    <meta property="og:description" content="Buy, sell and connect with local businesses in Ghana." />
+    <meta property="og:type" content="website" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23FF6B35'/><text y='.85em' font-size='52' x='8' fill='white' font-weight='900'>EC</text></svg>" />
+
+    <!-- Paystack -->
+    <script src="https://js.paystack.co/v1/inline.js" async></script>
+  </head>
+  <body style="margin:0;padding:0;background:#F8F9FA;">
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("/sw.js")
+            .then(() => console.log("E-Connect PWA ready"))
+            .catch((err) => console.log("SW error:", err));
+        });
+      }
+    </script>
+  </body>
+</html>

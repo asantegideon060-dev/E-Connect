@@ -1,0 +1,40 @@
+{
+  "name": "E-Connect - Social Commerce",
+  "short_name": "E-Connect",
+  "description": "Social commerce platform for small businesses in Ghana. Buy, sell, share reels and connect with local businesses.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#FF6B35",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["shopping", "social", "business"],
+  "lang": "en",
+  "scope": "/",
+  "screenshots": [],
+  "shortcuts": [
+    {
+      "name": "Discover",
+      "url": "/discover",
+      "description": "Discover new businesses and products"
+    },
+    {
+      "name": "Reels",
+      "url": "/reels",
+      "description": "Watch trending reels from sellers"
+    }
+  ]
+}
