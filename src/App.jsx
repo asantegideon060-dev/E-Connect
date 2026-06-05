@@ -550,12 +550,23 @@ function Profile({ user, setPage, setUser }) {
   const [tab, setTab] = useState("orders");
   const [myProducts, setMyProducts] = useState([]);
   const [showPremium, setShowPremium] = useState(false);
+  const [followers, setFollowers] = useState([]);
+  const [following, setFollowing] = useState([]);
+  const [friends, setFriends] = useState([]);
+  const [showStore, setShowStore] = useState(false);
+  const [storeForm, setStoreForm] = useState({ businessName: "", description: "", contact: "", logoUrl: "" });
+  const [storeSaved, setStoreSaved] = useState(false);
+  const [isPremium, setIsPremium] = useState(false);
+  const [uploadingLogo, setUploadingLogo] = useState(false);
 
   useEffect(() => {
     if (!user) return;
-    getDoc(doc(db, "users", user.uid)).then(d => { if (d.exists()) setProfile(d.data()); });
+    getDoc(doc(db, "users", user.uid)).then(d => { if (d.exists()) { setProfile(d.data()); setIsPremium(d.data().premium || false); setStoreForm({ businessName: d.data().businessName || "", description: d.data().storeDescription || "", contact: d.data().storeContact || "", logoUrl: d.data().logoUrl || "" }); } });
     getDocs(query(collection(db, "orders"), where("userId", "==", user.uid))).then(snap => setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid))).then(snap => setMyProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(collection(db, "users", user.uid, "followers")).then(snap => setFollowers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(collection(db, "users", user.uid, "following")).then(snap => setFollowing(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(collection(db, "users", user.uid, "friends")).then(snap => setFriends(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
   }, [user]);
 
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -618,8 +629,8 @@ function Profile({ user, setPage, setUser }) {
           <div>
             <div style={{ fontWeight: 800, fontSize: 18 }}>{user?.displayName || "User"}</div>
             <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8 }}>{user?.email}</div>
-            <div style={{ display: "flex", gap: 20 }}>
-              {[{ num: myProducts.length, label: "Products" }, { num: orders.length, label: "Orders" }, { num: profile?.followers || 0, label: "Followers" }].map(s => (
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+              {[{ num: myProducts.length, label: "Products" }, { num: orders.length, label: "Orders" }, { num: followers.length, label: "Followers" }, { num: following.length, label: "Following" }, { num: friends.length, label: "Friends" }].map(s => (
                 <div key={s.label} style={{ textAlign: "center" }}>
                   <div style={{ fontWeight: 800, color: C.primary }}>{s.num}</div>
                   <div style={{ fontSize: 11, color: C.greyDark }}>{s.label}</div>
@@ -632,15 +643,20 @@ function Profile({ user, setPage, setUser }) {
             <button style={{ ...S.btn("grey"), padding: "8px 14px", fontSize: 12, color: C.error }} onClick={handleLogout}>Logout</button>
           </div>
         </div>
-        <button style={{ ...S.btn(), width: "100%", marginTop: 14, background: `linear-gradient(135deg, ${C.accent}, #FFA500)`, color: "#333", fontWeight: 800 }}
-          onClick={() => setShowPremium(true)}>
-          ⭐ Upgrade to Premium · GH₵50/month
-        </button>
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+          <button style={{ ...S.btn(), flex: 1, background: isPremium ? `linear-gradient(135deg, ${C.accent}, #FFA500)` : `linear-gradient(135deg, ${C.accent}, #FFA500)`, color: "#333", fontWeight: 800 }}
+            onClick={() => !isPremium && setShowPremium(true)}>
+            {isPremium ? "⭐ Premium Active" : "⭐ Go Premium · GH₵50/mo"}
+          </button>
+          <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowStore(true)}>
+            🏪 My Store
+          </button>
+        </div>
       </div>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        {["orders", "products"].map(t => (
-          <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 16px", textTransform: "capitalize" }} onClick={() => setTab(t)}>{t}</button>
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
+        {["orders", "products", "followers", "following", "friends"].map(t => (
+          <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 14px", textTransform: "capitalize", whiteSpace: "nowrap", flexShrink: 0 }} onClick={() => setTab(t)}>{t}</button>
         ))}
       </div>
 
@@ -668,6 +684,84 @@ function Profile({ user, setPage, setUser }) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {tab === "followers" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {followers.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>No followers yet.</div> :
+          followers.map(f => (
+            <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={S.avatar(44)}>👤</div>
+              <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "following" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {following.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Not following anyone yet.</div> :
+          following.map(f => (
+            <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={S.avatar(44)}>👤</div>
+              <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "friends" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {friends.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>No friends yet. Go to Discover to add friends!</div> :
+          friends.map(f => (
+            <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={S.avatar(44)}>👤</div>
+              <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showStore && (
+        <div style={S.modal} onClick={() => setShowStore(false)}>
+          <div style={S.modalBox} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>My Store</h3>
+            <p style={{ color: C.greyDark, fontSize: 13, marginBottom: 16 }}>Set up your online store on E-Connect</p>
+            {storeSaved && <div style={S.alert("success")}>✅ Store saved successfully!</div>}
+
+            <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+              <div style={{ position: "relative", cursor: "pointer" }} onClick={() => document.getElementById("logoUpload").click()}>
+                <div style={{ width: 80, height: 80, borderRadius: 12, overflow: "hidden", background: C.grey, border: `2px dashed ${C.primary}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {storeForm.logoUrl ? <img src={storeForm.logoUrl} alt="Logo" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ textAlign: "center", fontSize: 12, color: C.greyDark }}>🏪<br/>Logo</div>}
+                </div>
+              </div>
+              <input id="logoUpload" type="file" accept="image/*" style={{ display: "none" }} onChange={async (e) => {
+                const file = e.target.files[0]; if (!file) return;
+                setUploadingLogo(true);
+                const data = new FormData(); data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq");
+                const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
+                const result = await res.json();
+                setStoreForm(prev => ({ ...prev, logoUrl: result.secure_url }));
+                setUploadingLogo(false);
+              }} />
+            </div>
+
+            <label style={S.label}>Business Name</label>
+            <input style={{ ...S.input, marginBottom: 12 }} placeholder="e.g. Ama's Fashion" value={storeForm.businessName} onChange={e => setStoreForm({ ...storeForm, businessName: e.target.value })} />
+            <label style={S.label}>Store Description</label>
+            <textarea style={{ ...S.input, marginBottom: 12, height: 80, resize: "vertical" }} placeholder="What do you sell?" value={storeForm.description} onChange={e => setStoreForm({ ...storeForm, description: e.target.value })} />
+            <label style={S.label}>Contact (Phone or WhatsApp)</label>
+            <input style={{ ...S.input, marginBottom: 16 }} placeholder="+233..." value={storeForm.contact} onChange={e => setStoreForm({ ...storeForm, contact: e.target.value })} />
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button style={S.btn()} onClick={async () => {
+                await setDoc(doc(db, "users", user.uid), { businessName: storeForm.businessName, storeDescription: storeForm.description, storeContact: storeForm.contact, logoUrl: storeForm.logoUrl, isSeller: true }, { merge: true });
+                setStoreSaved(true); setTimeout(() => { setStoreSaved(false); setShowStore(false); }, 2000);
+              }}>Save Store</button>
+              <button style={S.btn("outline")} onClick={() => setShowStore(false)}>Close</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -804,10 +898,19 @@ function Admin() {
         </div>
       ))}
       {tab === "users" && users.map(u => (
-        <div key={u.id} style={{ ...S.card, padding: 14, marginBottom: 10, display: "flex", justifyContent: "space-between" }}>
+        <div key={u.id} style={{ ...S.card, padding: 14, marginBottom: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
-            <div style={{ fontWeight: 700 }}>{u.name}</div>
-            <div style={{ fontSize: 13, color: C.greyDark }}>{u.email} · {u.role}</div>
+            <div style={{ fontWeight: 700 }}>{u.name} {u.premium && <span style={{ color: "#FFD700" }}>⭐</span>}</div>
+            <div style={{ fontSize: 13, color: C.greyDark }}>{u.email} · {u.role || "user"}</div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={{ ...S.btn(u.premium ? "grey" : "primary"), padding: "6px 12px", fontSize: 11 }}
+              onClick={async () => {
+                await setDoc(doc(db, "users", u.id), { premium: !u.premium }, { merge: true });
+                setUsers(prev => prev.map(usr => usr.id === u.id ? { ...usr, premium: !usr.premium } : usr));
+              }}>
+              {u.premium ? "Remove Premium" : "Activate Premium"}
+            </button>
           </div>
         </div>
       ))}
@@ -827,38 +930,136 @@ function Admin() {
 }
 
 // ── Discover ───────────────────────────────────────────────────
-function Discover({ setPage, setSelectedProduct }) {
+function Discover({ setPage, setSelectedProduct, user }) {
   const [products, setProducts] = useState([]);
+  const [sellers, setSellers] = useState([]);
   const [search, setSearch] = useState("");
+  const [tab, setTab] = useState("products");
+  const [following, setFollowing] = useState({});
+  const [friends, setFriends] = useState({});
 
   useEffect(() => {
     getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-  }, []);
+    getDocs(collection(db, "users")).then(snap => setSellers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    if (user) {
+      getDocs(collection(db, "users", user.uid, "following")).then(snap => {
+        const f = {}; snap.docs.forEach(d => f[d.id] = true); setFollowing(f);
+      });
+      getDocs(collection(db, "users", user.uid, "friends")).then(snap => {
+        const f = {}; snap.docs.forEach(d => f[d.id] = true); setFriends(f);
+      });
+    }
+  }, [user]);
 
-  const filtered = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.seller?.toLowerCase().includes(search.toLowerCase()));
+  const handleFollow = async (sellerId, sellerName) => {
+    if (!user) return;
+    const isFollowing = following[sellerId];
+    const newFollowing = { ...following };
+    if (isFollowing) {
+      delete newFollowing[sellerId];
+      await setDoc(doc(db, "users", user.uid, "following", sellerId), { deleted: true });
+    } else {
+      newFollowing[sellerId] = true;
+      await setDoc(doc(db, "users", user.uid, "following", sellerId), { name: sellerName, followedAt: serverTimestamp() });
+      await setDoc(doc(db, "users", sellerId, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
+    }
+    setFollowing(newFollowing);
+  };
+
+  const handleAddFriend = async (userId, userName) => {
+    if (!user) return;
+    const isFriend = friends[userId];
+    const newFriends = { ...friends };
+    if (isFriend) {
+      delete newFriends[userId];
+    } else {
+      newFriends[userId] = true;
+      await setDoc(doc(db, "users", user.uid, "friends", userId), { name: userName, addedAt: serverTimestamp() });
+      await setDoc(doc(db, "users", userId, "friends", user.uid), { name: user.displayName, addedAt: serverTimestamp() });
+    }
+    setFriends(newFriends);
+  };
+
+  const filteredProducts = products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()) || p.seller?.toLowerCase().includes(search.toLowerCase()));
+  const filteredSellers = sellers.filter(s => s.name?.toLowerCase().includes(search.toLowerCase()) || s.email?.toLowerCase().includes(search.toLowerCase())).filter(s => s.id !== user?.uid);
 
   return (
     <div style={S.page}>
       <div style={S.sectionTitle}>Discover</div>
-      <p style={S.sectionSub}>Find products and sellers on E-Connect</p>
+      <p style={S.sectionSub}>Find products, sellers and connect with people</p>
       <div style={{ position: "relative", marginBottom: 16 }}>
         <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }}>🔍</span>
         <input style={{ ...S.input, paddingLeft: 38 }} placeholder="Search products and sellers..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
-        {filtered.map(p => (
-          <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
-            <div style={{ height: 140, background: C.grey, overflow: "hidden" }}>
-              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 40 }}>📦</div>}
-            </div>
-            <div style={{ padding: 12 }}>
-              <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
-              <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 4 }}>{p.seller}</div>
-              <div style={{ color: C.primary, fontWeight: 800 }}>GH₵{p.price}</div>
-            </div>
-          </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        {["products", "sellers", "people"].map(t => (
+          <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 16px", textTransform: "capitalize" }} onClick={() => setTab(t)}>{t}</button>
         ))}
       </div>
+
+      {tab === "products" && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
+          {filteredProducts.map(p => (
+            <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+              <div style={{ height: 140, background: C.grey, overflow: "hidden" }}>
+                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 40 }}>📦</div>}
+              </div>
+              <div style={{ padding: 12 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
+                <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 4 }}>{p.seller}</div>
+                <div style={{ color: C.primary, fontWeight: 800 }}>GH₵{p.price}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "sellers" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {filteredSellers.filter(s => s.role !== "admin").map(s => (
+            <div key={s.id} style={{ ...S.card, padding: 16, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 52, height: 52, borderRadius: "50%", overflow: "hidden", background: C.grey, flexShrink: 0 }}>
+                {s.photoURL ? <img src={s.photoURL} alt={s.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>{s.name || "User"}</div>
+                <div style={{ fontSize: 12, color: C.greyDark }}>{s.bio || "E-Connect member"}</div>
+              </div>
+              <button style={{ ...S.btn(following[s.id] ? "grey" : "primary"), padding: "7px 14px", fontSize: 12 }}
+                onClick={() => handleFollow(s.id, s.name)}>
+                {following[s.id] ? "Following" : "Follow"}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === "people" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {filteredSellers.map(s => (
+            <div key={s.id} style={{ ...S.card, padding: 16, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 52, height: 52, borderRadius: "50%", overflow: "hidden", background: C.grey, flexShrink: 0 }}>
+                {s.photoURL ? <img src={s.photoURL} alt={s.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>{s.name || "User"}</div>
+                <div style={{ fontSize: 12, color: C.greyDark }}>{s.email}</div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={{ ...S.btn(following[s.id] ? "grey" : "primary"), padding: "7px 12px", fontSize: 11 }}
+                  onClick={() => handleFollow(s.id, s.name)}>
+                  {following[s.id] ? "Following" : "Follow"}
+                </button>
+                <button style={{ ...S.btn(friends[s.id] ? "grey" : "outline"), padding: "7px 12px", fontSize: 11 }}
+                  onClick={() => handleAddFriend(s.id, s.name)}>
+                  {friends[s.id] ? "Friends ✓" : "+ Friend"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -914,7 +1115,7 @@ export default function App() {
   const renderPage = () => {
     switch (page) {
       case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
-      case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} />;
+      case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} user={user} />;
       case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
       case "messages": return <Messages user={user} />;
