@@ -604,7 +604,7 @@ function Profile({ user, setPage, setUser }) {
         </div>
         <button style={{ ...S.btn(), width: "100%", marginTop: 14, background: `linear-gradient(135deg, ${C.accent}, #FFA500)`, color: "#333", fontWeight: 800 }}
           onClick={() => setShowPremium(true)}>
-          ⭐ Upgrade to Premium · GH₵10/month
+          ⭐ Upgrade to Premium · GH₵50/month
         </button>
       </div>
 
@@ -656,7 +656,7 @@ function Profile({ user, setPage, setUser }) {
                 {[
                   { label: "MoMo Number", value: "0541940967" },
                   { label: "Account Name", value: "E-Connect GH" },
-                  { label: "Amount", value: "GH₵10.00" },
+                  { label: "Amount", value: "GH₵50.00" },
                   { label: "Reference", value: "PREMIUM-SUB" },
                 ].map(item => (
                   <div key={item.label} style={{ background: "white", borderRadius: 10, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -671,7 +671,7 @@ function Profile({ user, setPage, setUser }) {
                 <br />1. Dial *170# on your MTN phone
                 <br />2. Select Transfer Money
                 <br />3. Enter number: 0541940967
-                <br />4. Enter amount: 10
+                <br />4. Enter amount: 50
                 <br />5. Enter reference: PREMIUM-SUB
                 <br />6. Enter your PIN to confirm
                 <br />7. Send payment screenshot to +233 54 194 0967 on WhatsApp
