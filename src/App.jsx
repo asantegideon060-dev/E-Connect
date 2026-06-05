@@ -542,6 +542,7 @@ function Profile({ user, setPage, setUser }) {
   const [orders, setOrders] = useState([]);
   const [tab, setTab] = useState("orders");
   const [myProducts, setMyProducts] = useState([]);
+  const [showPremium, setShowPremium] = useState(false);
 
   useEffect(() => {
     if (!user) return;
@@ -572,6 +573,10 @@ function Profile({ user, setPage, setUser }) {
           </div>
           <button style={{ ...S.btn("outline"), padding: "8px 14px", fontSize: 12, height: "fit-content" }} onClick={handleLogout}>Logout</button>
         </div>
+        <button style={{ ...S.btn(), width: "100%", marginTop: 14, background: `linear-gradient(135deg, ${C.accent}, #FFA500)`, color: "#333", fontWeight: 800 }}
+          onClick={() => setShowPremium(true)}>
+          ⭐ Upgrade to Premium · GH₵10/month
+        </button>
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
@@ -604,6 +609,57 @@ function Profile({ user, setPage, setUser }) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {showPremium && (
+        <div style={S.modal} onClick={() => setShowPremium(false)}>
+          <div style={S.modalBox} onClick={e => e.stopPropagation()}>
+            <div style={{ textAlign: "center", marginBottom: 16 }}>
+              <div style={{ fontSize: 48, marginBottom: 8 }}>⭐</div>
+              <h3 style={{ fontWeight: 800, fontSize: 22 }}>Go Premium</h3>
+              <p style={{ color: C.greyDark, fontSize: 13 }}>Boost your business visibility on E-Connect</p>
+            </div>
+
+            <div style={{ background: "#FFF8E1", border: "2px solid #FFD700", borderRadius: 14, padding: 20, marginBottom: 16 }}>
+              <div style={{ fontWeight: 800, fontSize: 16, color: "#333", marginBottom: 12, textAlign: "center" }}>💛 Pay with MTN Mobile Money</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {[
+                  { label: "MoMo Number", value: "0541940967" },
+                  { label: "Account Name", value: "E-Connect GH" },
+                  { label: "Amount", value: "GH₵10.00" },
+                  { label: "Reference", value: "PREMIUM-SUB" },
+                ].map(item => (
+                  <div key={item.label} style={{ background: "white", borderRadius: 10, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontSize: 12, color: C.greyDark, fontWeight: 600 }}>{item.label}</span>
+                    <span style={{ fontWeight: 800, fontSize: 14, color: "#333" }}>{item.value}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{ background: "#FFF3CD", borderRadius: 10, padding: 12, marginTop: 12, fontSize: 12, color: "#856404", lineHeight: 1.8 }}>
+                📱 How to pay via MTN MoMo:
+                <br />1. Dial *170# on your MTN phone
+                <br />2. Select Transfer Money
+                <br />3. Enter number: 0541940967
+                <br />4. Enter amount: 10
+                <br />5. Enter reference: PREMIUM-SUB
+                <br />6. Enter your PIN to confirm
+                <br />7. Send payment screenshot to +233 54 194 0967 on WhatsApp
+              </div>
+            </div>
+
+            <div style={{ background: `${C.primary}10`, borderRadius: 10, padding: 12, marginBottom: 16, fontSize: 12, color: C.greyDark, textAlign: "center", lineHeight: 1.6 }}>
+              After payment, send your screenshot to <strong>+233 54 194 0967</strong> on WhatsApp. Your Premium ⭐ badge will be activated within 24 hours.
+            </div>
+
+            <a href="tel:*170%23" style={{ display: "block", textDecoration: "none" }}>
+              <button style={{ ...S.btn(), width: "100%", background: "#FFD700", color: "#333", fontWeight: 800, fontSize: 15, padding: 14, marginBottom: 10 }}>
+                📱 Dial *170# to Pay Now
+              </button>
+            </a>
+            <button style={{ ...S.btn("outline"), width: "100%" }} onClick={() => setShowPremium(false)}>Maybe Later</button>
+          </div>
         </div>
       )}
     </div>
@@ -784,4 +840,3 @@ export default function App() {
     </div>
   );
 }
-
