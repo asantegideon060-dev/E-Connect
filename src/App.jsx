@@ -111,19 +111,43 @@ function Auth({ setUser }) {
   );
 }
 
+// ── Cloudinary Config ─────────────────────────────────────────
+const CLOUDINARY_CLOUD = "dxmmsq0gq";
+const CLOUDINARY_PRESET = "Econnect";
+
 // ── Add Product Modal ──────────────────────────────────────────
 function AddProductModal({ user, onClose, onAdded }) {
-  const [form, setForm] = useState({ name: "", price: "", category: "Fashion", description: "", imageUrl: "", stock: "" });
+  const [form, setForm] = useState({ name: "", price: "", category: "Fashion", description: "", stock: "" });
+  const [imageUrl, setImageUrl] = useState("");
+  const [imagePreview, setImagePreview] = useState("");
+  const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  const handleImageUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const data = new FormData();
+      data.append("file", file);
+      data.append("upload_preset", CLOUDINARY_PRESET);
+      data.append("cloud_name", CLOUDINARY_CLOUD);
+      const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method: "POST", body: data });
+      const result = await res.json();
+      setImageUrl(result.secure_url);
+      setImagePreview(result.secure_url);
+    } catch (err) { setError("Image upload failed. Please try again."); }
+    setUploading(false);
+  };
+
   const handle = async () => {
-    if (!form.name || !form.price || !form.imageUrl) { setError("Please fill in all required fields."); return; }
+    if (!form.name || !form.price) { setError("Please fill in name and price."); return; }
     setLoading(true);
     try {
       await addDoc(collection(db, "products"), {
         name: form.name, price: Number(form.price), category: form.category,
-        description: form.description, image: form.imageUrl, stock: Number(form.stock) || 0,
+        description: form.description, image: imageUrl, stock: Number(form.stock) || 0,
         seller: user.displayName || "Unknown", sellerId: user.uid,
         likes: 0, rating: 0, reviews: 0, premium: false,
         createdAt: serverTimestamp()
@@ -138,6 +162,21 @@ function AddProductModal({ user, onClose, onAdded }) {
       <div style={S.modalBox} onClick={e => e.stopPropagation()}>
         <h3 style={{ fontWeight: 800, fontSize: 20, marginBottom: 16 }}>Add New Product</h3>
         {error && <div style={S.alert("error")}>{error}</div>}
+
+        <label style={S.label}>Product Image</label>
+        <div style={{ border: `2px dashed ${C.border}`, borderRadius: 12, padding: 16, textAlign: "center", marginBottom: 12, cursor: "pointer" }}
+          onClick={() => document.getElementById("imgInput").click()}>
+          {imagePreview ? (
+            <img src={imagePreview} alt="Preview" style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: 8 }} />
+          ) : (
+            <div>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>📸</div>
+              <div style={{ fontSize: 13, color: C.greyDark }}>{uploading ? "Uploading..." : "Tap to upload product image"}</div>
+            </div>
+          )}
+        </div>
+        <input id="imgInput" type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageUpload} />
+
         <label style={S.label}>Product Name *</label>
         <input style={{ ...S.input, marginBottom: 12 }} placeholder="e.g. Ankara Dress" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
         <label style={S.label}>Price (GH₵) *</label>
@@ -146,14 +185,14 @@ function AddProductModal({ user, onClose, onAdded }) {
         <select style={{ ...S.input, marginBottom: 12 }} value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>
           {CATEGORIES.filter(c => c !== "All").map(c => <option key={c}>{c}</option>)}
         </select>
-        <label style={S.label}>Image URL * (paste a link to your product image)</label>
-        <input style={{ ...S.input, marginBottom: 12 }} placeholder="https://..." value={form.imageUrl} onChange={e => setForm({ ...form, imageUrl: e.target.value })} />
         <label style={S.label}>Description</label>
         <textarea style={{ ...S.input, marginBottom: 12, height: 80, resize: "vertical" }} placeholder="Describe your product..." value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
         <label style={S.label}>Stock Quantity</label>
         <input style={{ ...S.input, marginBottom: 16 }} type="number" placeholder="e.g. 10" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })} />
         <div style={{ display: "flex", gap: 10 }}>
-          <button style={{ ...S.btn(), flex: 1, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>{loading ? "Adding..." : "Add Product"}</button>
+          <button style={{ ...S.btn(), flex: 1, opacity: (loading || uploading) ? 0.7 : 1 }} onClick={handle} disabled={loading || uploading}>
+            {loading ? "Adding..." : uploading ? "Uploading image..." : "Add Product"}
+          </button>
           <button style={{ ...S.btn("outline"), flex: 1 }} onClick={onClose}>Cancel</button>
         </div>
       </div>
@@ -745,3 +784,4 @@ export default function App() {
     </div>
   );
 }
+
