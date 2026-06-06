@@ -306,6 +306,47 @@ function StoriesBar({ user }) {
   );
 }
 
+
+// ── Approved Ads Banner ────────────────────────────────────────
+function ApprovedAdsBanner() {
+  const [ads, setAds] = useState([]);
+  const [current, setCurrent] = useState(0);
+
+  useEffect(() => {
+    getDocs(query(collection(db, "ads"), where("status", "==", "approved"))).then(snap => {
+      setAds(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+  }, []);
+
+  useEffect(() => {
+    if (ads.length <= 1) return;
+    const timer = setInterval(() => setCurrent(prev => (prev + 1) % ads.length), 4000);
+    return () => clearInterval(timer);
+  }, [ads]);
+
+  if (ads.length === 0) return null;
+
+  const ad = ads[current];
+  return (
+    <div style={{ borderRadius: 14, overflow: "hidden", marginBottom: 16, position: "relative", cursor: "pointer" }}>
+      <img src={ad.imageUrl} alt={ad.businessName} style={{ width: "100%", height: 160, objectFit: "cover" }} />
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent, rgba(0,0,0,0.7))", padding: "20px 16px 12px" }}>
+        <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{ad.businessName}</div>
+        <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 12 }}>{ad.description}</div>
+      </div>
+      <div style={{ position: "absolute", top: 10, right: 10, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+        Promoted
+      </div>
+      {ads.length > 1 && (
+        <div style={{ position: "absolute", bottom: 8, right: 12, display: "flex", gap: 4 }}>
+          {ads.map((_, i) => <div key={i} style={{ width: i === current ? 16 : 6, height: 6, borderRadius: 3, background: i === current ? "white" : "rgba(255,255,255,0.5)", transition: "width 0.3s" }} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Home Page ──────────────────────────────────────────────────
 function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
   const [products, setProducts] = useState([]);
@@ -345,6 +386,8 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
       </div>
 
       <StoriesBar user={user} />
+
+      <ApprovedAdsBanner />
 
       <div style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})`, borderRadius: 14, padding: "18px 20px", marginBottom: 20, color: "white", position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", right: -20, top: -20, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.1)" }} />
@@ -1029,6 +1072,47 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             <label style={S.label}>Contact (Phone or WhatsApp)</label>
             <input style={{ ...S.input, marginBottom: 16 }} placeholder="+233..." value={storeForm.contact} onChange={e => setStoreForm({ ...storeForm, contact: e.target.value })} />
 
+            {isPremium && (
+              <div style={{ background: "#FFF8E1", border: "2px solid #FFD700", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+                <div style={{ fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+                  Run a Promotional Ad
+                </div>
+                <p style={{ fontSize: 12, color: C.greyDark, marginBottom: 10 }}>Submit an ad banner. Admin will review and approve within 24 hours. Approved ads show on the Home and Discover pages.</p>
+                <label style={S.label}>Ad Image URL</label>
+                <input style={{ ...S.input, marginBottom: 8 }} placeholder="Upload image and paste URL here..." value={storeForm.adImageUrl || ""} onChange={e => setStoreForm({ ...storeForm, adImageUrl: e.target.value })} />
+                <div style={{ border: `2px dashed ${C.border}`, borderRadius: 10, padding: 12, textAlign: "center", marginBottom: 8, cursor: "pointer" }}
+                  onClick={() => document.getElementById("adImageUpload").click()}>
+                  {storeForm.adImageUrl ? <img src={storeForm.adImageUrl} alt="Ad" style={{ width: "100%", height: 80, objectFit: "cover", borderRadius: 8 }} /> : <div style={{ fontSize: 12, color: C.greyDark }}>📸 Tap to upload ad image</div>}
+                </div>
+                <input id="adImageUpload" type="file" accept="image/*" style={{ display: "none" }} onChange={async (e) => {
+                  const file = e.target.files[0]; if (!file) return;
+                  const data = new FormData(); data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq");
+                  const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
+                  const result = await res.json();
+                  setStoreForm(prev => ({ ...prev, adImageUrl: result.secure_url }));
+                }} />
+                <label style={S.label}>Ad Description</label>
+                <input style={{ ...S.input, marginBottom: 10 }} placeholder="e.g. 50% off all dresses this week!" value={storeForm.adDescription || ""} onChange={e => setStoreForm({ ...storeForm, adDescription: e.target.value })} />
+                <button style={{ ...S.btn(), width: "100%", fontSize: 13 }} onClick={async () => {
+                  if (!storeForm.adImageUrl) return;
+                  await addDoc(collection(db, "ads"), {
+                    imageUrl: storeForm.adImageUrl, description: storeForm.adDescription || "",
+                    businessName: storeForm.businessName || user.displayName,
+                    userId: user.uid, status: "pending", createdAt: serverTimestamp(),
+                  });
+                  setStoreForm(prev => ({ ...prev, adImageUrl: "", adDescription: "" }));
+                  alert("Ad submitted! Admin will review within 24 hours.");
+                }}>Submit Ad for Review</button>
+              </div>
+            )}
+
+            {!isPremium && (
+              <div style={{ background: C.grey, borderRadius: 12, padding: 14, marginBottom: 16, fontSize: 12, color: C.greyDark, textAlign: "center" }}>
+                🔒 Upgrade to Premium (GH₵20/month) to run promotional advertisements
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: 10 }}>
               <button style={S.btn()} onClick={async () => {
                 await setDoc(doc(db, "users", user.uid), { businessName: storeForm.businessName, storeDescription: storeForm.description, storeContact: storeForm.contact, logoUrl: storeForm.logoUrl, isSeller: true }, { merge: true });
@@ -1151,12 +1235,14 @@ function Admin() {
   const [orders, setOrders] = useState([]);
   const [users, setUsers] = useState([]);
   const [products, setProducts] = useState([]);
+  const [ads, setAds] = useState([]);
   const [tab, setTab] = useState("overview");
 
   useEffect(() => {
     getDocs(collection(db, "orders")).then(snap => setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users")).then(snap => setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "products")).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(collection(db, "ads")).then(snap => setAds(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
   }, []);
 
   const totalRevenue = orders.reduce((s, o) => s + (o.total || 0), 0);
@@ -1166,13 +1252,20 @@ function Admin() {
       <div style={S.sectionTitle}>Admin Dashboard</div>
       <p style={S.sectionSub}>Manage E-Connect platform</p>
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        {["overview", "orders", "users", "products"].map(t => (
-          <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 16px", textTransform: "capitalize" }} onClick={() => setTab(t)}>{t}</button>
+        {["overview", "orders", "users", "products", "ads"].map(t => (
+          <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 16px", textTransform: "capitalize", position: "relative" }} onClick={() => setTab(t)}>
+            {t}
+            {t === "ads" && ads.filter(a => a.status === "pending").length > 0 && (
+              <span style={{ position: "absolute", top: -4, right: -4, background: C.error, color: "white", borderRadius: "50%", width: 16, height: 16, fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {ads.filter(a => a.status === "pending").length}
+              </span>
+            )}
+          </button>
         ))}
       </div>
       {tab === "overview" && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14 }}>
-          {[{ num: users.length, label: "Total Users", icon: "👥" }, { num: products.length, label: "Products", icon: "📦" }, { num: orders.length, label: "Total Orders", icon: "🛒" }, { num: `GH₵${totalRevenue}`, label: "Total Revenue", icon: "💰" }].map(s => (
+          {[{ num: users.length, label: "Total Users", icon: "👥" }, { num: products.length, label: "Products", icon: "📦" }, { num: orders.length, label: "Total Orders", icon: "🛒" }, { num: `GH₵${totalRevenue}`, label: "Total Revenue", icon: "💰" }, { num: ads.filter(a => a.status === "pending").length, label: "Pending Ads", icon: "📢" }].map(s => (
             <div key={s.label} style={{ ...S.card, padding: 16 }}>
               <div style={{ fontSize: 28, marginBottom: 8 }}>{s.icon}</div>
               <div style={{ fontWeight: 800, fontSize: 22, color: C.primary }}>{s.num}</div>
@@ -1215,6 +1308,45 @@ function Admin() {
           </div>
         </div>
       ))}
+
+      {tab === "ads" && (
+        <div>
+          <p style={{ color: C.greyDark, fontSize: 13, marginBottom: 16 }}>Review and approve promotional ads from premium subscribers.</p>
+          {ads.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>No ads submitted yet.</div> :
+          ads.map(a => (
+            <div key={a.id} style={{ ...S.card, marginBottom: 12, overflow: "hidden" }}>
+              {a.imageUrl && <img src={a.imageUrl} alt={a.businessName} style={{ width: "100%", height: 120, objectFit: "cover" }} />}
+              <div style={{ padding: 14 }}>
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>{a.businessName}</div>
+                <div style={{ fontSize: 13, color: C.greyDark, marginBottom: 10 }}>{a.description}</div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: a.status === "approved" ? C.success : a.status === "rejected" ? C.error : "#F59E0B", background: a.status === "approved" ? `${C.success}20` : a.status === "rejected" ? `${C.error}20` : "#FEF3C720", padding: "3px 10px", borderRadius: 20 }}>
+                    {a.status}
+                  </span>
+                  {a.status === "pending" && (
+                    <>
+                      <button style={{ ...S.btn(), padding: "6px 14px", fontSize: 12 }} onClick={async () => {
+                        await setDoc(doc(db, "ads", a.id), { status: "approved" }, { merge: true });
+                        setAds(prev => prev.map(ad => ad.id === a.id ? { ...ad, status: "approved" } : ad));
+                      }}>Approve</button>
+                      <button style={{ ...S.btn("outline"), padding: "6px 14px", fontSize: 12, color: C.error, borderColor: C.error }} onClick={async () => {
+                        await setDoc(doc(db, "ads", a.id), { status: "rejected" }, { merge: true });
+                        setAds(prev => prev.map(ad => ad.id === a.id ? { ...ad, status: "rejected" } : ad));
+                      }}>Reject</button>
+                    </>
+                  )}
+                  {a.status === "approved" && (
+                    <button style={{ ...S.btn("outline"), padding: "6px 14px", fontSize: 12, color: C.error, borderColor: C.error }} onClick={async () => {
+                      await setDoc(doc(db, "ads", a.id), { status: "pending" }, { merge: true });
+                      setAds(prev => prev.map(ad => ad.id === a.id ? { ...ad, status: "pending" } : ad));
+                    }}>Remove</button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1275,6 +1407,7 @@ function Discover({ setPage, setSelectedProduct, user }) {
 
   return (
     <div style={S.page}>
+      <ApprovedAdsBanner />
       <div style={S.sectionTitle}>Discover</div>
       <p style={S.sectionSub}>Find products, sellers and connect with people</p>
       <div style={{ position: "relative", marginBottom: 16 }}>
@@ -1288,6 +1421,35 @@ function Discover({ setPage, setSelectedProduct, user }) {
         ))}
       </div>
 
+      {tab === "products" && (
+        <div>
+          {filteredProducts.some(p => p.premium) && (
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 12 }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+                <span style={{ fontWeight: 800, fontSize: 14, color: C.text }}>Premium Products</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
+                {filteredProducts.filter(p => p.premium).map(p => (
+                  <div key={"prem-" + p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", border: `2px solid #FFD700` }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+                    <div style={{ height: 120, background: C.grey, overflow: "hidden", position: "relative" }}>
+                      {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>📦</div>}
+                      <div style={{ position: "absolute", top: 6, right: 6, background: "#FFD700", borderRadius: "50%", width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+                      </div>
+                    </div>
+                    <div style={{ padding: 10 }}>
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
+                      <div style={{ color: C.primary, fontWeight: 800, fontSize: 14 }}>GH₵{p.price}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 12, color: C.text }}>All Products</div>
+        </div>
+      )}
       {tab === "products" && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
           {filteredProducts.map(p => (
@@ -1313,7 +1475,10 @@ function Discover({ setPage, setSelectedProduct, user }) {
                 {s.photoURL ? <img src={s.photoURL} alt={s.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>{s.name || "User"}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontWeight: 700, fontSize: 15 }}>{s.name || "User"}</span>
+                  {s.premium && <svg width="14" height="14" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>}
+                </div>
                 <div style={{ fontSize: 12, color: C.greyDark }}>{s.bio || "E-Connect member"}</div>
               </div>
               <button style={{ ...S.btn(following[s.id] ? "grey" : "primary"), padding: "7px 14px", fontSize: 12 }}
