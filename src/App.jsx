@@ -898,7 +898,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
         <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
           <button style={{ ...S.btn(), flex: 1, background: isPremium ? `linear-gradient(135deg, ${C.accent}, #FFA500)` : `linear-gradient(135deg, ${C.accent}, #FFA500)`, color: "#333", fontWeight: 800 }}
             onClick={() => !isPremium && setShowPremium(true)}>
-            {isPremium ? "⭐ Premium Active" : "⭐ Go Premium · GH₵50/mo"}
+            {isPremium ? "⭐ Premium Active" : "⭐ Go Premium · GH₵20/mo"}
           </button>
           <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowStore(true)}>
             🏪 My Store
@@ -1083,7 +1083,22 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             <div style={{ textAlign: "center", marginBottom: 16 }}>
               <div style={{ fontSize: 48, marginBottom: 8 }}>⭐</div>
               <h3 style={{ fontWeight: 800, fontSize: 22 }}>Go Premium</h3>
-              <p style={{ color: C.greyDark, fontSize: 13 }}>Boost your business visibility on E-Connect</p>
+              <p style={{ color: C.greyDark, fontSize: 13 }}>GH₵20/month · Exclusive benefits for subscribers only</p>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              {[
+                "Gold ⭐ star badge displayed beside your business name",
+                "Higher visibility across the platform",
+                "Products and stores appear more in search and recommendations",
+                "Ability to run promotional advertisements",
+                "Priority placement on homepage and discovery pages",
+              ].map((b, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+                  <span style={{ color: C.success, fontSize: 16, flexShrink: 0 }}>✓</span>
+                  <span style={{ fontSize: 13, lineHeight: 1.4, color: C.text }}>{b}</span>
+                </div>
+              ))}
             </div>
 
             <div style={{ background: "#FFF8E1", border: "2px solid #FFD700", borderRadius: 14, padding: 20, marginBottom: 16 }}>
@@ -1092,7 +1107,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
                 {[
                   { label: "MoMo Number", value: "0541940967" },
                   { label: "Account Name", value: "E-Connect GH" },
-                  { label: "Amount", value: "GH₵50.00" },
+                  { label: "Amount", value: "GH₵20.00" },
                   { label: "Reference", value: "PREMIUM-SUB" },
                 ].map(item => (
                   <div key={item.label} style={{ background: "white", borderRadius: 10, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1107,7 +1122,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
                 <br />1. Dial *170# on your MTN phone
                 <br />2. Select Transfer Money
                 <br />3. Enter number: 0541940967
-                <br />4. Enter amount: 50
+                <br />4. Enter amount: 20
                 <br />5. Enter reference: PREMIUM-SUB
                 <br />6. Enter your PIN to confirm
                 <br />7. Send payment screenshot to +233 54 194 0967 on WhatsApp
