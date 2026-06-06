@@ -13,14 +13,27 @@ import {
   where
 } from "firebase/firestore";
 
-const C = {
-  primary: "#FF6B35", primaryDark: "#E5501A", primaryLight: "#FF8C5A",
-  secondary: "#1A1A2E", accent: "#FFD700", white: "#FFFFFF",
-  offWhite: "#F8F9FA", grey: "#F0F2F5", greyMid: "#E4E6EA",
-  greyDark: "#65676B", text: "#1C1E21", textLight: "#65676B",
-  success: "#31A24C", error: "#FA3E3E", premium: "#FFD700",
-  card: "#FFFFFF", border: "#E4E6EA",
+const THEMES = {
+  light: {
+    primary: "#00A896", primaryDark: "#007A6E", primaryLight: "#00C4B4",
+    secondary: "#1A1A2E", accent: "#FFD700", white: "#FFFFFF",
+    offWhite: "#F8F9FA", grey: "#F0F2F5", greyMid: "#E4E6EA",
+    greyDark: "#65676B", text: "#1C1E21", textLight: "#65676B",
+    success: "#31A24C", error: "#FA3E3E", premium: "#FFD700",
+    card: "#FFFFFF", border: "#E4E6EA",
+  },
+  dark: {
+    primary: "#00C4B4", primaryDark: "#00A896", primaryLight: "#00D4C4",
+    secondary: "#0A0A0A", accent: "#FFD700", white: "#1A1A1A",
+    offWhite: "#121212", grey: "#2A2A2A", greyMid: "#333333",
+    greyDark: "#AAAAAA", text: "#F0F0F0", textLight: "#AAAAAA",
+    success: "#4ADE80", error: "#F87171", premium: "#FFD700",
+    card: "#1E1E1E", border: "#333333",
+  },
 };
+
+// Theme will be set dynamically - default to light
+let C = { ...THEMES.light };
 
 const FONT = "'DM Sans', 'Nunito', sans-serif";
 
@@ -783,7 +796,7 @@ function Messages({ user }) {
 }
 
 // ── Profile ────────────────────────────────────────────────────
-function Profile({ user, setPage, setUser }) {
+function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [profile, setProfile] = useState(null);
   const [orders, setOrders] = useState([]);
   const [tab, setTab] = useState("orders");
@@ -897,6 +910,29 @@ function Profile({ user, setPage, setUser }) {
         {["orders", "products", "followers", "following", "friends"].map(t => (
           <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 14px", textTransform: "capitalize", whiteSpace: "nowrap", flexShrink: 0 }} onClick={() => setTab(t)}>{t}</button>
         ))}
+      </div>
+
+      <div style={{ ...S.card, padding: 20, marginBottom: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 16 }}>Appearance</div>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+          {["system", "light", "dark"].map(t => {
+            const isActive = theme === t || (t === "system" && !["light", "dark"].includes(theme));
+            return (
+              <div key={t} style={{ textAlign: "center", cursor: "pointer" }} onClick={() => {
+                if (t === "system") {
+                  const sys = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+                  setTheme(sys);
+                } else { setTheme(t); }
+              }}>
+                <div style={{ width: 72, height: 100, borderRadius: 12, background: t === "dark" ? "#1A1A1A" : t === "light" ? "#F8F9FA" : "linear-gradient(135deg, #1A1A1A 50%, #F8F9FA 50%)", border: isActive ? `2px solid ${C.primary}` : `2px solid ${C.border}`, marginBottom: 8, overflow: "hidden", display: "flex", flexDirection: "column", gap: 4, padding: 8 }}>
+                  {[1,2,3].map(i => <div key={i} style={{ height: 8, borderRadius: 4, background: t === "dark" ? "#333" : "#E0E0E0" }} />)}
+                </div>
+                <div style={{ fontSize: 12, fontWeight: isActive ? 700 : 500, color: isActive ? C.primary : C.greyDark, textTransform: "capitalize" }}>{t}</div>
+                {isActive && <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.primary, margin: "4px auto 0" }} />}
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {tab === "orders" && (
@@ -1310,6 +1346,17 @@ export default function App() {
   const [page, setPage] = useState("home");
   const [cart, setCart] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem("econnect-theme");
+    if (saved) return saved;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
+
+  useEffect(() => {
+    C = { ...THEMES[theme] };
+    localStorage.setItem("econnect-theme", theme);
+    document.body.style.background = THEMES[theme].offWhite;
+  }, [theme]);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => { setUser(u); setLoading(false); });
@@ -1361,14 +1408,14 @@ export default function App() {
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
       case "reels": return <ReelsPage user={user} />;
       case "messages": return <Messages user={user} />;
-      case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} />;
+      case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
       case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
     }
   };
 
   return (
-    <div style={S.app}>
+    <div style={{ ...S.app, background: THEMES[theme]?.offWhite || C.offWhite, color: THEMES[theme]?.text || C.text }}>
       <nav style={S.nav}>
         <div style={S.logo} onClick={() => setPage("home")}>E-Connect</div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
