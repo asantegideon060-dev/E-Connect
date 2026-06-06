@@ -207,6 +207,92 @@ function AddProductModal({ user, onClose, onAdded }) {
   );
 }
 
+
+// ── Stories Feature ────────────────────────────────────────────
+function StoriesBar({ user }) {
+  const [stories, setStories] = useState([]);
+  const [viewingStory, setViewingStory] = useState(null);
+  const [uploading, setUploading] = useState(false);
+
+  const fetchStories = async () => {
+    const snap = await getDocs(collection(db, "stories"));
+    const now = Date.now();
+    const active = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => {
+      if (!s.expiresAt) return false;
+      const exp = s.expiresAt.toMillis ? s.expiresAt.toMillis() : new Date(s.expiresAt).getTime();
+      return exp > now;
+    });
+    setStories(active);
+  };
+
+  useEffect(() => { fetchStories(); }, []);
+
+  const handleStoryUpload = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    setUploading(true);
+    try {
+      const data = new FormData();
+      data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq");
+      const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
+      const result = await res.json();
+      await addDoc(collection(db, "stories"), {
+        imageUrl: result.secure_url, userName: user?.displayName || "User",
+        userId: user?.uid, userPhoto: user?.photoURL || "",
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), createdAt: serverTimestamp(),
+      });
+      fetchStories();
+    } catch (err) { console.error(err); }
+    setUploading(false);
+  };
+
+  return (
+    <div style={{ ...S.card, padding: "14px 16px", marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
+          onClick={() => document.getElementById("storyUploadInput").click()}>
+          <div style={{ width: 58, height: 58, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `2px dashed ${C.primary}` }}>
+            {uploading ? <span style={{ fontSize: 11, color: C.primary, fontWeight: 700 }}>...</span> : <span style={{ fontSize: 26 }}>+</span>}
+          </div>
+          <span style={{ fontSize: 10, color: C.greyDark, fontWeight: 600 }}>Add Story</span>
+          <input id="storyUploadInput" type="file" accept="image/*" style={{ display: "none" }} onChange={handleStoryUpload} />
+        </div>
+        {stories.map(s => (
+          <div key={s.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
+            onClick={() => setViewingStory(s)}>
+            <div style={{ width: 58, height: 58, borderRadius: "50%", background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, padding: 2.5 }}>
+              <div style={{ width: "100%", height: "100%", borderRadius: "50%", overflow: "hidden", background: C.white }}>
+                {s.userPhoto ? <img src={s.userPhoto} alt={s.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
+              </div>
+            </div>
+            <span style={{ fontSize: 10, color: C.text, fontWeight: 600, textAlign: "center", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.userName}</span>
+          </div>
+        ))}
+        {stories.length === 0 && <div style={{ display: "flex", alignItems: "center", color: C.greyDark, fontSize: 13, paddingLeft: 8 }}>No stories yet. Be the first!</div>}
+      </div>
+      {viewingStory && (
+        <div style={{ ...S.modal, zIndex: 400 }} onClick={() => setViewingStory(null)}>
+          <div style={{ background: C.secondary, borderRadius: 18, width: 300, height: 480, position: "relative", overflow: "hidden" }}>
+            <img src={viewingStory.imageUrl} alt="story" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "rgba(255,255,255,0.3)" }}>
+              <div style={{ height: "100%", width: "100%", background: C.white }} />
+            </div>
+            <div style={{ position: "absolute", top: 16, left: 16, display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", overflow: "hidden", background: C.white }}>
+                {viewingStory.userPhoto ? <img src={viewingStory.userPhoto} alt={viewingStory.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>👤</div>}
+              </div>
+              <div>
+                <div style={{ color: "white", fontWeight: 700, fontSize: 13 }}>{viewingStory.userName}</div>
+                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 10 }}>Expires in 24hrs</div>
+              </div>
+            </div>
+            <button style={{ position: "absolute", top: 16, right: 16, background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 30, height: 30, cursor: "pointer", fontSize: 14, fontWeight: 700 }} onClick={() => setViewingStory(null)}>X</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Home Page ──────────────────────────────────────────────────
 function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
   const [products, setProducts] = useState([]);
@@ -245,6 +331,8 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
         <input style={{ ...S.input, paddingLeft: 38 }} placeholder="Search products..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
+      <StoriesBar user={user} />
+
       <div style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})`, borderRadius: 14, padding: "18px 20px", marginBottom: 20, color: "white", position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", right: -20, top: -20, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.1)" }} />
         <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.8, marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Welcome to E-Connect</div>
@@ -259,6 +347,33 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
             onClick={() => setActiveCategory(cat)}>{cat}</button>
         ))}
       </div>
+
+      {filtered.some(p => p.premium) && (
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+            <span style={{ fontWeight: 800, fontSize: 15 }}>Premium Stores</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
+            {filtered.filter(p => p.premium).slice(0, 4).map(p => (
+              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", border: `2px solid #FFD700` }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+                <div style={{ height: 140, overflow: "hidden", background: C.grey, position: "relative" }}>
+                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 48 }}>📦</div>}
+                  <div style={{ position: "absolute", top: 8, right: 8, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+                    Premium
+                  </div>
+                </div>
+                <div style={{ padding: 12 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
+                  <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 4 }}>{p.seller}</div>
+                  <div style={{ color: C.primary, fontWeight: 800, fontSize: 16 }}>GH₵{p.price}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <div>
@@ -285,11 +400,23 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
               <div style={{ padding: 12 }}>
                 <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{p.name}</div>
                 <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 8 }}>{p.seller}</div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <span style={{ color: C.primary, fontWeight: 800, fontSize: 16 }}>GH₵{p.price}</span>
-                  <span style={{ fontSize: 11, color: C.greyDark }}>{p.category}</span>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: C.greyDark, padding: 0 }}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        await setDoc(doc(db, "productLikes", p.id + "_" + (user?.uid || "guest")), { productId: p.id, userId: user?.uid, createdAt: serverTimestamp() }, { merge: true });
+                      }}>
+                      ♥ Like
+                    </button>
+                    <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: C.greyDark, padding: 0 }}
+                      onClick={(e) => { e.stopPropagation(); navigator.share ? navigator.share({ title: p.name, text: `Check out ${p.name} for GH₵${p.price} on E-Connect!`, url: window.location.href }) : navigator.clipboard.writeText(window.location.href); }}>
+                      ↗ Share
+                    </button>
+                  </div>
                 </div>
-                <button style={{ ...S.btn(), width: "100%", marginTop: 10, padding: "8px" }} onClick={e => { e.stopPropagation(); addToCart(p); }}>Add to Cart</button>
+                <button style={{ ...S.btn(), width: "100%", padding: "8px" }} onClick={e => { e.stopPropagation(); addToCart(p); }}>Add to Cart</button>
               </div>
             </div>
           ))}
@@ -455,6 +582,118 @@ function Cart({ cart, setCart, setPage, user }) {
               <button style={{ ...S.btn(), flex: 1, opacity: loading ? 0.7 : 1 }} onClick={handleOrder} disabled={loading}>{loading ? "Placing..." : "Place Order"}</button>
               <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setCheckout(false)}>Cancel</button>
             </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Reels Page ────────────────────────────────────────────────
+function ReelsPage({ user }) {
+  const [reels, setReels] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
+  const [reelForm, setReelForm] = useState({ description: "" });
+  const [loading, setLoading] = useState(true);
+
+  const fetchReels = async () => {
+    setLoading(true);
+    const snap = await getDocs(query(collection(db, "reels"), orderBy("createdAt", "desc")));
+    setReels(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchReels(); }, []);
+
+  const handleVideoUpload = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    setUploading(true);
+    try {
+      const data = new FormData();
+      data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq"); data.append("resource_type", "video");
+      const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/video/upload", { method: "POST", body: data });
+      const result = await res.json();
+      await addDoc(collection(db, "reels"), {
+        videoUrl: result.secure_url, thumbnailUrl: result.secure_url.replace("/upload/", "/upload/so_0/").replace(".mp4", ".jpg"),
+        description: reelForm.description, userName: user?.displayName || "User",
+        userId: user?.uid, userPhoto: user?.photoURL || "",
+        likes: 0, shares: 0, createdAt: serverTimestamp(),
+      });
+      setShowUpload(false); setReelForm({ description: "" });
+      fetchReels();
+    } catch (err) { console.error(err); }
+    setUploading(false);
+  };
+
+  const handleLike = async (reelId, currentLikes) => {
+    await setDoc(doc(db, "reelLikes", reelId + "_" + user?.uid), { reelId, userId: user?.uid, createdAt: serverTimestamp() }, { merge: true });
+    setReels(prev => prev.map(r => r.id === reelId ? { ...r, likes: (currentLikes || 0) + 1 } : r));
+  };
+
+  return (
+    <div style={S.page}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div>
+          <div style={S.sectionTitle}>Reels</div>
+          <div style={{ fontSize: 13, color: C.greyDark }}>Short videos from sellers</div>
+        </div>
+        <button style={{ ...S.btn(), padding: "8px 14px", fontSize: 12 }} onClick={() => setShowUpload(true)}>+ Upload Reel</button>
+      </div>
+
+      {loading ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading reels...</div> :
+      reels.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 60 }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>🎬</div>
+          <p style={{ color: C.greyDark }}>No reels yet. Upload the first one!</p>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 80 }}>
+          {reels.map(r => (
+            <div key={r.id} style={S.card}>
+              <div style={{ background: C.secondary, borderRadius: "14px 14px 0 0", overflow: "hidden", position: "relative" }}>
+                <video src={r.videoUrl} style={{ width: "100%", maxHeight: 400, objectFit: "cover" }} controls poster={r.thumbnailUrl} />
+              </div>
+              <div style={{ padding: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: "50%", overflow: "hidden", background: C.grey }}>
+                    {r.userPhoto ? <img src={r.userPhoto} alt={r.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>👤</div>}
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>{r.userName}</div>
+                    <div style={{ fontSize: 12, color: C.greyDark }}>{r.description}</div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 12 }}>
+                  <button style={{ ...S.btn("grey"), padding: "7px 14px", fontSize: 12, color: C.text }}
+                    onClick={() => handleLike(r.id, r.likes)}>
+                    ♥ {r.likes || 0}
+                  </button>
+                  <button style={{ ...S.btn("grey"), padding: "7px 14px", fontSize: 12, color: C.text }}
+                    onClick={() => navigator.share ? navigator.share({ title: r.description, url: window.location.href }) : navigator.clipboard.writeText(window.location.href)}>
+                    ↗ Share
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showUpload && (
+        <div style={S.modal} onClick={() => setShowUpload(false)}>
+          <div style={S.modalBox} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontWeight: 800, fontSize: 20, marginBottom: 16 }}>Upload a Reel</h3>
+            <label style={S.label}>Description</label>
+            <textarea style={{ ...S.input, height: 80, resize: "vertical", marginBottom: 16 }} placeholder="Describe your reel..." value={reelForm.description} onChange={e => setReelForm({ ...reelForm, description: e.target.value })} />
+            <div style={{ border: `2px dashed ${C.border}`, borderRadius: 12, padding: 24, textAlign: "center", marginBottom: 16, cursor: "pointer" }}
+              onClick={() => document.getElementById("reelVideoInput").click()}>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>🎬</div>
+              <div style={{ fontSize: 13, color: C.greyDark }}>{uploading ? "Uploading video..." : "Tap to select a video"}</div>
+              <div style={{ fontSize: 11, color: C.greyDark, marginTop: 4 }}>MP4, MOV supported</div>
+            </div>
+            <input id="reelVideoInput" type="file" accept="video/*" style={{ display: "none" }} onChange={handleVideoUpload} />
+            <button style={{ ...S.btn("outline"), width: "100%" }} onClick={() => setShowUpload(false)}>Cancel</button>
           </div>
         </div>
       )}
@@ -1099,6 +1338,7 @@ export default function App() {
       discover: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke={color} strokeWidth="1.8"/><path d="M20 20L17 17" stroke={color} strokeWidth="1.8" strokeLinecap="round"/></svg>,
       cart: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6 2L3 6V20C3 21.1 3.9 22 5 22H19C20.1 22 21 21.1 21 20V6L18 2H6Z" stroke={color} strokeWidth="1.8"/><path d="M3 6H21" stroke={color} strokeWidth="1.8"/><path d="M16 10C16 12.2 14.2 14 12 14C9.8 14 8 12.2 8 10" stroke={color} strokeWidth="1.8" strokeLinecap="round"/></svg>,
       messages: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M21 15C21 15.5 20.8 16 20.4 16.4C20 16.8 19.5 17 19 17H7L3 21V5C3 4.5 3.2 4 3.6 3.6C4 3.2 4.5 3 5 3H19C19.5 3 20 3.2 20.4 3.6C20.8 4 21 4.5 21 5V15Z" stroke={color} strokeWidth="1.8" fill={active ? `${C.primary}20` : "none"}/></svg>,
+      reels: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="4" stroke={color} strokeWidth="1.8"/><path d="M10 8L16 12L10 16V8Z" fill={active ? C.primary : "none"} stroke={color} strokeWidth="1.8" strokeLinejoin="round"/></svg>,
       profile: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke={color} strokeWidth="1.8"/><path d="M4 20C4 16.7 7.6 14 12 14C16.4 14 20 16.7 20 20" stroke={color} strokeWidth="1.8" strokeLinecap="round"/></svg>,
     };
     return icons[id] || null;
@@ -1107,6 +1347,7 @@ export default function App() {
   const navItems = [
     { id: "home", label: "Home" },
     { id: "discover", label: "Discover" },
+    { id: "reels", label: "Reels" },
     { id: "cart", label: "Cart", badge: cart.length },
     { id: "messages", label: "Messages" },
     { id: "profile", label: "Profile" },
@@ -1118,6 +1359,7 @@ export default function App() {
       case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} user={user} />;
       case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
+      case "reels": return <ReelsPage user={user} />;
       case "messages": return <Messages user={user} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} />;
       case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
