@@ -411,6 +411,104 @@ function EditProductModal({ product, user, onClose, onUpdated }) {
   );
 }
 
+
+// ── Notifications Page ─────────────────────────────────────────
+function NotificationsPage({ user }) {
+  const [notifications, setNotifications] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, "notifications"),
+      where("toUserId", "==", user.uid),
+      orderBy("createdAt", "desc")
+    );
+    const unsub = onSnapshot(q, snap => {
+      setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    });
+    return unsub;
+  }, [user]);
+
+  const markAllRead = async () => {
+    const unread = notifications.filter(n => !n.read);
+    await Promise.all(unread.map(n => setDoc(doc(db, "notifications", n.id), { read: true }, { merge: true })));
+  };
+
+  const getIcon = (type) => {
+    const icons = {
+      like: "❤️", follow: "👤", order: "🛒", comment: "💬",
+      ad_approved: "⭐", ad_rejected: "❌", premium: "⭐", review: "⭐",
+    };
+    return icons[type] || "🔔";
+  };
+
+  const getTimeAgo = (ts) => {
+    if (!ts) return "";
+    const now = Date.now();
+    const time = ts.toMillis ? ts.toMillis() : new Date(ts).getTime();
+    const diff = Math.floor((now - time) / 1000);
+    if (diff < 60) return "Just now";
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+  };
+
+  return (
+    <div style={S.page}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div>
+          <div style={S.sectionTitle}>Notifications</div>
+          <div style={{ fontSize: 13, color: C.greyDark }}>{notifications.filter(n => !n.read).length} unread</div>
+        </div>
+        {notifications.some(n => !n.read) && (
+          <button style={{ ...S.btn("outline"), padding: "7px 14px", fontSize: 12 }} onClick={markAllRead}>
+            Mark all read
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading notifications...</div>
+      ) : notifications.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 60 }}>
+          <div style={{ fontSize: 56, marginBottom: 12 }}>🔔</div>
+          <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 8 }}>No notifications yet</div>
+          <div style={{ color: C.greyDark, fontSize: 13 }}>When someone likes, follows or orders from you it will show here.</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 80 }}>
+          {notifications.map(n => (
+            <div key={n.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, background: n.read ? C.white : `${C.primary}08`, borderLeft: n.read ? "none" : `3px solid ${C.primary}`, cursor: "pointer" }}
+              onClick={() => setDoc(doc(db, "notifications", n.id), { read: true }, { merge: true })}>
+              <div style={{ width: 44, height: 44, borderRadius: "50%", background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>
+                {getIcon(n.type)}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: n.read ? 500 : 700, color: C.text, lineHeight: 1.4 }}>{n.message}</div>
+                <div style={{ fontSize: 12, color: C.greyDark, marginTop: 3 }}>{getTimeAgo(n.createdAt)}</div>
+              </div>
+              {!n.read && <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.primary, flexShrink: 0 }} />}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Send Notification Helper ────────────────────────────────────
+async function sendNotification(toUserId, type, message, fromUserName) {
+  if (!toUserId) return;
+  try {
+    await addDoc(collection(db, "notifications"), {
+      toUserId, type, message, fromUserName: fromUserName || "",
+      read: false, createdAt: serverTimestamp(),
+    });
+  } catch (err) { console.error("Notification error:", err); }
+}
+
 // ── Approved Ads Banner ────────────────────────────────────────
 function ApprovedAdsBanner() {
   const [ads, setAds] = useState([]);
@@ -571,6 +669,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
                       onClick={async (e) => {
                         e.stopPropagation();
                         await setDoc(doc(db, "productLikes", p.id + "_" + (user?.uid || "guest")), { productId: p.id, userId: user?.uid, createdAt: serverTimestamp() }, { merge: true });
+                      if (p.sellerId && p.sellerId !== user?.uid) await sendNotification(p.sellerId, "like", `${user?.displayName || "Someone"} liked your product "${p.name}"`, user?.displayName);
                       }}>
                       ♥ Like
                     </button>
@@ -801,6 +900,7 @@ function ReelsPage({ user }) {
     setLiked(prev => ({ ...prev, [reel.id]: !isLiked }));
     setReels(prev => prev.map(r => r.id === reel.id ? { ...r, likes: (r.likes || 0) + (isLiked ? -1 : 1) } : r));
     await setDoc(doc(db, "reelLikes", reel.id + "_" + (user?.uid || "g")), { liked: !isLiked, createdAt: serverTimestamp() }, { merge: true });
+    if (!isLiked && reel.userId && reel.userId !== user?.uid) await sendNotification(reel.userId, "like", `${user?.displayName || "Someone"} liked your reel`, user?.displayName);
   };
 
   const handleFollow = async (reel) => {
@@ -829,6 +929,8 @@ function ReelsPage({ user }) {
     await addDoc(collection(db, "reels", reelId, "comments"), { text: newComment, userName: user?.displayName || "User", userPhoto: user?.photoURL || "", createdAt: serverTimestamp() });
     setNewComment(""); loadComments(reelId);
     setReels(prev => prev.map(r => r.id === reelId ? { ...r, comments: (r.comments || 0) + 1 } : r));
+    const reelData = reels.find(r => r.id === reelId);
+    if (reelData?.userId && reelData.userId !== user?.uid) await sendNotification(reelData.userId, "comment", `${user?.displayName || "Someone"} commented on your reel: "${newComment.slice(0, 30)}..."`, user?.displayName);
   };
 
   const handleVideoUpload = async (e) => {
@@ -1662,10 +1764,12 @@ function Admin() {
                       <button style={{ ...S.btn(), padding: "6px 14px", fontSize: 12 }} onClick={async () => {
                         await setDoc(doc(db, "ads", a.id), { status: "approved" }, { merge: true });
                         setAds(prev => prev.map(ad => ad.id === a.id ? { ...ad, status: "approved" } : ad));
+                        await sendNotification(a.userId, "ad_approved", `Your ad "${a.title || a.businessName}" has been approved and is now live!`, "E-Connect Admin");
                       }}>Approve</button>
                       <button style={{ ...S.btn("outline"), padding: "6px 14px", fontSize: 12, color: C.error, borderColor: C.error }} onClick={async () => {
                         await setDoc(doc(db, "ads", a.id), { status: "rejected" }, { merge: true });
                         setAds(prev => prev.map(ad => ad.id === a.id ? { ...ad, status: "rejected" } : ad));
+                        await sendNotification(a.userId, "ad_rejected", `Your ad "${a.title || a.businessName}" was not approved. Please review and resubmit.`, "E-Connect Admin");
                       }}>Reject</button>
                     </>
                   )}
@@ -1718,6 +1822,7 @@ function Discover({ setPage, setSelectedProduct, user }) {
       newFollowing[sellerId] = true;
       await setDoc(doc(db, "users", user.uid, "following", sellerId), { name: sellerName, followedAt: serverTimestamp() });
       await setDoc(doc(db, "users", sellerId, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
+      await sendNotification(sellerId, "follow", `${user.displayName || "Someone"} started following you`, user.displayName);
     }
     setFollowing(newFollowing);
   };
@@ -1892,6 +1997,14 @@ export default function App() {
 
   const ADMIN_EMAILS = ["admin@econnect.gh", "asantegideon060@gmail.com", "selormatsubonuedie@gmail.com", "akowuahisaac686@gmail.com", "nyarkomatthew925491@gmail.com", "ebenezer.boateng009@stu.ucc.edu.gh"];
   const isAdmin = ADMIN_EMAILS.includes(user.email);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, "notifications"), where("toUserId", "==", user.uid), where("read", "==", false));
+    const unsub = onSnapshot(q, snap => setUnreadCount(snap.size));
+    return unsub;
+  }, [user]);
 
   const NavIcon = ({ id, active }) => {
     const color = active ? C.primary : C.greyDark;
@@ -1922,6 +2035,7 @@ export default function App() {
       case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
       case "reels": return <ReelsPage user={user} />;
+      case "notifications": return <NotificationsPage user={user} />;
       case "messages": return <Messages user={user} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
       case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
@@ -1935,6 +2049,17 @@ export default function App() {
         <div style={S.logo} onClick={() => setPage("home")}>E-Connect</div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
           {isAdmin && <button style={{ ...S.btn("grey"), padding: "7px 12px", fontSize: 12, color: C.text }} onClick={() => setPage("admin")}>Admin</button>}
+          <button style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 6 }} onClick={() => setPage("notifications")}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={page === "notifications" ? C.primary : C.greyDark} strokeWidth="1.8" strokeLinecap="round">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+            </svg>
+            {unreadCount > 0 && (
+              <span style={{ position: "absolute", top: 2, right: 2, background: C.error, color: "white", borderRadius: "50%", width: 16, height: 16, fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </button>
           <div style={{ ...S.avatar(34), background: `${C.primary}20`, fontSize: 16 }}>👤</div>
         </div>
       </nav>
