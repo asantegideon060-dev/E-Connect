@@ -363,7 +363,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
   const fetchProducts = async () => {
     setLoading(true);
     const snap = await getDocs(query(collection(db, "products"), orderBy("createdAt", "desc")));
-    setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted));
     setLoading(false);
   };
 
@@ -1180,13 +1180,20 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             <div style={{ height: 1, background: C.border, margin: "16px 0" }} />
             <button style={{ ...S.btn("outline"), width: "100%", color: C.error, borderColor: C.error, fontSize: 13 }}
               onClick={async () => {
-                const confirm = window.confirm("Are you sure you want to delete your store? This cannot be undone.");
+                const confirm = window.confirm("Are you sure you want to delete your store and all your products? This cannot be undone.");
                 if (!confirm) return;
                 await setDoc(doc(db, "users", user.uid), { businessName: "", storeDescription: "", storeContact: "", logoUrl: "", isSeller: false }, { merge: true });
+                const productsSnap = await getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid)));
+                const deletePromises = productsSnap.docs.map(d => setDoc(doc(db, "products", d.id), { deleted: true }, { merge: true }));
+                await Promise.all(deletePromises);
+                const adsSnap = await getDocs(query(collection(db, "ads"), where("userId", "==", user.uid)));
+                const deleteAds = adsSnap.docs.map(d => setDoc(doc(db, "ads", d.id), { status: "deleted" }, { merge: true }));
+                await Promise.all(deleteAds);
                 setStoreForm({ businessName: "", description: "", contact: "", logoUrl: "", adType: "image", adMediaUrl: "", adTitle: "", adDescription: "", adThumbnail: "", adUploading: false });
+                setMyProducts([]);
                 setStoreSaved(false);
                 setShowStore(false);
-                alert("Your store has been deleted successfully.");
+                alert("Your store and all products have been deleted successfully.");
               }}>
               🗑️ Delete Store
             </button>
