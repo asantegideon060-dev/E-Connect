@@ -1170,13 +1170,26 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
               </div>
             )}
 
-            <div style={{ display: "flex", gap: 10 }}>
-              <button style={S.btn()} onClick={async () => {
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button style={{ ...S.btn(), flex: 1 }} onClick={async () => {
                 await setDoc(doc(db, "users", user.uid), { businessName: storeForm.businessName, storeDescription: storeForm.description, storeContact: storeForm.contact, logoUrl: storeForm.logoUrl, isSeller: true }, { merge: true });
                 setStoreSaved(true); setTimeout(() => { setStoreSaved(false); setShowStore(false); }, 2000);
               }}>Save Store</button>
-              <button style={S.btn("outline")} onClick={() => setShowStore(false)}>Close</button>
+              <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowStore(false)}>Close</button>
             </div>
+            <div style={{ height: 1, background: C.border, margin: "16px 0" }} />
+            <button style={{ ...S.btn("outline"), width: "100%", color: C.error, borderColor: C.error, fontSize: 13 }}
+              onClick={async () => {
+                const confirm = window.confirm("Are you sure you want to delete your store? This cannot be undone.");
+                if (!confirm) return;
+                await setDoc(doc(db, "users", user.uid), { businessName: "", storeDescription: "", storeContact: "", logoUrl: "", isSeller: false }, { merge: true });
+                setStoreForm({ businessName: "", description: "", contact: "", logoUrl: "", adType: "image", adMediaUrl: "", adTitle: "", adDescription: "", adThumbnail: "", adUploading: false });
+                setStoreSaved(false);
+                setShowStore(false);
+                alert("Your store has been deleted successfully.");
+              }}>
+              🗑️ Delete Store
+            </button>
           </div>
         </div>
       )}
