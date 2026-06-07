@@ -329,9 +329,13 @@ function ApprovedAdsBanner() {
   const ad = ads[current];
   return (
     <div style={{ borderRadius: 14, overflow: "hidden", marginBottom: 16, position: "relative", cursor: "pointer" }}>
-      <img src={ad.imageUrl} alt={ad.businessName} style={{ width: "100%", height: 160, objectFit: "cover" }} />
+      {ad.adType === "video" ? (
+        <video src={ad.mediaUrl || ad.imageUrl} style={{ width: "100%", height: 200, objectFit: "cover" }} autoPlay muted loop playsInline poster={ad.imageUrl} />
+      ) : (
+        <img src={ad.imageUrl} alt={ad.businessName} style={{ width: "100%", height: 160, objectFit: "cover" }} />
+      )}
       <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent, rgba(0,0,0,0.7))", padding: "20px 16px 12px" }}>
-        <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{ad.businessName}</div>
+        <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{ad.title || ad.businessName}</div>
         <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 12 }}>{ad.description}</div>
       </div>
       <div style={{ position: "absolute", top: 10, right: 10, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
@@ -849,7 +853,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [following, setFollowing] = useState([]);
   const [friends, setFriends] = useState([]);
   const [showStore, setShowStore] = useState(false);
-  const [storeForm, setStoreForm] = useState({ businessName: "", description: "", contact: "", logoUrl: "" });
+  const [storeForm, setStoreForm] = useState({ businessName: "", description: "", contact: "", logoUrl: "", adType: "image", adMediaUrl: "", adTitle: "", adDescription: "", adThumbnail: "", adUploading: false });
   const [storeSaved, setStoreSaved] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -1079,31 +1083,84 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
                   Run a Promotional Ad
                 </div>
                 <p style={{ fontSize: 12, color: C.greyDark, marginBottom: 10 }}>Submit an ad banner. Admin will review and approve within 24 hours. Approved ads show on the Home and Discover pages.</p>
-                <label style={S.label}>Ad Image URL</label>
-                <input style={{ ...S.input, marginBottom: 8 }} placeholder="Upload image and paste URL here..." value={storeForm.adImageUrl || ""} onChange={e => setStoreForm({ ...storeForm, adImageUrl: e.target.value })} />
-                <div style={{ border: `2px dashed ${C.border}`, borderRadius: 10, padding: 12, textAlign: "center", marginBottom: 8, cursor: "pointer" }}
-                  onClick={() => document.getElementById("adImageUpload").click()}>
-                  {storeForm.adImageUrl ? <img src={storeForm.adImageUrl} alt="Ad" style={{ width: "100%", height: 80, objectFit: "cover", borderRadius: 8 }} /> : <div style={{ fontSize: 12, color: C.greyDark }}>📸 Tap to upload ad image</div>}
+                <label style={S.label}>Ad Type</label>
+                <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                  {["image", "video"].map(t => (
+                    <button key={t} style={{ ...S.btn(storeForm.adType === t ? "primary" : "grey"), flex: 1, textTransform: "capitalize", fontSize: 12 }}
+                      onClick={() => setStoreForm(prev => ({ ...prev, adType: t, adMediaUrl: "", adThumbnail: "" }))}>
+                      {t === "image" ? "📸 Image Ad" : "🎬 Video Ad (30s - 1min)"}
+                    </button>
+                  ))}
                 </div>
-                <input id="adImageUpload" type="file" accept="image/*" style={{ display: "none" }} onChange={async (e) => {
+
+                <div style={{ border: `2px dashed ${C.border}`, borderRadius: 10, padding: 16, textAlign: "center", marginBottom: 10, cursor: "pointer", background: C.grey }}
+                  onClick={() => document.getElementById("adMediaUpload").click()}>
+                  {storeForm.adMediaUrl ? (
+                    storeForm.adType === "video"
+                      ? <video src={storeForm.adMediaUrl} style={{ width: "100%", height: 100, objectFit: "cover", borderRadius: 8 }} controls />
+                      : <img src={storeForm.adMediaUrl} alt="Ad" style={{ width: "100%", height: 100, objectFit: "cover", borderRadius: 8 }} />
+                  ) : (
+                    <div>
+                      <div style={{ fontSize: 28, marginBottom: 6 }}>{storeForm.adType === "video" ? "🎬" : "📸"}</div>
+                      <div style={{ fontSize: 12, color: C.greyDark, fontWeight: 600 }}>
+                        {storeForm.adType === "video" ? "Tap to upload video (30 seconds to 1 minute)" : "Tap to upload ad image"}
+                      </div>
+                      {storeForm.adType === "video" && <div style={{ fontSize: 11, color: C.greyDark, marginTop: 4 }}>MP4, MOV · Max 1 minute</div>}
+                      {storeForm.adUploading && <div style={{ fontSize: 12, color: C.primary, marginTop: 6, fontWeight: 700 }}>Uploading... please wait</div>}
+                    </div>
+                  )}
+                </div>
+
+                <input id="adMediaUpload" type="file" accept={storeForm.adType === "video" ? "video/*" : "image/*"} style={{ display: "none" }} onChange={async (e) => {
                   const file = e.target.files[0]; if (!file) return;
-                  const data = new FormData(); data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq");
-                  const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
-                  const result = await res.json();
-                  setStoreForm(prev => ({ ...prev, adImageUrl: result.secure_url }));
+                  if (storeForm.adType === "video") {
+                    const video = document.createElement("video");
+                    video.preload = "metadata";
+                    video.onloadedmetadata = async () => {
+                      window.URL.revokeObjectURL(video.src);
+                      if (video.duration > 65) { alert("Video must be 30 seconds to 1 minute long. Please trim your video and try again."); return; }
+                      if (video.duration < 20) { alert("Video must be at least 30 seconds long."); return; }
+                      setStoreForm(prev => ({ ...prev, adUploading: true }));
+                      const data = new FormData(); data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq"); data.append("resource_type", "video");
+                      const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/video/upload", { method: "POST", body: data });
+                      const result = await res.json();
+                      setStoreForm(prev => ({ ...prev, adMediaUrl: result.secure_url, adThumbnail: result.secure_url.replace("/upload/", "/upload/so_0/").replace(/\.(mp4|mov|avi)$/i, ".jpg"), adUploading: false }));
+                    };
+                    video.src = URL.createObjectURL(file);
+                  } else {
+                    setStoreForm(prev => ({ ...prev, adUploading: true }));
+                    const data = new FormData(); data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq");
+                    const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
+                    const result = await res.json();
+                    setStoreForm(prev => ({ ...prev, adMediaUrl: result.secure_url, adUploading: false }));
+                  }
                 }} />
+
+                <label style={S.label}>Ad Title</label>
+                <input style={{ ...S.input, marginBottom: 8 }} placeholder="e.g. Weekend Sale - 50% Off!" value={storeForm.adTitle || ""} onChange={e => setStoreForm({ ...storeForm, adTitle: e.target.value })} />
+
                 <label style={S.label}>Ad Description</label>
-                <input style={{ ...S.input, marginBottom: 10 }} placeholder="e.g. 50% off all dresses this week!" value={storeForm.adDescription || ""} onChange={e => setStoreForm({ ...storeForm, adDescription: e.target.value })} />
-                <button style={{ ...S.btn(), width: "100%", fontSize: 13 }} onClick={async () => {
-                  if (!storeForm.adImageUrl) return;
-                  await addDoc(collection(db, "ads"), {
-                    imageUrl: storeForm.adImageUrl, description: storeForm.adDescription || "",
-                    businessName: storeForm.businessName || user.displayName,
-                    userId: user.uid, status: "pending", createdAt: serverTimestamp(),
-                  });
-                  setStoreForm(prev => ({ ...prev, adImageUrl: "", adDescription: "" }));
-                  alert("Ad submitted! Admin will review within 24 hours.");
-                }}>Submit Ad for Review</button>
+                <textarea style={{ ...S.input, marginBottom: 10, height: 60, resize: "vertical" }} placeholder="e.g. Shop the biggest sale of the season. Limited time only!" value={storeForm.adDescription || ""} onChange={e => setStoreForm({ ...storeForm, adDescription: e.target.value })} />
+
+                <button style={{ ...S.btn(), width: "100%", fontSize: 13, opacity: storeForm.adUploading ? 0.6 : 1 }}
+                  disabled={storeForm.adUploading}
+                  onClick={async () => {
+                    if (!storeForm.adMediaUrl) { alert("Please upload an image or video first."); return; }
+                    if (!storeForm.adTitle) { alert("Please add an ad title."); return; }
+                    await addDoc(collection(db, "ads"), {
+                      mediaUrl: storeForm.adMediaUrl,
+                      imageUrl: storeForm.adType === "image" ? storeForm.adMediaUrl : storeForm.adThumbnail || storeForm.adMediaUrl,
+                      adType: storeForm.adType || "image",
+                      title: storeForm.adTitle || "",
+                      description: storeForm.adDescription || "",
+                      businessName: storeForm.businessName || user.displayName,
+                      userId: user.uid, status: "pending", createdAt: serverTimestamp(),
+                    });
+                    setStoreForm(prev => ({ ...prev, adMediaUrl: "", adTitle: "", adDescription: "", adThumbnail: "", adType: "image" }));
+                    alert("Ad submitted! Admin will review within 24 hours.");
+                  }}>
+                  {storeForm.adUploading ? "Uploading..." : "Submit Ad for Review"}
+                </button>
               </div>
             )}
 
@@ -1315,9 +1372,14 @@ function Admin() {
           {ads.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>No ads submitted yet.</div> :
           ads.map(a => (
             <div key={a.id} style={{ ...S.card, marginBottom: 12, overflow: "hidden" }}>
-              {a.imageUrl && <img src={a.imageUrl} alt={a.businessName} style={{ width: "100%", height: 120, objectFit: "cover" }} />}
+              {a.adType === "video" ? (
+                <video src={a.mediaUrl} style={{ width: "100%", height: 120, objectFit: "cover" }} controls poster={a.imageUrl} />
+              ) : (
+                a.imageUrl && <img src={a.imageUrl} alt={a.businessName} style={{ width: "100%", height: 120, objectFit: "cover" }} />
+              )}
               <div style={{ padding: 14 }}>
-                <div style={{ fontWeight: 700, marginBottom: 4 }}>{a.businessName}</div>
+                <div style={{ fontWeight: 700, marginBottom: 2 }}>{a.businessName}</div>
+                <div style={{ fontSize: 12, color: C.primary, fontWeight: 600, marginBottom: 4 }}>{a.title}</div>
                 <div style={{ fontSize: 13, color: C.greyDark, marginBottom: 10 }}>{a.description}</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <span style={{ fontSize: 12, fontWeight: 700, color: a.status === "approved" ? C.success : a.status === "rejected" ? C.error : "#F59E0B", background: a.status === "approved" ? `${C.success}20` : a.status === "rejected" ? `${C.error}20` : "#FEF3C720", padding: "3px 10px", borderRadius: 20 }}>
