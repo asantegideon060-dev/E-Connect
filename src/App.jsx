@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { auth, db } from "./firebase";
 import {
   createUserWithEmailAndPassword,
@@ -753,108 +753,238 @@ function Cart({ cart, setCart, setPage, user }) {
   );
 }
 
-// ── Reels Page ────────────────────────────────────────────────
+// ── TikTok-Style Reels Page ────────────────────────────────────
 function ReelsPage({ user }) {
   const [reels, setReels] = useState([]);
-  const [uploading, setUploading] = useState(false);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [showUpload, setShowUpload] = useState(false);
-  const [reelForm, setReelForm] = useState({ description: "" });
+  const [reelForm, setReelForm] = useState({ description: "", category: "Entertainment" });
+  const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [liked, setLiked] = useState({});
+  const [muted, setMuted] = useState(true);
+  const [showComments, setShowComments] = useState(false);
+  const [comments, setComments] = useState([]);
+  const [newComment, setNewComment] = useState("");
+  const [following, setFollowing] = useState({});
+  const touchStartY = useRef(0);
+  const videoRefs = useRef({});
+  const REEL_CATEGORIES = ["Entertainment", "Fashion", "Food", "Tech", "Sports", "Beauty", "Business", "Music", "Comedy"];
 
   const fetchReels = async () => {
     setLoading(true);
     const snap = await getDocs(query(collection(db, "reels"), orderBy("createdAt", "desc")));
-    setReels(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    setReels(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => !r.deleted));
     setLoading(false);
   };
 
   useEffect(() => { fetchReels(); }, []);
+
+  useEffect(() => {
+    Object.keys(videoRefs.current).forEach(key => {
+      const video = videoRefs.current[key];
+      if (!video) return;
+      if (parseInt(key) === currentIndex) { video.play().catch(() => {}); }
+      else { video.pause(); video.currentTime = 0; }
+    });
+  }, [currentIndex]);
+
+  const handleTouchStart = (e) => { touchStartY.current = e.touches[0].clientY; };
+  const handleTouchEnd = (e) => {
+    const diff = touchStartY.current - e.changedTouches[0].clientY;
+    if (diff > 60 && currentIndex < reels.length - 1) setCurrentIndex(p => p + 1);
+    if (diff < -60 && currentIndex > 0) setCurrentIndex(p => p - 1);
+  };
+
+  const handleLike = async (reel) => {
+    const isLiked = liked[reel.id];
+    setLiked(prev => ({ ...prev, [reel.id]: !isLiked }));
+    setReels(prev => prev.map(r => r.id === reel.id ? { ...r, likes: (r.likes || 0) + (isLiked ? -1 : 1) } : r));
+    await setDoc(doc(db, "reelLikes", reel.id + "_" + (user?.uid || "g")), { liked: !isLiked, createdAt: serverTimestamp() }, { merge: true });
+  };
+
+  const handleFollow = async (reel) => {
+    if (!user) return;
+    const isF = following[reel.userId];
+    setFollowing(prev => ({ ...prev, [reel.userId]: !isF }));
+    if (!isF) {
+      await setDoc(doc(db, "users", user.uid, "following", reel.userId), { name: reel.userName, followedAt: serverTimestamp() });
+      await setDoc(doc(db, "users", reel.userId, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
+    }
+  };
+
+  const handleShare = (reel) => {
+    if (navigator.share) navigator.share({ title: reel.description, text: `Watch on E-Connect!`, url: window.location.href });
+    else navigator.clipboard.writeText(window.location.href);
+    setReels(prev => prev.map(r => r.id === reel.id ? { ...r, shares: (r.shares || 0) + 1 } : r));
+  };
+
+  const loadComments = async (reelId) => {
+    const snap = await getDocs(query(collection(db, "reels", reelId, "comments"), orderBy("createdAt")));
+    setComments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+  };
+
+  const postComment = async (reelId) => {
+    if (!newComment.trim()) return;
+    await addDoc(collection(db, "reels", reelId, "comments"), { text: newComment, userName: user?.displayName || "User", userPhoto: user?.photoURL || "", createdAt: serverTimestamp() });
+    setNewComment(""); loadComments(reelId);
+    setReels(prev => prev.map(r => r.id === reelId ? { ...r, comments: (r.comments || 0) + 1 } : r));
+  };
 
   const handleVideoUpload = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     setUploading(true);
     try {
       const data = new FormData();
-      data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq"); data.append("resource_type", "video");
+      data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq");
       const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/video/upload", { method: "POST", body: data });
       const result = await res.json();
-      await addDoc(collection(db, "reels"), {
-        videoUrl: result.secure_url, thumbnailUrl: result.secure_url.replace("/upload/", "/upload/so_0/").replace(".mp4", ".jpg"),
-        description: reelForm.description, userName: user?.displayName || "User",
-        userId: user?.uid, userPhoto: user?.photoURL || "",
-        likes: 0, shares: 0, createdAt: serverTimestamp(),
-      });
-      setShowUpload(false); setReelForm({ description: "" });
-      fetchReels();
+      await addDoc(collection(db, "reels"), { videoUrl: result.secure_url, description: reelForm.description, category: reelForm.category, userName: user?.displayName || "User", userId: user?.uid, userPhoto: user?.photoURL || "", likes: 0, shares: 0, comments: 0, createdAt: serverTimestamp() });
+      setShowUpload(false); setReelForm({ description: "", category: "Entertainment" }); fetchReels();
     } catch (err) { console.error(err); }
     setUploading(false);
   };
 
-  const handleLike = async (reelId, currentLikes) => {
-    await setDoc(doc(db, "reelLikes", reelId + "_" + user?.uid), { reelId, userId: user?.uid, createdAt: serverTimestamp() }, { merge: true });
-    setReels(prev => prev.map(r => r.id === reelId ? { ...r, likes: (currentLikes || 0) + 1 } : r));
-  };
+  if (loading) return <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#000", color: "white", fontSize: 16, fontFamily: FONT }}>Loading Reels...</div>;
 
-  return (
-    <div style={S.page}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <div>
-          <div style={S.sectionTitle}>Reels</div>
-          <div style={{ fontSize: 13, color: C.greyDark }}>Short videos from sellers</div>
-        </div>
-        <button style={{ ...S.btn(), padding: "8px 14px", fontSize: 12 }} onClick={() => setShowUpload(true)}>+ Upload Reel</button>
-      </div>
-
-      {loading ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading reels...</div> :
-      reels.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 60 }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>🎬</div>
-          <p style={{ color: C.greyDark }}>No reels yet. Upload the first one!</p>
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16, marginBottom: 80 }}>
-          {reels.map(r => (
-            <div key={r.id} style={S.card}>
-              <div style={{ background: C.secondary, borderRadius: "14px 14px 0 0", overflow: "hidden", position: "relative" }}>
-                <video src={r.videoUrl} style={{ width: "100%", maxHeight: 400, objectFit: "cover" }} controls poster={r.thumbnailUrl} />
-              </div>
-              <div style={{ padding: 14 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: "50%", overflow: "hidden", background: C.grey }}>
-                    {r.userPhoto ? <img src={r.userPhoto} alt={r.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>👤</div>}
-                  </div>
-                  <div>
-                    <div style={{ fontWeight: 700, fontSize: 13 }}>{r.userName}</div>
-                    <div style={{ fontSize: 12, color: C.greyDark }}>{r.description}</div>
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 12 }}>
-                  <button style={{ ...S.btn("grey"), padding: "7px 14px", fontSize: 12, color: C.text }}
-                    onClick={() => handleLike(r.id, r.likes)}>
-                    ♥ {r.likes || 0}
-                  </button>
-                  <button style={{ ...S.btn("grey"), padding: "7px 14px", fontSize: 12, color: C.text }}
-                    onClick={() => navigator.share ? navigator.share({ title: r.description, url: window.location.href }) : navigator.clipboard.writeText(window.location.href)}>
-                    ↗ Share
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
+  if (reels.length === 0) return (
+    <div style={{ height: "100vh", background: "#000", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "white", fontFamily: FONT }}>
+      <div style={{ fontSize: 64, marginBottom: 16 }}>🎬</div>
+      <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>No Reels Yet</div>
+      <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 13, marginBottom: 24 }}>Be the first to upload!</div>
+      <button style={{ ...S.btn(), padding: "12px 24px" }} onClick={() => setShowUpload(true)}>+ Upload Reel</button>
       {showUpload && (
         <div style={S.modal} onClick={() => setShowUpload(false)}>
           <div style={S.modalBox} onClick={e => e.stopPropagation()}>
             <h3 style={{ fontWeight: 800, fontSize: 20, marginBottom: 16 }}>Upload a Reel</h3>
-            <label style={S.label}>Description</label>
-            <textarea style={{ ...S.input, height: 80, resize: "vertical", marginBottom: 16 }} placeholder="Describe your reel..." value={reelForm.description} onChange={e => setReelForm({ ...reelForm, description: e.target.value })} />
-            <div style={{ border: `2px dashed ${C.border}`, borderRadius: 12, padding: 24, textAlign: "center", marginBottom: 16, cursor: "pointer" }}
-              onClick={() => document.getElementById("reelVideoInput").click()}>
-              <div style={{ fontSize: 36, marginBottom: 8 }}>🎬</div>
-              <div style={{ fontSize: 13, color: C.greyDark }}>{uploading ? "Uploading video..." : "Tap to select a video"}</div>
-              <div style={{ fontSize: 11, color: C.greyDark, marginTop: 4 }}>MP4, MOV supported</div>
+            <label style={S.label}>Caption</label>
+            <textarea style={{ ...S.input, height: 70, resize: "vertical", marginBottom: 14 }} placeholder="Write a caption..." value={reelForm.description} onChange={e => setReelForm({ ...reelForm, description: e.target.value })} />
+            <div style={{ border: `2px dashed ${C.border}`, borderRadius: 12, padding: 24, textAlign: "center", marginBottom: 14, cursor: "pointer", background: C.grey }} onClick={() => document.getElementById("reelVideoInput2").click()}>
+              <div style={{ fontSize: 40, marginBottom: 8 }}>🎬</div>
+              <div style={{ fontSize: 13, color: C.greyDark }}>{uploading ? "Uploading..." : "Tap to select video"}</div>
+            </div>
+            <input id="reelVideoInput2" type="file" accept="video/*" style={{ display: "none" }} onChange={handleVideoUpload} />
+            <button style={{ ...S.btn("outline"), width: "100%" }} onClick={() => setShowUpload(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  const reel = reels[currentIndex];
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 50, fontFamily: FONT, overflow: "hidden" }}
+      onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+
+      <video key={reel.id} ref={el => videoRefs.current[currentIndex] = el}
+        src={reel.videoUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        loop muted={muted} playsInline autoPlay
+        onClick={() => { const v = videoRefs.current[currentIndex]; if (v) v.paused ? v.play() : v.pause(); }} />
+
+      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(transparent 50%, rgba(0,0,0,0.75) 100%)", pointerEvents: "none" }} />
+
+      {/* Top */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div style={{ fontWeight: 900, fontSize: 22, color: "white" }}>E-Connect</div>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          {reel.category && <span style={{ background: "rgba(255,255,255,0.2)", backdropFilter: "blur(4px)", borderRadius: 20, padding: "4px 12px", fontSize: 12, color: "white", fontWeight: 600 }}>{reel.category}</span>}
+          <button style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "50%", width: 36, height: 36, cursor: "pointer", color: "white", fontSize: 20, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowUpload(true)}>+</button>
+        </div>
+      </div>
+
+      {/* Right Actions */}
+      <div style={{ position: "absolute", right: 16, bottom: 100, display: "flex", flexDirection: "column", alignItems: "center", gap: 22 }}>
+        <div style={{ position: "relative" }}>
+          <div style={{ width: 48, height: 48, borderRadius: "50%", overflow: "hidden", border: "2px solid white", background: "#333" }}>
+            {reel.userPhoto ? <img src={reel.userPhoto} alt={reel.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 20 }}>👤</div>}
+          </div>
+          <button style={{ position: "absolute", bottom: -10, left: "50%", transform: "translateX(-50%)", background: following[reel.userId] ? "white" : C.primary, border: "none", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", fontSize: 13, color: following[reel.userId] ? C.primary : "white", fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center" }}
+            onClick={() => handleFollow(reel)}>{following[reel.userId] ? "✓" : "+"}</button>
+        </div>
+
+        {[
+          { icon: liked[reel.id] ? "❤️" : "🤍", count: reel.likes || 0, action: () => handleLike(reel) },
+          { icon: "💬", count: reel.comments || 0, action: () => { setShowComments(true); loadComments(reel.id); } },
+          { icon: "↗️", count: reel.shares || 0, action: () => handleShare(reel) },
+        ].map((btn, i) => (
+          <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+            <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 30, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.5))" }} onClick={btn.action}>{btn.icon}</button>
+            <span style={{ color: "white", fontSize: 12, fontWeight: 700 }}>{btn.count}</span>
+          </div>
+        ))}
+
+        <button style={{ background: "rgba(255,255,255,0.15)", backdropFilter: "blur(4px)", border: "none", borderRadius: "50%", width: 44, height: 44, cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}
+          onClick={() => setMuted(!muted)}>{muted ? "🔇" : "🔊"}</button>
+      </div>
+
+      {/* Bottom Info */}
+      <div style={{ position: "absolute", bottom: 90, left: 16, right: 80 }}>
+        <div style={{ color: "white", fontWeight: 700, fontSize: 15, marginBottom: 6 }}>@{reel.userName}</div>
+        <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 13, lineHeight: 1.5 }}>{reel.description}</div>
+      </div>
+
+      {/* Scroll dots */}
+      <div style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", display: "flex", flexDirection: "column", gap: 4 }}>
+        {reels.map((_, i) => (
+          <div key={i} style={{ width: 3, height: i === currentIndex ? 18 : 5, borderRadius: 3, background: i === currentIndex ? "white" : "rgba(255,255,255,0.35)", transition: "all 0.3s", cursor: "pointer" }}
+            onClick={() => setCurrentIndex(i)} />
+        ))}
+      </div>
+
+      {/* Swipe hint */}
+      {currentIndex === 0 && reels.length > 1 && (
+        <div style={{ position: "absolute", bottom: 100, left: "50%", transform: "translateX(-50%)", color: "rgba(255,255,255,0.5)", fontSize: 11, display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+          <span style={{ fontSize: 18 }}>↑</span><span>Swipe up</span>
+        </div>
+      )}
+
+      {/* Comments Panel */}
+      {showComments && (
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(15,15,15,0.97)", borderRadius: "20px 20px 0 0", maxHeight: "55vh", zIndex: 20, display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ color: "white", fontWeight: 700, fontSize: 15 }}>Comments · {reel.comments || 0}</span>
+            <button style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 18, cursor: "pointer" }} onClick={() => setShowComments(false)}>✕</button>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
+            {comments.length === 0 ? <div style={{ color: "rgba(255,255,255,0.4)", textAlign: "center", padding: 20, fontSize: 13 }}>No comments yet</div> :
+            comments.map(c => (
+              <div key={c.id} style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+                <div style={{ width: 32, height: 32, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
+                  {c.userPhoto ? <img src={c.userPhoto} alt={c.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}>👤</div>}
+                </div>
+                <div>
+                  <div style={{ color: "white", fontWeight: 700, fontSize: 12, marginBottom: 2 }}>{c.userName}</div>
+                  <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 13 }}>{c.text}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ padding: "10px 14px", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 10 }}>
+            <input style={{ ...S.input, flex: 1, background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.1)" }} placeholder="Add a comment..." value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === "Enter" && postComment(reel.id)} />
+            <button style={{ ...S.btn(), padding: "10px 16px", fontSize: 12 }} onClick={() => postComment(reel.id)}>Post</button>
+          </div>
+        </div>
+      )}
+
+      {/* Upload Modal */}
+      {showUpload && (
+        <div style={S.modal} onClick={() => setShowUpload(false)}>
+          <div style={S.modalBox} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontWeight: 800, fontSize: 20, marginBottom: 16 }}>Upload a Reel</h3>
+            <label style={S.label}>Category</label>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+              {REEL_CATEGORIES.map(cat => (
+                <button key={cat} style={{ ...S.btn(reelForm.category === cat ? "primary" : "grey"), padding: "5px 10px", fontSize: 11 }}
+                  onClick={() => setReelForm({ ...reelForm, category: cat })}>{cat}</button>
+              ))}
+            </div>
+            <label style={S.label}>Caption</label>
+            <textarea style={{ ...S.input, height: 70, resize: "vertical", marginBottom: 14 }} placeholder="Write a caption for your reel..." value={reelForm.description} onChange={e => setReelForm({ ...reelForm, description: e.target.value })} />
+            <div style={{ border: `2px dashed ${C.border}`, borderRadius: 12, padding: 24, textAlign: "center", marginBottom: 14, cursor: "pointer", background: C.grey }} onClick={() => document.getElementById("reelVideoInput").click()}>
+              <div style={{ fontSize: 40, marginBottom: 8 }}>🎬</div>
+              <div style={{ fontSize: 13, color: C.greyDark, fontWeight: 600 }}>{uploading ? "Uploading... please wait" : "Tap to select your video"}</div>
+              <div style={{ fontSize: 11, color: C.greyDark, marginTop: 4 }}>MP4, MOV · Any length</div>
             </div>
             <input id="reelVideoInput" type="file" accept="video/*" style={{ display: "none" }} onChange={handleVideoUpload} />
             <button style={{ ...S.btn("outline"), width: "100%" }} onClick={() => setShowUpload(false)}>Cancel</button>
