@@ -308,6 +308,109 @@ function StoriesBar({ user }) {
 }
 
 
+
+// ── Edit Product Modal ─────────────────────────────────────────
+function EditProductModal({ product, user, onClose, onUpdated }) {
+  const [form, setForm] = useState({
+    name: product.name || "",
+    price: product.price || "",
+    category: product.category || "Fashion",
+    description: product.description || "",
+    stock: product.stock || "",
+  });
+  const [imageUrl, setImageUrl] = useState(product.image || "");
+  const [imagePreview, setImagePreview] = useState(product.image || "");
+  const [uploading, setUploading] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleImageUpload = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    setUploading(true);
+    try {
+      const data = new FormData();
+      data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq");
+      const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
+      const result = await res.json();
+      setImageUrl(result.secure_url);
+      setImagePreview(result.secure_url);
+    } catch (err) { setError("Image upload failed. Try again."); }
+    setUploading(false);
+  };
+
+  const handleUpdate = async () => {
+    if (!form.name || !form.price) { setError("Please fill in name and price."); return; }
+    setLoading(true);
+    try {
+      await setDoc(doc(db, "products", product.id), {
+        name: form.name, price: Number(form.price), category: form.category,
+        description: form.description, image: imageUrl,
+        stock: Number(form.stock) || 0,
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      onUpdated(); onClose();
+    } catch (err) { setError(err.message); }
+    setLoading(false);
+  };
+
+  const handleDelete = async () => {
+    const confirm = window.confirm("Are you sure you want to delete this product? This cannot be undone.");
+    if (!confirm) return;
+    await setDoc(doc(db, "products", product.id), { deleted: true }, { merge: true });
+    onUpdated(); onClose();
+  };
+
+  return (
+    <div style={S.modal} onClick={onClose}>
+      <div style={S.modalBox} onClick={e => e.stopPropagation()}>
+        <h3 style={{ fontWeight: 800, fontSize: 20, marginBottom: 16 }}>Edit Product</h3>
+        {error && <div style={S.alert("error")}>{error}</div>}
+
+        <label style={S.label}>Product Image</label>
+        <div style={{ border: `2px dashed ${C.border}`, borderRadius: 12, padding: 16, textAlign: "center", marginBottom: 12, cursor: "pointer", background: C.grey }}
+          onClick={() => document.getElementById("editImgInput").click()}>
+          {imagePreview ? (
+            <img src={imagePreview} alt="Preview" style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 8 }} />
+          ) : (
+            <div>
+              <div style={{ fontSize: 36, marginBottom: 8 }}>📸</div>
+              <div style={{ fontSize: 13, color: C.greyDark }}>{uploading ? "Uploading..." : "Tap to add a product photo"}</div>
+            </div>
+          )}
+        </div>
+        <input id="editImgInput" type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageUpload} />
+
+        <label style={S.label}>Product Name *</label>
+        <input style={{ ...S.input, marginBottom: 12 }} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
+
+        <label style={S.label}>Price (GH₵) *</label>
+        <input style={{ ...S.input, marginBottom: 12 }} type="number" value={form.price} onChange={e => setForm({ ...form, price: e.target.value })} />
+
+        <label style={S.label}>Category</label>
+        <select style={{ ...S.input, marginBottom: 12 }} value={form.category} onChange={e => setForm({ ...form, category: e.target.value })}>
+          {CATEGORIES.filter(c => c !== "All").map(c => <option key={c}>{c}</option>)}
+        </select>
+
+        <label style={S.label}>Description</label>
+        <textarea style={{ ...S.input, marginBottom: 12, height: 80, resize: "vertical" }} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} />
+
+        <label style={S.label}>Stock Quantity</label>
+        <input style={{ ...S.input, marginBottom: 16 }} type="number" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })} />
+
+        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+          <button style={{ ...S.btn(), flex: 1, opacity: (loading || uploading) ? 0.7 : 1 }} onClick={handleUpdate} disabled={loading || uploading}>
+            {loading ? "Saving..." : uploading ? "Uploading..." : "Save Changes"}
+          </button>
+          <button style={{ ...S.btn("outline"), flex: 1 }} onClick={onClose}>Cancel</button>
+        </div>
+        <button style={{ ...S.btn("outline"), width: "100%", color: C.error, borderColor: C.error }} onClick={handleDelete}>
+          🗑️ Delete Product
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Approved Ads Banner ────────────────────────────────────────
 function ApprovedAdsBanner() {
   const [ads, setAds] = useState([]);
@@ -854,6 +957,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [following, setFollowing] = useState([]);
   const [friends, setFriends] = useState([]);
   const [showStore, setShowStore] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
   const [storeForm, setStoreForm] = useState({ businessName: "", description: "", contact: "", logoUrl: "", adType: "image", adMediaUrl: "", adTitle: "", adDescription: "", adThumbnail: "", adUploading: false });
   const [storeSaved, setStoreSaved] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
@@ -998,12 +1102,17 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14 }}>
           {myProducts.map(p => (
             <div key={p.id} style={{ ...S.card, overflow: "hidden" }}>
-              <div style={{ height: 120, background: C.grey, overflow: "hidden" }}>
-                {p.image && <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+              <div style={{ height: 120, background: C.grey, overflow: "hidden", position: "relative" }}>
+                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4 }}><div style={{ fontSize: 28 }}>📦</div><div style={{ fontSize: 10, color: C.greyDark }}>No photo</div></div>}
+                <button style={{ position: "absolute", top: 6, right: 6, background: C.white, border: "none", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", color: C.primary, boxShadow: "0 1px 4px rgba(0,0,0,0.15)" }}
+                  onClick={() => setEditingProduct(p)}>
+                  Edit
+                </button>
               </div>
               <div style={{ padding: 10 }}>
                 <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
                 <div style={{ color: C.primary, fontWeight: 700 }}>GH₵{p.price}</div>
+                {!p.image && <div style={{ fontSize: 10, color: C.error, marginTop: 2 }}>⚠️ No photo added</div>}
               </div>
             </div>
           ))}
@@ -1044,6 +1153,18 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             </div>
           ))}
         </div>
+      )}
+
+      {editingProduct && (
+        <EditProductModal
+          product={editingProduct}
+          user={user}
+          onClose={() => setEditingProduct(null)}
+          onUpdated={() => {
+            getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid))).then(snap => setMyProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted)));
+            setEditingProduct(null);
+          }}
+        />
       )}
 
       {showStore && (
