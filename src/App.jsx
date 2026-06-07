@@ -83,9 +83,10 @@ function Auth({ setUser }) {
         if (!form.name) { setError("Please enter your full name."); setLoading(false); return; }
         const res = await createUserWithEmailAndPassword(auth, form.email, form.password);
         await updateProfile(res.user, { displayName: form.name });
+        const adminEmails = ["admin@econnect.gh", "asantegideon060@gmail.com", "selormatsubonuedie@gmail.com", "akowuahisaac686@gmail.com", "nyarkomatthew925491@gmail.com", "ebenezer.boateng009@stu.ucc.edu.gh"];
         await setDoc(doc(db, "users", res.user.uid), {
           name: form.name, email: form.email, phone: form.phone,
-          role: form.email === "admin@econnect.gh" ? "admin" : "user",
+          role: adminEmails.includes(form.email) ? "admin" : "user",
           followers: 0, following: 0, createdAt: serverTimestamp()
         });
         setUser(res.user);
@@ -125,7 +126,7 @@ function Auth({ setUser }) {
         <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>
           {loading ? "Please wait..." : isLogin ? "Login" : "Create Account"}
         </button>
-        <p style={{ color: C.greyDark, fontSize: 12, textAlign: "center", marginTop: 16 }}>Admin access: admin@econnect.gh</p>
+        <p style={{ color: C.greyDark, fontSize: 12, textAlign: "center", marginTop: 16 }}>Register with your email to get started</p>
       </div>
     </div>
   );
@@ -1638,7 +1639,8 @@ export default function App() {
   if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, color: C.primary, fontSize: 20, fontWeight: 700 }}>Loading E-Connect...</div>;
   if (!user) return <Auth setUser={setUser} />;
 
-  const isAdmin = user.email === "admin@econnect.gh";
+  const ADMIN_EMAILS = ["admin@econnect.gh", "asantegideon060@gmail.com", "selormatsubonuedie@gmail.com", "akowuahisaac686@gmail.com", "nyarkomatthew925491@gmail.com", "ebenezer.boateng009@stu.ucc.edu.gh"];
+  const isAdmin = ADMIN_EMAILS.includes(user.email);
 
   const NavIcon = ({ id, active }) => {
     const color = active ? C.primary : C.greyDark;
