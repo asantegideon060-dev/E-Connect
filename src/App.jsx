@@ -2392,6 +2392,7 @@ export default function App() {
   const [page, setPage] = useState("home");
   const [cart, setCart] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("econnect-theme");
     if (saved) return saved;
@@ -2423,8 +2424,7 @@ export default function App() {
   if (!user) return <Auth setUser={setUser} />;
 
   const ADMIN_EMAILS = ["admin@econnect.gh", "asantegideon060@gmail.com", "selormatsubonuedie@gmail.com", "akowuahisaac686@gmail.com", "nyarkomatthew925491@gmail.com", "ebenezer.boateng009@stu.ucc.edu.gh"];
-  const isAdmin = ADMIN_EMAILS.includes(user.email);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const isAdmin = ADMIN_EMAILS.includes(user?.email);
 
   useEffect(() => {
     if (!user) return;
