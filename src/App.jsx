@@ -425,6 +425,217 @@ function EditProductModal({ product, user, onClose, onUpdated }) {
 }
 
 
+
+// ── Order Tracking Page ────────────────────────────────────────
+function OrderTrackingPage({ user }) {
+  const [orders, setOrders] = useState([]);
+  const [sellerOrders, setSellerOrders] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState("my-orders");
+  const [selectedOrder, setSelectedOrder] = useState(null);
+
+  const ORDER_STATUSES = [
+    { key: "pending", label: "Order Received", icon: "📥", color: "#F59E0B" },
+    { key: "processing", label: "Processing", icon: "⚙️", color: "#3B82F6" },
+    { key: "out_for_delivery", label: "Out for Delivery", icon: "🚚", color: "#8B5CF6" },
+    { key: "delivered", label: "Delivered", icon: "✅", color: "#10B981" },
+    { key: "cancelled", label: "Cancelled", icon: "❌", color: "#EF4444" },
+  ];
+
+  const getStatusIndex = (status) => ORDER_STATUSES.findIndex(s => s.key === status);
+  const getStatus = (key) => ORDER_STATUSES.find(s => s.key === key) || ORDER_STATUSES[0];
+
+  useEffect(() => {
+    if (!user) return;
+    setLoading(true);
+    getDocs(query(collection(db, "orders"), where("userId", "==", user.uid), orderBy("createdAt", "desc")))
+      .then(snap => { setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); });
+    getDocs(query(collection(db, "orders")))
+      .then(snap => {
+        const mine = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(o =>
+          o.items?.some(i => i.sellerId === user.uid)
+        );
+        setSellerOrders(mine);
+      });
+  }, [user]);
+
+  const updateOrderStatus = async (orderId, newStatus, buyerId) => {
+    await setDoc(doc(db, "orders", orderId), { status: newStatus, updatedAt: serverTimestamp() }, { merge: true });
+    const statusInfo = getStatus(newStatus);
+    await sendNotification(buyerId, "order", `Your order status has been updated to: ${statusInfo.label} ${statusInfo.icon}`, "E-Connect");
+    setSellerOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+    setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
+    if (selectedOrder?.id === orderId) setSelectedOrder(prev => ({ ...prev, status: newStatus }));
+  };
+
+  const getTimeAgo = (ts) => {
+    if (!ts) return "";
+    const now = Date.now();
+    const time = ts.toMillis ? ts.toMillis() : new Date(ts).getTime();
+    const diff = Math.floor((now - time) / 60000);
+    if (diff < 60) return `${diff}m ago`;
+    if (diff < 1440) return `${Math.floor(diff / 60)}h ago`;
+    return `${Math.floor(diff / 1440)}d ago`;
+  };
+
+  return (
+    <div style={S.page}>
+      <div style={S.sectionTitle}>Orders</div>
+      <p style={S.sectionSub}>Track and manage all orders</p>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        {[
+          { key: "my-orders", label: "My Orders" },
+          { key: "seller-orders", label: "Customer Orders" },
+        ].map(t => (
+          <button key={t.key} style={{ ...S.btn(tab === t.key ? "primary" : "grey"), padding: "8px 16px" }}
+            onClick={() => setTab(t.key)}>{t.label}</button>
+        ))}
+      </div>
+
+      {loading ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading orders...</div> : (
+
+        tab === "my-orders" ? (
+          orders.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 60 }}>
+              <div style={{ fontSize: 56, marginBottom: 12 }}>🛒</div>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>No orders yet</div>
+              <div style={{ color: C.greyDark, fontSize: 13 }}>Your orders will appear here after you shop.</div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 80 }}>
+              {orders.map(order => {
+                const status = getStatus(order.status || "pending");
+                const statusIdx = getStatusIndex(order.status || "pending");
+                return (
+                  <div key={order.id} style={{ ...S.card, padding: 16, cursor: "pointer" }}
+                    onClick={() => setSelectedOrder(order)}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 15 }}>Order · GH₵{order.total}</div>
+                        <div style={{ fontSize: 12, color: C.greyDark, marginTop: 2 }}>{order.items?.length} item{order.items?.length !== 1 ? "s" : ""} · {getTimeAgo(order.createdAt)}</div>
+                      </div>
+                      <span style={{ background: `${status.color}20`, color: status.color, borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 700 }}>
+                        {status.icon} {status.label}
+                      </span>
+                    </div>
+
+                    {order.status !== "cancelled" && (
+                      <div style={{ display: "flex", alignItems: "center", gap: 0, marginBottom: 12 }}>
+                        {ORDER_STATUSES.filter(s => s.key !== "cancelled").map((s, i) => {
+                          const activeIdx = getStatusIndex(order.status || "pending");
+                          const isActive = i <= activeIdx;
+                          return (
+                            <div key={s.key} style={{ display: "flex", alignItems: "center", flex: i < 3 ? 1 : 0 }}>
+                              <div style={{ width: 28, height: 28, borderRadius: "50%", background: isActive ? s.color : C.greyMid, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0, border: `2px solid ${isActive ? s.color : C.greyMid}` }}>
+                                {isActive ? s.icon : <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.greyDark }} />}
+                              </div>
+                              {i < 3 && <div style={{ flex: 1, height: 3, background: i < activeIdx ? s.color : C.greyMid, transition: "background 0.3s" }} />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div style={{ display: "flex", gap: 8, overflowX: "auto" }}>
+                      {order.items?.slice(0, 3).map((item, i) => (
+                        <div key={i} style={{ width: 44, height: 44, borderRadius: 8, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
+                          {item.image && <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                        </div>
+                      ))}
+                      {order.items?.length > 3 && <div style={{ width: 44, height: 44, borderRadius: 8, background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: C.greyDark, fontWeight: 700 }}>+{order.items.length - 3}</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        ) : (
+          sellerOrders.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 60 }}>
+              <div style={{ fontSize: 56, marginBottom: 12 }}>📦</div>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>No customer orders yet</div>
+              <div style={{ color: C.greyDark, fontSize: 13 }}>Orders from customers will appear here.</div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 80 }}>
+              {sellerOrders.map(order => {
+                const status = getStatus(order.status || "pending");
+                return (
+                  <div key={order.id} style={{ ...S.card, padding: 16 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 15 }}>{order.customerName}</div>
+                        <div style={{ fontSize: 12, color: C.greyDark }}>{order.customerPhone} · {order.delivery} · GH₵{order.total}</div>
+                        <div style={{ fontSize: 12, color: C.greyDark, marginTop: 2 }}>{getTimeAgo(order.createdAt)}</div>
+                      </div>
+                      <span style={{ background: `${status.color}20`, color: status.color, borderRadius: 20, padding: "4px 10px", fontSize: 11, fontWeight: 700 }}>
+                        {status.icon} {status.label}
+                      </span>
+                    </div>
+
+                    <div style={{ marginBottom: 10 }}>
+                      {order.items?.filter(i => i.sellerId === user.uid).map((item, i) => (
+                        <div key={i} style={{ fontSize: 13, color: C.text, marginBottom: 3 }}>• {item.name} × {item.qty} · GH₵{item.price * item.qty}</div>
+                      ))}
+                    </div>
+
+                    {order.address && <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 10 }}>📍 {order.address}</div>}
+
+                    <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>Update Status:</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {ORDER_STATUSES.map(s => (
+                        <button key={s.key} style={{ background: order.status === s.key ? s.color : C.grey, color: order.status === s.key ? "white" : C.text, border: "none", borderRadius: 20, padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}
+                          onClick={() => updateOrderStatus(order.id, s.key, order.userId)}>
+                          {s.icon} {s.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )
+        )
+      )}
+
+      {selectedOrder && (
+        <div style={S.modal} onClick={() => setSelectedOrder(null)}>
+          <div style={S.modalBox} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Order Details</h3>
+            <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 16 }}>{getTimeAgo(selectedOrder.createdAt)}</div>
+            <div style={{ ...S.card, padding: 14, marginBottom: 14, background: `${getStatus(selectedOrder.status).color}10`, border: `1px solid ${getStatus(selectedOrder.status).color}30` }}>
+              <div style={{ fontWeight: 700, color: getStatus(selectedOrder.status).color, fontSize: 15 }}>
+                {getStatus(selectedOrder.status).icon} {getStatus(selectedOrder.status).label}
+              </div>
+            </div>
+            {selectedOrder.items?.map((item, i) => (
+              <div key={i} style={{ display: "flex", gap: 12, marginBottom: 10, alignItems: "center" }}>
+                <div style={{ width: 48, height: 48, borderRadius: 8, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
+                  {item.image && <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{item.name}</div>
+                  <div style={{ fontSize: 12, color: C.greyDark }}>{item.seller} · Qty: {item.qty}</div>
+                </div>
+                <div style={{ fontWeight: 700, color: C.primary }}>GH₵{item.price * item.qty}</div>
+              </div>
+            ))}
+            <div style={{ height: 1, background: C.border, margin: "12px 0" }} />
+            <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 800, fontSize: 16, marginBottom: 14 }}>
+              <span>Total</span>
+              <span style={{ color: C.primary }}>GH₵{selectedOrder.total}</span>
+            </div>
+            <div style={{ fontSize: 13, color: C.greyDark, marginBottom: 4 }}>📞 {selectedOrder.customerPhone}</div>
+            {selectedOrder.address && <div style={{ fontSize: 13, color: C.greyDark, marginBottom: 14 }}>📍 {selectedOrder.address}</div>}
+            <button style={{ ...S.btn("outline"), width: "100%" }} onClick={() => setSelectedOrder(null)}>Close</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Notifications Page ─────────────────────────────────────────
 function NotificationsPage({ user }) {
   const [notifications, setNotifications] = useState([]);
@@ -795,7 +1006,7 @@ function Cart({ cart, setCart, setPage, user }) {
     });
     setDone(true); setCart([]);
     setLoading(false);
-    setTimeout(() => { setDone(false); setCheckout(false); setPage("home"); }, 3000);
+    setTimeout(() => { setDone(false); setCheckout(false); setPage("orders"); }, 3000);
   };
 
   if (done) return (
@@ -2076,6 +2287,7 @@ export default function App() {
       cart: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6 2L3 6V20C3 21.1 3.9 22 5 22H19C20.1 22 21 21.1 21 20V6L18 2H6Z" stroke={color} strokeWidth="1.8"/><path d="M3 6H21" stroke={color} strokeWidth="1.8"/><path d="M16 10C16 12.2 14.2 14 12 14C9.8 14 8 12.2 8 10" stroke={color} strokeWidth="1.8" strokeLinecap="round"/></svg>,
       messages: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M21 15C21 15.5 20.8 16 20.4 16.4C20 16.8 19.5 17 19 17H7L3 21V5C3 4.5 3.2 4 3.6 3.6C4 3.2 4.5 3 5 3H19C19.5 3 20 3.2 20.4 3.6C20.8 4 21 4.5 21 5V15Z" stroke={color} strokeWidth="1.8" fill={active ? `${C.primary}20` : "none"}/></svg>,
       reels: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="4" stroke={color} strokeWidth="1.8"/><path d="M10 8L16 12L10 16V8Z" fill={active ? C.primary : "none"} stroke={color} strokeWidth="1.8" strokeLinejoin="round"/></svg>,
+      orders: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke={color} strokeWidth="1.8" strokeLinecap="round"/><rect x="9" y="3" width="6" height="4" rx="1" stroke={color} strokeWidth="1.8"/><path d="M9 12h6M9 16h4" stroke={color} strokeWidth="1.8" strokeLinecap="round"/></svg>,
       profile: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke={color} strokeWidth="1.8"/><path d="M4 20C4 16.7 7.6 14 12 14C16.4 14 20 16.7 20 20" stroke={color} strokeWidth="1.8" strokeLinecap="round"/></svg>,
     };
     return icons[id] || null;
@@ -2085,6 +2297,7 @@ export default function App() {
     { id: "home", label: "Home" },
     { id: "discover", label: "Discover" },
     { id: "reels", label: "Reels" },
+    { id: "orders", label: "Orders" },
     { id: "cart", label: "Cart", badge: cart.length },
     { id: "messages", label: "Messages" },
     { id: "profile", label: "Profile" },
@@ -2098,6 +2311,7 @@ export default function App() {
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
       case "reels": return <ReelsPage user={user} />;
       case "notifications": return <NotificationsPage user={user} />;
+      case "orders": return <OrderTrackingPage user={user} />;
       case "messages": return <Messages user={user} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
       case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
