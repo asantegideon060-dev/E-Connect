@@ -32,8 +32,7 @@ const THEMES = {
   },
 };
 
-// Theme will be set dynamically - default to light
-let C = { ...THEMES.light };
+const C = THEMES.light;
 
 const FONT = "'DM Sans', 'Nunito', sans-serif";
 
@@ -425,6 +424,156 @@ function EditProductModal({ product, user, onClose, onUpdated }) {
 }
 
 
+
+
+// ── Location Search Page ───────────────────────────────────────
+function LocationPage({ user, setPage, setSelectedProduct }) {
+  const [userLocation, setUserLocation] = useState(null);
+  const [locationError, setLocationError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [sellers, setSellers] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [search, setSearch] = useState("");
+  const [cityFilter, setCityFilter] = useState("");
+  const [tab, setTab] = useState("sellers");
+
+  const GHANA_CITIES = ["Cape Coast", "Accra", "Kumasi", "Takoradi", "Tamale", "Sunyani", "Ho", "Koforidua", "Wa", "Bolgatanga"];
+
+  useEffect(() => {
+    getDocs(collection(db, "users")).then(snap => setSellers(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.isSeller && s.city)));
+    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted && p.sellerCity)));
+  }, []);
+
+  const detectLocation = () => {
+    setLoading(true);
+    setLocationError("");
+    if (!navigator.geolocation) { setLocationError("Geolocation is not supported by your browser."); setLoading(false); return; }
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const { latitude, longitude } = pos.coords;
+        setUserLocation({ lat: latitude, lng: longitude });
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`);
+          const data = await res.json();
+          const city = data.address?.city || data.address?.town || data.address?.village || "Unknown";
+          setCityFilter(city);
+          if (user) await setDoc(doc(db, "users", user.uid), { city, lat: latitude, lng: longitude }, { merge: true });
+        } catch (err) { console.error(err); }
+        setLoading(false);
+      },
+      (err) => { setLocationError("Could not get your location. Please select your city manually."); setLoading(false); }
+    );
+  };
+
+  const filteredSellers = sellers.filter(s => {
+    const matchCity = !cityFilter || s.city?.toLowerCase().includes(cityFilter.toLowerCase());
+    const matchSearch = !search || s.businessName?.toLowerCase().includes(search.toLowerCase()) || s.name?.toLowerCase().includes(search.toLowerCase());
+    return matchCity && matchSearch;
+  });
+
+  const filteredProducts = products.filter(p => {
+    const matchCity = !cityFilter || p.sellerCity?.toLowerCase().includes(cityFilter.toLowerCase());
+    const matchSearch = !search || p.name?.toLowerCase().includes(search.toLowerCase());
+    return matchCity && matchSearch;
+  });
+
+  return (
+    <div style={S.page}>
+      <div style={S.sectionTitle}>Search by Location</div>
+      <p style={S.sectionSub}>Find sellers and products near you</p>
+
+      <div style={{ ...S.card, padding: 16, marginBottom: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>📍 Your Location</div>
+        <button style={{ ...S.btn(), width: "100%", marginBottom: 10, opacity: loading ? 0.7 : 1 }} onClick={detectLocation} disabled={loading}>
+          {loading ? "Detecting location..." : userLocation ? "📍 Location detected. Tap to update" : "📍 Detect My Location"}
+        </button>
+        {locationError && <div style={{ ...S.alert("error"), marginBottom: 8 }}>{locationError}</div>}
+        <div style={{ fontSize: 13, color: C.greyDark, marginBottom: 8 }}>Or select your city:</div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button style={{ ...S.btn(cityFilter === "" ? "primary" : "grey"), padding: "6px 12px", fontSize: 11 }} onClick={() => setCityFilter("")}>All Cities</button>
+          {GHANA_CITIES.map(city => (
+            <button key={city} style={{ ...S.btn(cityFilter === city ? "primary" : "grey"), padding: "6px 12px", fontSize: 11 }}
+              onClick={() => setCityFilter(city)}>{city}</button>
+          ))}
+        </div>
+        {cityFilter && <div style={{ marginTop: 10, fontSize: 13, color: C.primary, fontWeight: 600 }}>📍 Showing results for: {cityFilter}</div>}
+      </div>
+
+      <div style={{ position: "relative", marginBottom: 16 }}>
+        <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }}>🔍</span>
+        <input style={{ ...S.input, paddingLeft: 38 }} placeholder="Search sellers or products..." value={search} onChange={e => setSearch(e.target.value)} />
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        {["sellers", "products"].map(t => (
+          <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 16px", textTransform: "capitalize" }}
+            onClick={() => setTab(t)}>{t} {tab === t && `(${t === "sellers" ? filteredSellers.length : filteredProducts.length})`}</button>
+        ))}
+      </div>
+
+      {tab === "sellers" && (
+        filteredSellers.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 40 }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>🏪</div>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>No sellers found {cityFilter ? `in ${cityFilter}` : ""}</div>
+            <div style={{ color: C.greyDark, fontSize: 13 }}>Try a different city or search term.</div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 80 }}>
+            {filteredSellers.map(s => (
+              <div key={s.id} style={{ ...S.card, padding: 16, display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ width: 52, height: 52, borderRadius: "50%", overflow: "hidden", background: C.grey, flexShrink: 0 }}>
+                  {s.logoUrl ? <img src={s.logoUrl} alt={s.businessName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🏪</div>}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>{s.businessName || s.name}</span>
+                    {s.verified && <VerifiedBadge size={14} />}
+                    {s.premium && <svg width="12" height="12" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>}
+                  </div>
+                  <div style={{ fontSize: 12, color: C.greyDark, marginTop: 2 }}>📍 {s.city}</div>
+                  <div style={{ fontSize: 12, color: C.greyDark }}>{s.storeDescription || "Local seller"}</div>
+                </div>
+                {s.storeContact && (
+                  <a href={`tel:${s.storeContact}`} style={{ textDecoration: "none" }}>
+                    <button style={{ ...S.btn("outline"), padding: "7px 12px", fontSize: 12 }}>📞 Call</button>
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {tab === "products" && (
+        filteredProducts.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 40 }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
+            <div style={{ fontWeight: 700, marginBottom: 8 }}>No products found {cityFilter ? `in ${cityFilter}` : ""}</div>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14, marginBottom: 80 }}>
+            {filteredProducts.map(p => (
+              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+                <div style={{ height: 130, background: C.grey, overflow: "hidden" }}>
+                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>📦</div>}
+                </div>
+                <div style={{ padding: 10 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
+                  <div style={{ fontSize: 11, color: C.greyDark, display: "flex", alignItems: "center", gap: 3 }}>
+                    {p.seller} {p.sellerVerified && <VerifiedBadge size={11} />}
+                  </div>
+                  <div style={{ fontSize: 11, color: C.greyDark }}>📍 {p.sellerCity}</div>
+                  <div style={{ color: C.primary, fontWeight: 800, marginTop: 4 }}>GH₵{p.price}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+    </div>
+  );
+}
 
 // ── Order Tracking Page ────────────────────────────────────────
 function OrderTrackingPage({ user }) {
@@ -1417,7 +1566,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [friends, setFriends] = useState([]);
   const [showStore, setShowStore] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
-  const [storeForm, setStoreForm] = useState({ businessName: "", description: "", contact: "", logoUrl: "", adType: "image", adMediaUrl: "", adTitle: "", adDescription: "", adThumbnail: "", adUploading: false });
+  const [storeForm, setStoreForm] = useState({ businessName: "", description: "", contact: "", logoUrl: "", city: "", adType: "image", adMediaUrl: "", adTitle: "", adDescription: "", adThumbnail: "", adUploading: false });
   const [storeSaved, setStoreSaved] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -1659,7 +1808,12 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             <label style={S.label}>Store Description</label>
             <textarea style={{ ...S.input, marginBottom: 12, height: 80, resize: "vertical" }} placeholder="What do you sell?" value={storeForm.description} onChange={e => setStoreForm({ ...storeForm, description: e.target.value })} />
             <label style={S.label}>Contact (Phone or WhatsApp)</label>
-            <input style={{ ...S.input, marginBottom: 16 }} placeholder="+233..." value={storeForm.contact} onChange={e => setStoreForm({ ...storeForm, contact: e.target.value })} />
+            <input style={{ ...S.input, marginBottom: 12 }} placeholder="+233..." value={storeForm.contact} onChange={e => setStoreForm({ ...storeForm, contact: e.target.value })} />
+            <label style={S.label}>City / Location</label>
+            <select style={{ ...S.input, marginBottom: 16 }} value={storeForm.city} onChange={e => setStoreForm({ ...storeForm, city: e.target.value })}>
+              <option value="">Select your city</option>
+              {["Cape Coast","Accra","Kumasi","Takoradi","Tamale","Sunyani","Ho","Koforidua","Wa","Bolgatanga"].map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
 
             {isPremium && (
               <div style={{ background: "#FFF8E1", border: "2px solid #FFD700", borderRadius: 12, padding: 16, marginBottom: 16 }}>
@@ -1784,7 +1938,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button style={{ ...S.btn(), flex: 1 }} onClick={async () => {
-                await setDoc(doc(db, "users", user.uid), { businessName: storeForm.businessName, storeDescription: storeForm.description, storeContact: storeForm.contact, logoUrl: storeForm.logoUrl, isSeller: true }, { merge: true });
+                await setDoc(doc(db, "users", user.uid), { businessName: storeForm.businessName, storeDescription: storeForm.description, storeContact: storeForm.contact, logoUrl: storeForm.logoUrl, isSeller: true, city: storeForm.city || "" }, { merge: true });
                 setStoreSaved(true); setTimeout(() => { setStoreSaved(false); setShowStore(false); }, 2000);
               }}>Save Store</button>
               <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowStore(false)}>Close</button>
@@ -2245,9 +2399,9 @@ export default function App() {
   });
 
   useEffect(() => {
-    C = { ...THEMES[theme] };
     localStorage.setItem("econnect-theme", theme);
-    document.body.style.background = THEMES[theme].offWhite;
+    document.body.style.background = THEMES[theme]?.offWhite || C.offWhite;
+    document.body.style.color = THEMES[theme]?.text || C.text;
   }, [theme]);
 
   useEffect(() => {
@@ -2288,6 +2442,7 @@ export default function App() {
       messages: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M21 15C21 15.5 20.8 16 20.4 16.4C20 16.8 19.5 17 19 17H7L3 21V5C3 4.5 3.2 4 3.6 3.6C4 3.2 4.5 3 5 3H19C19.5 3 20 3.2 20.4 3.6C20.8 4 21 4.5 21 5V15Z" stroke={color} strokeWidth="1.8" fill={active ? `${C.primary}20` : "none"}/></svg>,
       reels: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><rect x="2" y="2" width="20" height="20" rx="4" stroke={color} strokeWidth="1.8"/><path d="M10 8L16 12L10 16V8Z" fill={active ? C.primary : "none"} stroke={color} strokeWidth="1.8" strokeLinejoin="round"/></svg>,
       orders: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke={color} strokeWidth="1.8" strokeLinecap="round"/><rect x="9" y="3" width="6" height="4" rx="1" stroke={color} strokeWidth="1.8"/><path d="M9 12h6M9 16h4" stroke={color} strokeWidth="1.8" strokeLinecap="round"/></svg>,
+      location: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7z" stroke={color} strokeWidth="1.8" strokeLinecap="round"/><circle cx="12" cy="9" r="2.5" stroke={color} strokeWidth="1.8"/></svg>,
       profile: <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke={color} strokeWidth="1.8"/><path d="M4 20C4 16.7 7.6 14 12 14C16.4 14 20 16.7 20 20" stroke={color} strokeWidth="1.8" strokeLinecap="round"/></svg>,
     };
     return icons[id] || null;
@@ -2298,6 +2453,7 @@ export default function App() {
     { id: "discover", label: "Discover" },
     { id: "reels", label: "Reels" },
     { id: "orders", label: "Orders" },
+    { id: "location", label: "Nearby" },
     { id: "cart", label: "Cart", badge: cart.length },
     { id: "messages", label: "Messages" },
     { id: "profile", label: "Profile" },
@@ -2312,6 +2468,7 @@ export default function App() {
       case "reels": return <ReelsPage user={user} />;
       case "notifications": return <NotificationsPage user={user} />;
       case "orders": return <OrderTrackingPage user={user} />;
+      case "location": return <LocationPage user={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "messages": return <Messages user={user} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
       case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
@@ -2320,7 +2477,7 @@ export default function App() {
   };
 
   return (
-    <div style={{ ...S.app, background: THEMES[theme]?.offWhite || C.offWhite, color: THEMES[theme]?.text || C.text }}>
+    <div style={{ ...S.app, background: THEMES[theme]?.offWhite || C.offWhite, color: THEMES[theme]?.text || C.text, fontFamily: FONT }}>
       <nav style={S.nav}>
         <div style={S.logo} onClick={() => setPage("home")}>E-Connect</div>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
