@@ -39,6 +39,15 @@ const FONT = "'DM Sans', 'Nunito', sans-serif";
 
 const CATEGORIES = ["All", "Fashion", "Electronics", "Beauty", "Food", "Sports", "Home"];
 
+
+// ── Verified Badge SVG ─────────────────────────────────────────
+const VerifiedBadge = ({ size = 16 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
+    <circle cx="12" cy="12" r="10" fill="#1DA1F2"/>
+    <path d="M9 12l2 2 4-4" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+  </svg>
+);
+
 // ── Premium Star SVG ───────────────────────────────────────────
 const PremiumStar = () => (
   <svg width="14" height="14" viewBox="0 0 24 24" fill="#FFD700" style={{ marginLeft: 4, verticalAlign: "middle" }}>
@@ -166,11 +175,15 @@ function AddProductModal({ user, onClose, onAdded }) {
     if (!form.name || !form.price) { setError("Please fill in name and price."); return; }
     setLoading(true);
     try {
+      const userDoc = await getDoc(doc(db, "users", user.uid));
+      const userData = userDoc.exists() ? userDoc.data() : {};
       await addDoc(collection(db, "products"), {
         name: form.name, price: Number(form.price), category: form.category,
         description: form.description, image: imageUrl, stock: Number(form.stock) || 0,
         seller: user.displayName || "Unknown", sellerId: user.uid,
-        likes: 0, rating: 0, reviews: 0, premium: false,
+        sellerVerified: userData.verified || false,
+        sellerPremium: userData.premium || false,
+        likes: 0, rating: 0, reviews: 0, premium: userData.premium || false,
         createdAt: serverTimestamp()
       });
       onAdded(); onClose();
@@ -661,7 +674,10 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
               </div>
               <div style={{ padding: 12 }}>
                 <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{p.name}</div>
-                <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 8 }}>{p.seller}</div>
+                <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 8, display: "flex", alignItems: "center", gap: 4 }}>
+                  {p.seller}
+                  {p.sellerVerified && <VerifiedBadge size={12} />}
+                </div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <span style={{ color: C.primary, fontWeight: 800, fontSize: 16 }}>GH₵{p.price}</span>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1263,7 +1279,11 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
         <input id="profilePhotoInput" type="file" accept="image/*" style={{ display: "none" }} onChange={handlePhotoUpload} />
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontWeight: 800, fontSize: 18 }}>{user?.displayName || "User"}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontWeight: 800, fontSize: 18 }}>{user?.displayName || "User"}</span>
+              {profile?.verified && <VerifiedBadge size={18} />}
+              {profile?.premium && <svg width="16" height="16" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>}
+            </div>
             <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8 }}>{user?.email}</div>
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
               {[{ num: myProducts.length, label: "Products" }, { num: orders.length, label: "Orders" }, { num: followers.length, label: "Followers" }, { num: following.length, label: "Following" }, { num: friends.length, label: "Friends" }].map(s => (
@@ -1524,6 +1544,33 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
               </div>
             )}
 
+            <div style={{ height: 1, background: C.border, margin: "16px 0" }} />
+            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill={C.primary}><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke={C.primary} strokeWidth="2" fill="none" strokeLinecap="round"/></svg>
+              Seller Verification
+            </div>
+            {profile?.verified ? (
+              <div style={{ background: `${C.success}15`, border: `1px solid ${C.success}30`, borderRadius: 10, padding: 12, fontSize: 13, color: C.success, display: "flex", alignItems: "center", gap: 8 }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill={C.success}><path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" stroke={C.success} strokeWidth="2" fill="none" strokeLinecap="round"/></svg>
+                Your account is verified! Blue badge is active.
+              </div>
+            ) : profile?.verificationStatus === "pending" ? (
+              <div style={{ background: "#FEF3C715", border: "1px solid #F59E0B30", borderRadius: 10, padding: 12, fontSize: 13, color: "#D97706", display: "flex", alignItems: "center", gap: 8 }}>
+                ⏳ Verification request pending. Admin will review within 24 hours.
+              </div>
+            ) : (
+              <div>
+                <p style={{ fontSize: 12, color: C.greyDark, marginBottom: 10 }}>Get a blue verified badge on your profile and products. Build trust with buyers.</p>
+                <button style={{ ...S.btn(), width: "100%", fontSize: 13 }} onClick={async () => {
+                  await setDoc(doc(db, "users", user.uid), { verificationStatus: "pending", verificationRequestedAt: serverTimestamp() }, { merge: true });
+                  await sendNotification("admin", "verification", `${user.displayName || "A seller"} has requested verification`, user.displayName);
+                  alert("Verification request submitted! Admin will review within 24 hours.");
+                }}>
+                  Request Verification Badge
+                </button>
+              </div>
+            )}
+
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button style={{ ...S.btn(), flex: 1 }} onClick={async () => {
                 await setDoc(doc(db, "users", user.uid), { businessName: storeForm.businessName, storeDescription: storeForm.description, storeContact: storeForm.contact, logoUrl: storeForm.logoUrl, isSeller: true }, { merge: true });
@@ -1718,13 +1765,27 @@ function Admin() {
             <div style={{ fontSize: 13, color: C.greyDark }}>{u.email} · {u.role || "user"}</div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button style={{ ...S.btn(u.premium ? "grey" : "primary"), padding: "6px 12px", fontSize: 11 }}
-              onClick={async () => {
-                await setDoc(doc(db, "users", u.id), { premium: !u.premium }, { merge: true });
-                setUsers(prev => prev.map(usr => usr.id === u.id ? { ...usr, premium: !usr.premium } : usr));
-              }}>
-              {u.premium ? "Remove Premium" : "Activate Premium"}
-            </button>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button style={{ ...S.btn(u.premium ? "grey" : "primary"), padding: "6px 12px", fontSize: 11 }}
+                onClick={async () => {
+                  await setDoc(doc(db, "users", u.id), { premium: !u.premium }, { merge: true });
+                  setUsers(prev => prev.map(usr => usr.id === u.id ? { ...usr, premium: !usr.premium } : usr));
+                }}>
+                {u.premium ? "Remove Premium" : "⭐ Premium"}
+              </button>
+              <button style={{ ...S.btn(u.verified ? "grey" : "outline"), padding: "6px 12px", fontSize: 11, color: u.verified ? C.text : "#1DA1F2", borderColor: "#1DA1F2" }}
+                onClick={async () => {
+                  const newVerified = !u.verified;
+                  await setDoc(doc(db, "users", u.id), { verified: newVerified, verificationStatus: newVerified ? "approved" : "none" }, { merge: true });
+                  setUsers(prev => prev.map(usr => usr.id === u.id ? { ...usr, verified: newVerified } : usr));
+                  if (newVerified) await sendNotification(u.id, "verification", "Congratulations! Your account has been verified. Your blue badge is now active.", "E-Connect Admin");
+                }}>
+                {u.verified ? "✓ Verified" : "Verify"}
+              </button>
+              {u.verificationStatus === "pending" && !u.verified && (
+                <span style={{ fontSize: 10, color: "#D97706", fontWeight: 700, padding: "6px 0", display: "flex", alignItems: "center" }}>⏳ Pending</span>
+              )}
+            </div>
           </div>
         </div>
       ))}
@@ -1914,8 +1975,9 @@ function Discover({ setPage, setSelectedProduct, user }) {
                 {s.photoURL ? <img src={s.photoURL} alt={s.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
                   <span style={{ fontWeight: 700, fontSize: 15 }}>{s.name || "User"}</span>
+                  {s.verified && <VerifiedBadge size={16} />}
                   {s.premium && <svg width="14" height="14" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>}
                 </div>
                 <div style={{ fontSize: 12, color: C.greyDark }}>{s.bio || "E-Connect member"}</div>
