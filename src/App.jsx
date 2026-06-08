@@ -2420,9 +2420,6 @@ export default function App() {
     }
   }, []);
 
-  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, color: C.primary, fontSize: 20, fontWeight: 700 }}>Loading E-Connect...</div>;
-  if (!user) return <Auth setUser={setUser} />;
-
   const ADMIN_EMAILS = ["admin@econnect.gh", "asantegideon060@gmail.com", "selormatsubonuedie@gmail.com", "akowuahisaac686@gmail.com", "nyarkomatthew925491@gmail.com", "ebenezer.boateng009@stu.ucc.edu.gh"];
   const isAdmin = ADMIN_EMAILS.includes(user?.email);
 
@@ -2432,6 +2429,9 @@ export default function App() {
     const unsub = onSnapshot(q, snap => setUnreadCount(snap.size));
     return unsub;
   }, [user]);
+
+  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, color: C.primary, fontSize: 20, fontWeight: 700 }}>Loading E-Connect...</div>;
+  if (!user) return <Auth setUser={setUser} />;
 
   const NavIcon = ({ id, active }) => {
     const color = active ? C.primary : C.greyDark;
