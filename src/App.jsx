@@ -12,7 +12,6 @@ import {
   getDoc, query, orderBy, onSnapshot, serverTimestamp,
   where
 } from "firebase/firestore";
-
 const THEMES = {
   light: {
     primary: "#00A896", primaryDark: "#007A6E", primaryLight: "#00C4B4",
