@@ -109,7 +109,7 @@ function Auth({ setUser }) {
     <div style={{ minHeight: "100vh", background: `linear-gradient(135deg, ${C.primary}15, ${C.offWhite})`, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ ...S.card, padding: 32, maxWidth: 420, width: "100%" }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <div style={{ fontWeight: 900, fontSize: 32, color: C.primary, marginBottom: 4 }}>E-Connect</div>
+          <img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ height: 80, width: "auto", objectFit: "contain", marginBottom: 4 }} />
           <div style={{ color: C.greyDark, fontSize: 13 }}>Social Commerce for African Businesses</div>
         </div>
         <div style={{ display: "flex", background: C.grey, borderRadius: 10, padding: 4, marginBottom: 24 }}>
@@ -1606,7 +1606,7 @@ function ReelsPage({ user }) {
 
       {/* Top */}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontWeight: 900, fontSize: 22, color: "white" }}>E-Connect</div>
+        <img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ height: 28, width: "auto", objectFit: "contain", filter: "brightness(0) invert(1)" }} />
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           {reel.category && <span style={{ background: "rgba(255,255,255,0.2)", backdropFilter: "blur(4px)", borderRadius: 20, padding: "4px 12px", fontSize: 12, color: "white", fontWeight: 600 }}>{reel.category}</span>}
           <button style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "50%", width: 36, height: 36, cursor: "pointer", color: "white", fontSize: 20, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowUpload(true)}>+</button>
@@ -2680,7 +2680,7 @@ export default function App() {
     return unsub;
   }, [user]);
 
-  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, color: C.primary, fontSize: 20, fontWeight: 700 }}>Loading E-Connect...</div>;
+  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, color: C.primary, fontSize: 20, fontWeight: 700 }}><img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ height: 60, width: "auto", objectFit: "contain" }} /></div>;
   if (!user) return <Auth setUser={setUser} />;
 
   const NavIcon = ({ id, active }) => {
@@ -2727,7 +2727,7 @@ export default function App() {
   return (
     <div style={{ ...S.app, background: THEMES[theme]?.offWhite || C.offWhite, color: THEMES[theme]?.text || C.text, fontFamily: FONT }}>
       <nav style={S.nav}>
-        <div style={S.logo} onClick={() => setPage("home")}>E-Connect</div>
+        <div style={{ cursor: "pointer", display: "flex", alignItems: "center" }} onClick={() => setPage("home")}><img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ height: 36, width: "auto", objectFit: "contain" }} /></div>
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
           {isAdmin && <button style={{ ...S.btn("grey"), padding: "7px 12px", fontSize: 12, color: C.text }} onClick={() => setPage("admin")}>Admin</button>}
           {/* Notifications */}
