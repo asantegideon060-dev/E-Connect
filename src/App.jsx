@@ -1853,7 +1853,26 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
 
   useEffect(() => {
     if (!user) return;
-    getDoc(doc(db, "users", user.uid)).then(d => { if (d.exists()) { setProfile(d.data()); setIsPremium(d.data().premium || false); setStoreForm({ businessName: d.data().businessName || "", description: d.data().storeDescription || "", contact: d.data().storeContact || "", logoUrl: d.data().logoUrl || "" }); } });
+    getDoc(doc(db, "users", user.uid)).then(d => {
+      if (d.exists()) {
+        const data = d.data();
+        setProfile(data);
+        setStoreForm({ businessName: data.businessName || "", description: data.storeDescription || "", contact: data.storeContact || "", logoUrl: data.logoUrl || "" });
+        // Check premium expiry
+        if (data.premium && data.premiumExpiry) {
+          const expiry = data.premiumExpiry.toMillis ? data.premiumExpiry.toMillis() : new Date(data.premiumExpiry).getTime();
+          if (Date.now() > expiry) {
+            // Premium expired — revoke it
+            setDoc(doc(db, "users", user.uid), { premium: false, premiumExpiry: null }, { merge: true });
+            setIsPremium(false);
+          } else {
+            setIsPremium(true);
+          }
+        } else {
+          setIsPremium(data.premium || false);
+        }
+      }
+    });
     getDocs(query(collection(db, "orders"), where("userId", "==", user.uid))).then(snap => setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid))).then(snap => setMyProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users", user.uid, "followers")).then(snap => setFollowers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
@@ -1942,7 +1961,9 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
         <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
           <button style={{ ...S.btn(), flex: 1, background: isPremium ? `linear-gradient(135deg, ${C.accent}, #FFA500)` : `linear-gradient(135deg, ${C.accent}, #FFA500)`, color: "#333", fontWeight: 800 }}
             onClick={() => !isPremium && setShowPremium(true)}>
-            {isPremium ? "⭐ Premium Active" : "⭐ Go Premium · GH₵20/mo"}
+            {isPremium
+              ? `⭐ Premium Active${profile?.premiumExpiry ? " · Expires " + new Date(profile.premiumExpiry?.toMillis ? profile.premiumExpiry.toMillis() : profile.premiumExpiry).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}`
+              : "⭐ Go Premium · GH₵20/mo"}
           </button>
           <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowStore(true)}>
             🏪 My Store
@@ -2095,7 +2116,21 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
               {["Cape Coast","Accra","Kumasi","Takoradi","Tamale","Sunyani","Ho","Koforidua","Wa","Bolgatanga"].map(c => <option key={c} value={c}>{c}</option>)}
             </select>
 
-            {isPremium && (
+            {isPremium && profile?.premiumExpiry && (() => {
+    const expiry = profile.premiumExpiry?.toMillis ? profile.premiumExpiry.toMillis() : new Date(profile.premiumExpiry).getTime();
+    const daysLeft = Math.ceil((expiry - Date.now()) / (1000 * 60 * 60 * 24));
+    if (daysLeft <= 5) return (
+      <div style={{ ...S.card, padding: 14, marginBottom: 12, background: "#FFF3CD", border: "1px solid #FFD700", display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ fontSize: 22 }}>⚠️</span>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 13 }}>Premium expiring soon!</div>
+          <div style={{ fontSize: 12, color: C.greyDark }}>{daysLeft <= 0 ? "Your premium has expired." : `Only ${daysLeft} day${daysLeft === 1 ? "" : "s"} left.`} Re-subscribe to keep your ⭐ badge.</div>
+        </div>
+      </div>
+    );
+    return null;
+  })()}
+  {isPremium && (
               <div style={{ background: "#FFF8E1", border: "2px solid #FFD700", borderRadius: 12, padding: 16, marginBottom: 16 }}>
                 <div style={{ fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
@@ -2413,7 +2448,14 @@ function Admin() {
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <button style={{ ...S.btn(u.premium ? "grey" : "primary"), padding: "6px 12px", fontSize: 11 }}
                 onClick={async () => {
-                  await setDoc(doc(db, "users", u.id), { premium: !u.premium }, { merge: true });
+                  const newPremium = !u.premium;
+                  const expiry = newPremium ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : null;
+                  await setDoc(doc(db, "users", u.id), { premium: newPremium, premiumExpiry: expiry }, { merge: true });
+                  if (newPremium) {
+                    await sendNotification(u.id, "premium", "🌟 Your Premium subscription is now active! It expires in 30 days.", "E-Connect");
+                  } else {
+                    await sendNotification(u.id, "premium", "Your Premium subscription has been removed.", "E-Connect");
+                  }
                   setUsers(prev => prev.map(usr => usr.id === u.id ? { ...usr, premium: !usr.premium } : usr));
                 }}>
                 {u.premium ? "Remove Premium" : "⭐ Premium"}
