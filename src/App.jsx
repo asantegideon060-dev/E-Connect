@@ -1107,6 +1107,20 @@ async function sendNotification(toUserId, type, message, fromUserName) {
       toUserId, type, message, fromUserName: fromUserName || "",
       read: false, createdAt: serverTimestamp(),
     });
+    if ("Notification" in window && Notification.permission === "granted" && "serviceWorker" in navigator) {
+      const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", ad_approved: "⭐", premium: "⭐", review: "⭐" };
+      const icon = icons[type] || "🔔";
+      navigator.serviceWorker.ready.then(reg => {
+        reg.showNotification("E-Connect " + icon, {
+          body: message,
+          icon: "/icon-192.png",
+          badge: "/icon-192.png",
+          vibrate: [200, 100, 200],
+          tag: type,
+          renotify: true,
+        });
+      }).catch(() => {});
+    }
   } catch (err) { console.error("Notification error:", err); }
 }
 
@@ -2645,6 +2659,14 @@ export default function App() {
     document.head.appendChild(link);
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));
+    }
+    // Request push notification permission
+    if ("Notification" in window && Notification.permission === "default") {
+      setTimeout(() => {
+        Notification.requestPermission().then(permission => {
+          console.log("Notification permission:", permission);
+        });
+      }, 3000);
     }
   }, []);
 
