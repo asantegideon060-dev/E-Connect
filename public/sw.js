@@ -1,36 +1,36 @@
 const CACHE_NAME = "econnect-v1";
-const ASSETS = [
-  "/",
-  "/index.html",
-  "/manifest.json"
-];
 
-self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS))
-  );
+self.addEventListener("install", (e) => {
   self.skipWaiting();
 });
 
-self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
-      )
-    )
-  );
-  self.clients.claim();
+self.addEventListener("activate", (e) => {
+  e.waitUntil(clients.claim());
 });
 
-self.addEventListener("fetch", (event) => {
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        return response;
-      })
-      .catch(() => caches.match(event.request))
+// Handle push notifications
+self.addEventListener("push", (e) => {
+  const data = e.data ? e.data.json() : {};
+  e.waitUntil(
+    self.registration.showNotification(data.title || "E-Connect", {
+      body: data.body || "You have a new notification",
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      vibrate: [200, 100, 200],
+      data: { url: data.url || "/" },
+    })
+  );
+});
+
+// When user taps the notification, open the app
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url && "focus" in client) return client.focus();
+      }
+      if (clients.openWindow) return clients.openWindow("/");
+    })
   );
 });
