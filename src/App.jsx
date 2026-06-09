@@ -39,43 +39,6 @@ const FONT = "'DM Sans', 'Nunito', sans-serif";
 const CATEGORIES = ["All", "Fashion", "Electronics", "Beauty", "Food", "Sports", "Home"];
 
 
-
-// ── Push Notification Helper ───────────────────────────────────
-const VAPID_PUBLIC_KEY = "BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDkBWine1tDo7J6i6bNG0Q0MhGMmkRZZ8oTBFcDQlrFA";
-
-async function registerPushNotifications() {
-  try {
-    if (!("Notification" in window)) return { success: false, reason: "not_supported" };
-    if (!("serviceWorker" in navigator)) return { success: false, reason: "no_sw" };
-    const permission = await Notification.requestPermission();
-    if (permission !== "granted") return { success: false, reason: "denied" };
-    const reg = await navigator.serviceWorker.ready;
-    let sub = await reg.pushManager.getSubscription();
-    if (!sub) {
-      sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: VAPID_PUBLIC_KEY,
-      });
-    }
-    return { success: true, subscription: JSON.stringify(sub) };
-  } catch (err) {
-    console.error("Push registration error:", err);
-    return { success: false, reason: err.message };
-  }
-}
-
-async function showLocalNotification(title, body, icon) {
-  if (Notification.permission === "granted") {
-    const reg = await navigator.serviceWorker.ready;
-    reg.showNotification(title, {
-      body, icon: icon || "/icon-192.png",
-      badge: "/icon-192.png",
-      vibrate: [100, 50, 100],
-      data: { url: window.location.href },
-    });
-  }
-}
-
 // ── Verified Badge SVG ─────────────────────────────────────────
 const VerifiedBadge = ({ size = 16 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
@@ -105,7 +68,7 @@ const S = {
   divider: { height: 1, background: C.border, margin: "20px 0" },
   modal: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 },
   modalBox: { background: C.white, borderRadius: 18, padding: 28, maxWidth: 480, width: "100%", maxHeight: "90vh", overflowY: "auto" },
-  avatar: (size = 40) => ({ width: size, height: size, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden", border: `1px solid ${C.border}` }),
+  avatar: (size = 40) => ({ width: size, height: size, borderRadius: "50%", background: `${C.primary}20`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.45, flexShrink: 0 }),
   bottomNav: { position: "fixed", bottom: 0, left: 0, right: 0, background: C.white, borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-around", alignItems: "center", padding: "8px 0 12px", zIndex: 100 },
   bottomBtn: (active) => ({ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, background: "none", border: "none", cursor: "pointer", color: active ? C.primary : C.greyDark, fontFamily: FONT, fontSize: 10, fontWeight: active ? 700 : 500, padding: "4px 16px" }),
   alert: (type) => ({ background: type === "success" ? "rgba(49,162,76,0.1)" : "rgba(250,62,62,0.1)", border: `1px solid ${type === "success" ? C.success : C.error}`, borderRadius: 10, padding: "10px 14px", fontSize: 13, color: type === "success" ? C.success : C.error, marginBottom: 12 }),
@@ -275,7 +238,19 @@ function AddProductModal({ user, onClose, onAdded }) {
 function StoriesBar({ user }) {
   const [stories, setStories] = useState([]);
   const [viewingStory, setViewingStory] = useState(null);
+  const [viewingIndex, setViewingIndex] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedFileType, setSelectedFileType] = useState("image");
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [songUrl, setSongUrl] = useState("");
+  const [songName, setSongName] = useState("");
+  const [progress, setProgress] = useState(0);
+  const progressRef = useRef(null);
+  const audioRef = useRef(null);
+  const videoRef = useRef(null);
+  const STORY_DURATION = 5000;
 
   const fetchStories = async () => {
     const snap = await getDocs(collection(db, "stories"));
@@ -290,69 +265,285 @@ function StoriesBar({ user }) {
 
   useEffect(() => { fetchStories(); }, []);
 
-  const handleStoryUpload = async (e) => {
-    const file = e.target.files[0]; if (!file) return;
+  // Auto-advance story progress
+  useEffect(() => {
+    if (!viewingStory) { setProgress(0); return; }
+    if (viewingStory.mediaType === "video") return; // video controls its own progress
+    setProgress(0);
+    const start = Date.now();
+    progressRef.current = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const pct = Math.min((elapsed / STORY_DURATION) * 100, 100);
+      setProgress(pct);
+      if (pct >= 100) {
+        clearInterval(progressRef.current);
+        goNextStory();
+      }
+    }, 50);
+    return () => clearInterval(progressRef.current);
+  }, [viewingStory, viewingIndex]);
+
+  const goNextStory = () => {
+    if (viewingIndex < stories.length - 1) {
+      setViewingIndex(i => i + 1);
+      setViewingStory(stories[viewingIndex + 1]);
+    } else {
+      closeStory();
+    }
+  };
+
+  const goPrevStory = () => {
+    if (viewingIndex > 0) {
+      setViewingIndex(i => i - 1);
+      setViewingStory(stories[viewingIndex - 1]);
+    }
+  };
+
+  const closeStory = () => {
+    clearInterval(progressRef.current);
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    setViewingStory(null);
+    setViewingIndex(0);
+    setProgress(0);
+  };
+
+  const openStory = (s, idx) => {
+    setViewingStory(s);
+    setViewingIndex(idx);
+    if (s.songUrl) {
+      const audio = new Audio(s.songUrl);
+      audio.loop = true;
+      audio.play().catch(() => {});
+      audioRef.current = audio;
+    }
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const isVideo = file.type.startsWith("video/");
+    if (isVideo) {
+      // Check duration
+      const url = URL.createObjectURL(file);
+      const vid = document.createElement("video");
+      vid.src = url;
+      vid.onloadedmetadata = () => {
+        if (vid.duration > 60) {
+          alert("Video must be 1 minute or less.");
+          return;
+        }
+        setSelectedFile(file);
+        setSelectedFileType("video");
+        setPreviewUrl(url);
+        setShowUploadModal(true);
+      };
+    } else {
+      setSelectedFile(file);
+      setSelectedFileType("image");
+      setPreviewUrl(URL.createObjectURL(file));
+      setShowUploadModal(true);
+    }
+  };
+
+  const handleSongSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSongUrl(URL.createObjectURL(file));
+    setSongName(file.name.replace(/\.[^/.]+$/, ""));
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile) return;
     setUploading(true);
     try {
+      const isVideo = selectedFileType === "video";
       const data = new FormData();
-      data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq");
-      const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
+      data.append("file", selectedFile);
+      data.append("upload_preset", "Econnect");
+      data.append("cloud_name", "dxmmsq0gq");
+      const endpoint = isVideo
+        ? "https://api.cloudinary.com/v1_1/dxmmsq0gq/video/upload"
+        : "https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload";
+      const res = await fetch(endpoint, { method: "POST", body: data });
       const result = await res.json();
+
+      let uploadedSongUrl = "";
+      if (songUrl && songUrl.startsWith("blob:")) {
+        const songFile = document.getElementById("songInput").files[0];
+        if (songFile) {
+          const sData = new FormData();
+          sData.append("file", songFile);
+          sData.append("upload_preset", "Econnect");
+          sData.append("cloud_name", "dxmmsq0gq");
+          const sRes = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/raw/upload", { method: "POST", body: sData });
+          const sResult = await sRes.json();
+          uploadedSongUrl = sResult.secure_url || "";
+        }
+      }
+
+      // Get thumbnail for preview circle
+      const thumbnail = isVideo
+        ? result.secure_url.replace("/upload/", "/upload/so_0,w_200,h_200,c_fill/").replace(".mp4", ".jpg")
+        : result.secure_url;
+
       await addDoc(collection(db, "stories"), {
-        imageUrl: result.secure_url, userName: user?.displayName || "User",
-        userId: user?.uid, userPhoto: user?.photoURL || "",
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), createdAt: serverTimestamp(),
+        mediaUrl: result.secure_url,
+        imageUrl: thumbnail,
+        mediaType: isVideo ? "video" : "image",
+        userName: user?.displayName || "User",
+        userId: user?.uid,
+        userPhoto: user?.photoURL || "",
+        songUrl: uploadedSongUrl,
+        songName: songName || "",
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        createdAt: serverTimestamp(),
       });
+      setShowUploadModal(false);
+      setSelectedFile(null);
+      setPreviewUrl("");
+      setSongUrl("");
+      setSongName("");
       fetchStories();
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert("Upload failed. Try again."); }
     setUploading(false);
   };
 
   return (
-    <div style={{ ...S.card, padding: "14px 16px", marginBottom: 16 }}>
-      <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
-          onClick={() => document.getElementById("storyUploadInput").click()}>
-          <div style={{ width: 58, height: 58, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `2px dashed ${C.primary}` }}>
-            {uploading ? <span style={{ fontSize: 11, color: C.primary, fontWeight: 700 }}>...</span> : <span style={{ fontSize: 26 }}>+</span>}
+    <>
+      <div style={{ ...S.card, padding: "14px 16px", marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
+          {/* Add Story Button */}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
+            onClick={() => document.getElementById("storyFileInput").click()}>
+            <div style={{ width: 58, height: 58, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `2px dashed ${C.primary}` }}>
+              {uploading ? <span style={{ fontSize: 11, color: C.primary, fontWeight: 700 }}>...</span> : <span style={{ fontSize: 26 }}>+</span>}
+            </div>
+            <span style={{ fontSize: 10, color: C.greyDark, fontWeight: 600 }}>Add Story</span>
+            <input id="storyFileInput" type="file" accept="image/*,video/*" style={{ display: "none" }} onChange={handleFileSelect} />
           </div>
-          <span style={{ fontSize: 10, color: C.greyDark, fontWeight: 600 }}>Add Story</span>
-          <input id="storyUploadInput" type="file" accept="image/*" style={{ display: "none" }} onChange={handleStoryUpload} />
+
+          {/* Story Thumbnails */}
+          {stories.map((s, idx) => (
+            <div key={s.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
+              onClick={() => openStory(s, idx)}>
+              <div style={{ width: 58, height: 58, borderRadius: "50%", background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, padding: 2.5, position: "relative" }}>
+                <div style={{ width: "100%", height: "100%", borderRadius: "50%", overflow: "hidden", background: C.grey }}>
+                  {s.imageUrl
+                    ? <img src={s.imageUrl} alt={s.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
+                </div>
+                {s.mediaType === "video" && (
+                  <div style={{ position: "absolute", bottom: 0, right: 0, background: "rgba(0,0,0,0.7)", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <span style={{ fontSize: 8, color: "white" }}>▶</span>
+                  </div>
+                )}
+              </div>
+              <span style={{ fontSize: 10, color: C.text, fontWeight: 600, textAlign: "center", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.userName}</span>
+            </div>
+          ))}
+          {stories.length === 0 && <div style={{ display: "flex", alignItems: "center", color: C.greyDark, fontSize: 13, paddingLeft: 8 }}>No stories yet. Be the first!</div>}
         </div>
-        {stories.map(s => (
-          <div key={s.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
-            onClick={() => setViewingStory(s)}>
-            <div style={{ width: 58, height: 58, borderRadius: "50%", background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, padding: 2.5 }}>
-              <div style={{ width: "100%", height: "100%", borderRadius: "50%", overflow: "hidden", background: C.white }}>
-                {s.userPhoto ? <img src={s.userPhoto} alt={s.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
-              </div>
-            </div>
-            <span style={{ fontSize: 10, color: C.text, fontWeight: 600, textAlign: "center", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.userName}</span>
-          </div>
-        ))}
-        {stories.length === 0 && <div style={{ display: "flex", alignItems: "center", color: C.greyDark, fontSize: 13, paddingLeft: 8 }}>No stories yet. Be the first!</div>}
       </div>
-      {viewingStory && (
-        <div style={{ ...S.modal, zIndex: 400 }} onClick={() => setViewingStory(null)}>
-          <div style={{ background: C.secondary, borderRadius: 18, width: 300, height: 480, position: "relative", overflow: "hidden" }}>
-            <img src={viewingStory.imageUrl} alt="story" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "rgba(255,255,255,0.3)" }}>
-              <div style={{ height: "100%", width: "100%", background: C.white }} />
-            </div>
-            <div style={{ position: "absolute", top: 16, left: 16, display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ width: 36, height: 36, borderRadius: "50%", overflow: "hidden", background: C.white }}>
-                {viewingStory.userPhoto ? <img src={viewingStory.userPhoto} alt={viewingStory.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>👤</div>}
+
+      {/* Upload Modal */}
+      {showUploadModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: C.white, borderRadius: 18, padding: 24, maxWidth: 400, width: "100%" }}>
+            <h3 style={{ fontWeight: 800, fontSize: 18, marginBottom: 16 }}>Post Story</h3>
+            {previewUrl && (
+              <div style={{ borderRadius: 12, overflow: "hidden", marginBottom: 16, height: 200, background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {selectedFileType === "video"
+                  ? <video src={previewUrl} style={{ width: "100%", height: "100%", objectFit: "contain" }} controls />
+                  : <img src={previewUrl} alt="preview" style={{ width: "100%", height: "100%", objectFit: "contain" }} />}
               </div>
-              <div>
-                <div style={{ color: "white", fontWeight: 700, fontSize: 13 }}>{viewingStory.userName}</div>
-                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 10 }}>Expires in 24hrs</div>
-              </div>
+            )}
+            <div style={{ marginBottom: 14 }}>
+              <label style={S.label}>🎵 Add a song (optional)</label>
+              <input id="songInput" type="file" accept="audio/*" style={{ display: "none" }} onChange={handleSongSelect} />
+              <button style={{ ...S.btn("outline"), width: "100%", padding: "10px" }} onClick={() => document.getElementById("songInput").click()}>
+                {songName ? `🎵 ${songName}` : "Choose a song from your device"}
+              </button>
             </div>
-            <button style={{ position: "absolute", top: 16, right: 16, background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 30, height: 30, cursor: "pointer", fontSize: 14, fontWeight: 700 }} onClick={() => setViewingStory(null)}>X</button>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button style={{ ...S.btn(), flex: 1, opacity: uploading ? 0.7 : 1 }} onClick={handleUpload} disabled={uploading}>
+                {uploading ? "Uploading..." : "Post Story"}
+              </button>
+              <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => { setShowUploadModal(false); setPreviewUrl(""); setSelectedFile(null); setSongUrl(""); setSongName(""); }}>Cancel</button>
+            </div>
           </div>
         </div>
       )}
-    </div>
+
+      {/* Full Screen Story Viewer */}
+      {viewingStory && (
+        <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, display: "flex", flexDirection: "column" }}>
+          {/* Progress bars */}
+          <div style={{ display: "flex", gap: 3, padding: "12px 12px 0", position: "absolute", top: 0, left: 0, right: 0, zIndex: 10 }}>
+            {stories.map((_, i) => (
+              <div key={i} style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.3)", borderRadius: 2, overflow: "hidden" }}>
+                <div style={{
+                  height: "100%", borderRadius: 2, background: "white",
+                  width: i < viewingIndex ? "100%" : i === viewingIndex ? `${progress}%` : "0%",
+                  transition: i === viewingIndex ? "none" : "none"
+                }} />
+              </div>
+            ))}
+          </div>
+
+          {/* User info */}
+          <div style={{ position: "absolute", top: 28, left: 0, right: 0, zIndex: 10, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 40, height: 40, borderRadius: "50%", overflow: "hidden", border: "2px solid white" }}>
+                {viewingStory.imageUrl
+                  ? <img src={viewingStory.imageUrl} alt={viewingStory.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  : <div style={{ height: "100%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>👤</div>}
+              </div>
+              <div>
+                <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{viewingStory.userName}</div>
+                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>24hrs</div>
+              </div>
+            </div>
+            <button style={{ background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={closeStory}>✕</button>
+          </div>
+
+          {/* Media content */}
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}
+            onClick={(e) => {
+              const x = e.clientX;
+              const w = window.innerWidth;
+              if (x < w / 3) goPrevStory();
+              else if (x > (w * 2) / 3) goNextStory();
+            }}>
+            {viewingStory.mediaType === "video"
+              ? <video
+                  ref={videoRef}
+                  src={viewingStory.mediaUrl || viewingStory.imageUrl}
+                  style={{ width: "100%", height: "100vh", objectFit: "contain" }}
+                  autoPlay
+                  playsInline
+                  onEnded={goNextStory}
+                  onTimeUpdate={(e) => {
+                    const pct = (e.target.currentTime / e.target.duration) * 100;
+                    setProgress(pct);
+                  }}
+                />
+              : <img src={viewingStory.mediaUrl || viewingStory.imageUrl} alt="story" style={{ width: "100%", height: "100vh", objectFit: "contain" }} />}
+          </div>
+
+          {/* Song info */}
+          {viewingStory.songName && (
+            <div style={{ position: "absolute", bottom: 30, left: 16, right: 16, zIndex: 10, display: "flex", alignItems: "center", gap: 8, background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "8px 14px" }}>
+              <span style={{ fontSize: 16 }}>🎵</span>
+              <span style={{ color: "white", fontSize: 13, fontWeight: 600 }}>{viewingStory.songName}</span>
+            </div>
+          )}
+
+          {/* Tap hints */}
+          <div style={{ position: "absolute", top: "50%", left: 0, width: "33%", height: "40%", transform: "translateY(-50%)", zIndex: 9 }} onClick={goPrevStory} />
+          <div style={{ position: "absolute", top: "50%", right: 0, width: "33%", height: "40%", transform: "translateY(-50%)", zIndex: 9 }} onClick={goNextStory} />
+        </div>
+      )}
+    </>
   );
 }
 
@@ -916,7 +1107,20 @@ async function sendNotification(toUserId, type, message, fromUserName) {
       toUserId, type, message, fromUserName: fromUserName || "",
       read: false, createdAt: serverTimestamp(),
     });
-    await showLocalNotification("E-Connect", message, "/icon-192.png");
+    if ("Notification" in window && Notification.permission === "granted" && "serviceWorker" in navigator) {
+      const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", ad_approved: "⭐", premium: "⭐", review: "⭐" };
+      const icon = icons[type] || "🔔";
+      navigator.serviceWorker.ready.then(reg => {
+        reg.showNotification("E-Connect " + icon, {
+          body: message,
+          icon: "/icon-192.png",
+          badge: "/icon-192.png",
+          vibrate: [200, 100, 200],
+          tag: type,
+          renotify: true,
+        });
+      }).catch(() => {});
+    }
   } catch (err) { console.error("Notification error:", err); }
 }
 
@@ -1561,9 +1765,7 @@ function Messages({ user }) {
             </div>
           ) : conversations.map(c => (
             <div key={c.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, marginBottom: 8, cursor: "pointer" }} onClick={() => setSelected(c)}>
-              <div style={{ width: 48, height: 48, borderRadius: "50%", background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.8" strokeLinecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              </div>
+              <div style={S.avatar(48)}>💬</div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 700 }}>{c.participantNames?.filter(n => n !== user.displayName).join(", ") || "Chat"}</div>
                 <div style={{ color: C.greyDark, fontSize: 13 }}>{c.lastMessage || "No messages yet"}</div>
@@ -1590,77 +1792,6 @@ function Messages({ user }) {
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-
-// ── Notification Settings Component ───────────────────────────
-function NotificationSettings({ user }) {
-  const [pushEnabled, setPushEnabled] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [permStatus, setPermStatus] = useState(Notification.permission || "default");
-
-  useEffect(() => {
-    if (!user) return;
-    getDoc(doc(db, "users", user.uid)).then(d => {
-      if (d.exists()) setPushEnabled(d.data().pushEnabled || false);
-    });
-    setPermStatus(Notification.permission || "default");
-  }, [user]);
-
-  const handleToggle = async () => {
-    setLoading(true);
-    try {
-      if (!pushEnabled) {
-        const result = await registerPushNotifications();
-        if (result.success) {
-          await setDoc(doc(db, "users", user.uid), { pushEnabled: true, pushSubscription: result.subscription }, { merge: true });
-          setPushEnabled(true);
-          setPermStatus("granted");
-        } else if (result.reason === "denied") {
-          setPermStatus("denied");
-          alert("Notifications are blocked. Please go to your browser settings and allow notifications for E-Connect, then try again.");
-        }
-      } else {
-        await setDoc(doc(db, "users", user.uid), { pushEnabled: false }, { merge: true });
-        setPushEnabled(false);
-      }
-    } catch (err) { console.error(err); }
-    setLoading(false);
-  };
-
-  return (
-    <div>
-      {permStatus === "denied" && (
-        <div style={{ ...S.alert("error"), marginBottom: 12, fontSize: 12 }}>
-          Notifications are blocked in your browser. Go to browser Settings → Site Settings → Notifications → Allow E-Connect.
-        </div>
-      )}
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {[
-          { label: "New Messages", desc: "Get notified when someone messages you" },
-          { label: "Likes and Comments", desc: "When someone likes your product or reel" },
-          { label: "New Followers", desc: "When someone follows you" },
-          { label: "Order Updates", desc: "Updates on your orders and sales" },
-          { label: "Ad Approvals", desc: "When your ad is approved or rejected" },
-        ].map((item, i) => (
-          <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 13 }}>{item.label}</div>
-              <div style={{ fontSize: 11, color: C.greyDark }}>{item.desc}</div>
-            </div>
-            <div
-              style={{ width: 44, height: 24, borderRadius: 12, background: pushEnabled ? C.primary : C.greyMid, cursor: loading ? "not-allowed" : "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}
-              onClick={loading ? undefined : handleToggle}>
-              <div style={{ position: "absolute", top: 2, left: pushEnabled ? 22 : 2, width: 20, height: 20, borderRadius: "50%", background: "white", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={{ marginTop: 14, padding: "10px 14px", background: pushEnabled ? `${C.success}15` : C.grey, borderRadius: 10, fontSize: 12, color: pushEnabled ? C.success : C.greyDark, fontWeight: 600, textAlign: "center" }}>
-        {loading ? "Updating..." : pushEnabled ? "✅ Push notifications are ON" : "🔕 Push notifications are OFF"}
-      </div>
     </div>
   );
 }
@@ -1740,8 +1871,8 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
       <div style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})`, height: 100, borderRadius: "0 0 20px 20px", marginBottom: -40 }} />
       <div style={{ ...S.card, margin: "0 0 16px", padding: "50px 20px 20px", position: "relative" }}>
         <div style={{ position: "absolute", top: -30, left: 20, cursor: "pointer" }} onClick={() => document.getElementById("profilePhotoInput").click()}>
-          <div style={{ width: 72, height: 72, borderRadius: "50%", background: C.grey, border: `3px solid ${C.white}`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.15)", overflow: "hidden", position: "relative" }}>
-            {profilePhoto ? <img src={profilePhoto} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>}
+          <div style={{ width: 72, height: 72, borderRadius: "50%", background: C.white, border: `3px solid ${C.white}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, boxShadow: "0 2px 8px rgba(0,0,0,0.15)", overflow: "hidden", position: "relative" }}>
+            {profilePhoto ? <img src={profilePhoto} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span>👤</span>}
             <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.4)", padding: "4px 0", textAlign: "center", fontSize: 10, color: "white", fontWeight: 700 }}>
               {uploadingPhoto ? "..." : "Edit"}
             </div>
@@ -1785,11 +1916,6 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
         {["orders", "products", "followers", "following", "friends"].map(t => (
           <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 14px", textTransform: "capitalize", whiteSpace: "nowrap", flexShrink: 0 }} onClick={() => setTab(t)}>{t}</button>
         ))}
-      </div>
-
-      <div style={{ ...S.card, padding: 20, marginBottom: 16 }}>
-        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>🔔 Notification Settings</div>
-        <NotificationSettings user={user} />
       </div>
 
       <div style={{ ...S.card, padding: 20, marginBottom: 16 }}>
@@ -1852,9 +1978,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           {followers.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>No followers yet.</div> :
           followers.map(f => (
             <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.border}`, flexShrink: 0 }}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-              </div>
+              <div style={S.avatar(44)}>👤</div>
               <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
             </div>
           ))}
@@ -1866,9 +1990,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           {following.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Not following anyone yet.</div> :
           following.map(f => (
             <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.border}`, flexShrink: 0 }}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-              </div>
+              <div style={S.avatar(44)}>👤</div>
               <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
             </div>
           ))}
@@ -1880,9 +2002,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           {friends.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>No friends yet. Go to Discover to add friends!</div> :
           friends.map(f => (
             <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.border}`, flexShrink: 0 }}>
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-              </div>
+              <div style={S.avatar(44)}>👤</div>
               <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
             </div>
           ))}
@@ -2098,7 +2218,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
               <div style={{ position: "relative", cursor: "pointer" }} onClick={() => document.getElementById("editProfilePhoto").click()}>
                 <div style={{ width: 80, height: 80, borderRadius: "50%", overflow: "hidden", background: C.grey, border: `3px solid ${C.primary}` }}>
-                  {profilePhoto ? <img src={profilePhoto} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>}
+                  {profilePhoto ? <img src={profilePhoto} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>👤</div>}
                 </div>
                 <div style={{ position: "absolute", bottom: 0, right: 0, background: C.primary, borderRadius: "50%", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="white" strokeWidth="2" strokeLinecap="round"/></svg>
@@ -2514,7 +2634,7 @@ export default function App() {
   const [page, setPage] = useState("home");
   const [cart, setCart] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [showNotifPrompt, setShowNotifPrompt] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("econnect-theme");
     if (saved) return saved;
@@ -2528,13 +2648,7 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setLoading(false);
-      if (u && !localStorage.getItem("notif_prompt_shown")) {
-        setTimeout(() => setShowNotifPrompt(true), 1500);
-      }
-    });
+    const unsub = onAuthStateChanged(auth, (u) => { setUser(u); setLoading(false); });
     return unsub;
   }, []);
 
@@ -2546,42 +2660,18 @@ export default function App() {
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));
     }
+    // Request push notification permission
+    if ("Notification" in window && Notification.permission === "default") {
+      setTimeout(() => {
+        Notification.requestPermission().then(permission => {
+          console.log("Notification permission:", permission);
+        });
+      }, 3000);
+    }
   }, []);
 
-  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, color: C.primary, fontSize: 20, fontWeight: 700 }}>Loading E-Connect...</div>;
-  if (!user) return <Auth setUser={setUser} />;
-
-  if (showNotifPrompt) return (
-    <div style={{ minHeight: "100vh", background: C.offWhite, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: FONT }}>
-      <div style={{ ...S.card, padding: 32, maxWidth: 400, width: "100%", textAlign: "center" }}>
-        <div style={{ fontSize: 64, marginBottom: 16 }}>🔔</div>
-        <h2 style={{ fontWeight: 800, fontSize: 22, marginBottom: 8, color: C.text }}>Stay in the loop!</h2>
-        <p style={{ color: C.greyDark, fontSize: 14, lineHeight: 1.6, marginBottom: 24 }}>
-          E-Connect would like to send you notifications for new messages, orders, likes, follows and important updates. You can change this anytime in your Profile settings.
-        </p>
-        <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, marginBottom: 12 }}
-          onClick={async () => {
-            const result = await registerPushNotifications();
-            if (result.success && user) {
-              await setDoc(doc(db, "users", user.uid), { pushEnabled: true, pushSubscription: result.subscription }, { merge: true });
-            }
-            setShowNotifPrompt(false);
-            localStorage.setItem("notif_prompt_shown", "true");
-          }}>
-          🔔 Allow Notifications
-        </button>
-        <button style={{ ...S.btn("outline"), width: "100%", padding: 14, fontSize: 15 }}
-          onClick={() => { setShowNotifPrompt(false); localStorage.setItem("notif_prompt_shown", "true"); }}>
-          Not Now
-        </button>
-        <p style={{ color: C.greyDark, fontSize: 11, marginTop: 12 }}>You can change this anytime in Profile → Settings</p>
-      </div>
-    </div>
-  );
-
   const ADMIN_EMAILS = ["admin@econnect.gh", "asantegideon060@gmail.com", "selormatsubonuedie@gmail.com", "akowuahisaac686@gmail.com", "nyarkomatthew925491@gmail.com", "ebenezer.boateng009@stu.ucc.edu.gh"];
-  const isAdmin = ADMIN_EMAILS.includes(user.email);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const isAdmin = ADMIN_EMAILS.includes(user?.email);
 
   useEffect(() => {
     if (!user) return;
@@ -2589,6 +2679,9 @@ export default function App() {
     const unsub = onSnapshot(q, snap => setUnreadCount(snap.size));
     return unsub;
   }, [user]);
+
+  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, color: C.primary, fontSize: 20, fontWeight: 700 }}>Loading E-Connect...</div>;
+  if (!user) return <Auth setUser={setUser} />;
 
   const NavIcon = ({ id, active }) => {
     const color = active ? C.primary : C.greyDark;
@@ -2610,8 +2703,8 @@ export default function App() {
     { id: "discover", label: "Discover" },
     { id: "reels", label: "Reels" },
     { id: "orders", label: "Orders" },
-    { id: "cart", label: "Cart", badge: cart.length },
     { id: "location", label: "Nearby" },
+    { id: "cart", label: "Cart", badge: cart.length },
   ];
 
   const renderPage = () => {
@@ -2636,10 +2729,9 @@ export default function App() {
       <nav style={S.nav}>
         <div style={S.logo} onClick={() => setPage("home")}>E-Connect</div>
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          {isAdmin && <button style={{ ...S.btn("grey"), padding: "6px 10px", fontSize: 11, color: C.text }} onClick={() => setPage("admin")}>Admin</button>}
-
-          {/* Notifications Bell */}
-          <button style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 6, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setPage("notifications")}>
+          {isAdmin && <button style={{ ...S.btn("grey"), padding: "7px 12px", fontSize: 12, color: C.text }} onClick={() => setPage("admin")}>Admin</button>}
+          {/* Notifications */}
+          <button style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 6 }} onClick={() => setPage("notifications")}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={page === "notifications" ? C.primary : C.greyDark} strokeWidth="1.8" strokeLinecap="round">
               <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
               <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
@@ -2650,23 +2742,20 @@ export default function App() {
               </span>
             )}
           </button>
-
           {/* Messages */}
-          <button style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 6, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setPage("messages")}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={page === "messages" ? C.primary : C.greyDark} strokeWidth="1.8" strokeLinecap="round">
+          <button style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 6 }} onClick={() => setPage("messages")}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={page === "messages" ? C.primary : C.greyDark} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
           </button>
-
-          {/* Profile */}
-          <button style={{ display: "flex", flexDirection: "column", alignItems: "center", background: "none", border: "none", cursor: "pointer", padding: "4px 6px", gap: 2 }} onClick={() => setPage("profile")}>
-            <div style={{ width: 32, height: 32, borderRadius: "50%", overflow: "hidden", background: C.grey, border: `2px solid ${page === "profile" ? C.primary : C.greyMid}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {/* Profile with photo */}
+          <button onClick={() => setPage("profile")} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 1, padding: "2px 4px" }}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", overflow: "hidden", border: `2px solid ${page === "profile" ? C.primary : C.border}`, background: C.grey, display: "flex", alignItems: "center", justifyContent: "center" }}>
               {user?.photoURL
-                ? <img src={user.photoURL} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
-              }
+                ? <img src={user.photoURL} alt="profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>}
             </div>
-            <span style={{ fontSize: 9, fontWeight: 700, color: page === "profile" ? C.primary : C.greyDark, fontFamily: FONT }}>Profile</span>
+            <span style={{ fontSize: 9, fontWeight: 700, color: page === "profile" ? C.primary : C.greyDark }}>Profile</span>
           </button>
         </div>
       </nav>
