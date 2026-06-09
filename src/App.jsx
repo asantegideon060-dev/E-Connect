@@ -238,7 +238,19 @@ function AddProductModal({ user, onClose, onAdded }) {
 function StoriesBar({ user }) {
   const [stories, setStories] = useState([]);
   const [viewingStory, setViewingStory] = useState(null);
+  const [viewingIndex, setViewingIndex] = useState(0);
   const [uploading, setUploading] = useState(false);
+  const [showUploadModal, setShowUploadModal] = useState(false);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedFileType, setSelectedFileType] = useState("image");
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [songUrl, setSongUrl] = useState("");
+  const [songName, setSongName] = useState("");
+  const [progress, setProgress] = useState(0);
+  const progressRef = useRef(null);
+  const audioRef = useRef(null);
+  const videoRef = useRef(null);
+  const STORY_DURATION = 5000;
 
   const fetchStories = async () => {
     const snap = await getDocs(collection(db, "stories"));
@@ -253,69 +265,285 @@ function StoriesBar({ user }) {
 
   useEffect(() => { fetchStories(); }, []);
 
-  const handleStoryUpload = async (e) => {
-    const file = e.target.files[0]; if (!file) return;
+  // Auto-advance story progress
+  useEffect(() => {
+    if (!viewingStory) { setProgress(0); return; }
+    if (viewingStory.mediaType === "video") return; // video controls its own progress
+    setProgress(0);
+    const start = Date.now();
+    progressRef.current = setInterval(() => {
+      const elapsed = Date.now() - start;
+      const pct = Math.min((elapsed / STORY_DURATION) * 100, 100);
+      setProgress(pct);
+      if (pct >= 100) {
+        clearInterval(progressRef.current);
+        goNextStory();
+      }
+    }, 50);
+    return () => clearInterval(progressRef.current);
+  }, [viewingStory, viewingIndex]);
+
+  const goNextStory = () => {
+    if (viewingIndex < stories.length - 1) {
+      setViewingIndex(i => i + 1);
+      setViewingStory(stories[viewingIndex + 1]);
+    } else {
+      closeStory();
+    }
+  };
+
+  const goPrevStory = () => {
+    if (viewingIndex > 0) {
+      setViewingIndex(i => i - 1);
+      setViewingStory(stories[viewingIndex - 1]);
+    }
+  };
+
+  const closeStory = () => {
+    clearInterval(progressRef.current);
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    setViewingStory(null);
+    setViewingIndex(0);
+    setProgress(0);
+  };
+
+  const openStory = (s, idx) => {
+    setViewingStory(s);
+    setViewingIndex(idx);
+    if (s.songUrl) {
+      const audio = new Audio(s.songUrl);
+      audio.loop = true;
+      audio.play().catch(() => {});
+      audioRef.current = audio;
+    }
+  };
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const isVideo = file.type.startsWith("video/");
+    if (isVideo) {
+      // Check duration
+      const url = URL.createObjectURL(file);
+      const vid = document.createElement("video");
+      vid.src = url;
+      vid.onloadedmetadata = () => {
+        if (vid.duration > 60) {
+          alert("Video must be 1 minute or less.");
+          return;
+        }
+        setSelectedFile(file);
+        setSelectedFileType("video");
+        setPreviewUrl(url);
+        setShowUploadModal(true);
+      };
+    } else {
+      setSelectedFile(file);
+      setSelectedFileType("image");
+      setPreviewUrl(URL.createObjectURL(file));
+      setShowUploadModal(true);
+    }
+  };
+
+  const handleSongSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setSongUrl(URL.createObjectURL(file));
+    setSongName(file.name.replace(/\.[^/.]+$/, ""));
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile) return;
     setUploading(true);
     try {
+      const isVideo = selectedFileType === "video";
       const data = new FormData();
-      data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq");
-      const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
+      data.append("file", selectedFile);
+      data.append("upload_preset", "Econnect");
+      data.append("cloud_name", "dxmmsq0gq");
+      const endpoint = isVideo
+        ? "https://api.cloudinary.com/v1_1/dxmmsq0gq/video/upload"
+        : "https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload";
+      const res = await fetch(endpoint, { method: "POST", body: data });
       const result = await res.json();
+
+      let uploadedSongUrl = "";
+      if (songUrl && songUrl.startsWith("blob:")) {
+        const songFile = document.getElementById("songInput").files[0];
+        if (songFile) {
+          const sData = new FormData();
+          sData.append("file", songFile);
+          sData.append("upload_preset", "Econnect");
+          sData.append("cloud_name", "dxmmsq0gq");
+          const sRes = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/raw/upload", { method: "POST", body: sData });
+          const sResult = await sRes.json();
+          uploadedSongUrl = sResult.secure_url || "";
+        }
+      }
+
+      // Get thumbnail for preview circle
+      const thumbnail = isVideo
+        ? result.secure_url.replace("/upload/", "/upload/so_0,w_200,h_200,c_fill/").replace(".mp4", ".jpg")
+        : result.secure_url;
+
       await addDoc(collection(db, "stories"), {
-        imageUrl: result.secure_url, userName: user?.displayName || "User",
-        userId: user?.uid, userPhoto: user?.photoURL || "",
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), createdAt: serverTimestamp(),
+        mediaUrl: result.secure_url,
+        imageUrl: thumbnail,
+        mediaType: isVideo ? "video" : "image",
+        userName: user?.displayName || "User",
+        userId: user?.uid,
+        userPhoto: user?.photoURL || "",
+        songUrl: uploadedSongUrl,
+        songName: songName || "",
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        createdAt: serverTimestamp(),
       });
+      setShowUploadModal(false);
+      setSelectedFile(null);
+      setPreviewUrl("");
+      setSongUrl("");
+      setSongName("");
       fetchStories();
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert("Upload failed. Try again."); }
     setUploading(false);
   };
 
   return (
-    <div style={{ ...S.card, padding: "14px 16px", marginBottom: 16 }}>
-      <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
-          onClick={() => document.getElementById("storyUploadInput").click()}>
-          <div style={{ width: 58, height: 58, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `2px dashed ${C.primary}` }}>
-            {uploading ? <span style={{ fontSize: 11, color: C.primary, fontWeight: 700 }}>...</span> : <span style={{ fontSize: 26 }}>+</span>}
+    <>
+      <div style={{ ...S.card, padding: "14px 16px", marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
+          {/* Add Story Button */}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
+            onClick={() => document.getElementById("storyFileInput").click()}>
+            <div style={{ width: 58, height: 58, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `2px dashed ${C.primary}` }}>
+              {uploading ? <span style={{ fontSize: 11, color: C.primary, fontWeight: 700 }}>...</span> : <span style={{ fontSize: 26 }}>+</span>}
+            </div>
+            <span style={{ fontSize: 10, color: C.greyDark, fontWeight: 600 }}>Add Story</span>
+            <input id="storyFileInput" type="file" accept="image/*,video/*" style={{ display: "none" }} onChange={handleFileSelect} />
           </div>
-          <span style={{ fontSize: 10, color: C.greyDark, fontWeight: 600 }}>Add Story</span>
-          <input id="storyUploadInput" type="file" accept="image/*" style={{ display: "none" }} onChange={handleStoryUpload} />
+
+          {/* Story Thumbnails */}
+          {stories.map((s, idx) => (
+            <div key={s.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
+              onClick={() => openStory(s, idx)}>
+              <div style={{ width: 58, height: 58, borderRadius: "50%", background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, padding: 2.5, position: "relative" }}>
+                <div style={{ width: "100%", height: "100%", borderRadius: "50%", overflow: "hidden", background: C.grey }}>
+                  {s.imageUrl
+                    ? <img src={s.imageUrl} alt={s.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
+                </div>
+                {s.mediaType === "video" && (
+                  <div style={{ position: "absolute", bottom: 0, right: 0, background: "rgba(0,0,0,0.7)", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <span style={{ fontSize: 8, color: "white" }}>▶</span>
+                  </div>
+                )}
+              </div>
+              <span style={{ fontSize: 10, color: C.text, fontWeight: 600, textAlign: "center", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.userName}</span>
+            </div>
+          ))}
+          {stories.length === 0 && <div style={{ display: "flex", alignItems: "center", color: C.greyDark, fontSize: 13, paddingLeft: 8 }}>No stories yet. Be the first!</div>}
         </div>
-        {stories.map(s => (
-          <div key={s.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
-            onClick={() => setViewingStory(s)}>
-            <div style={{ width: 58, height: 58, borderRadius: "50%", background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, padding: 2.5 }}>
-              <div style={{ width: "100%", height: "100%", borderRadius: "50%", overflow: "hidden", background: C.white }}>
-                {s.userPhoto ? <img src={s.userPhoto} alt={s.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
-              </div>
-            </div>
-            <span style={{ fontSize: 10, color: C.text, fontWeight: 600, textAlign: "center", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.userName}</span>
-          </div>
-        ))}
-        {stories.length === 0 && <div style={{ display: "flex", alignItems: "center", color: C.greyDark, fontSize: 13, paddingLeft: 8 }}>No stories yet. Be the first!</div>}
       </div>
-      {viewingStory && (
-        <div style={{ ...S.modal, zIndex: 400 }} onClick={() => setViewingStory(null)}>
-          <div style={{ background: C.secondary, borderRadius: 18, width: 300, height: 480, position: "relative", overflow: "hidden" }}>
-            <img src={viewingStory.imageUrl} alt="story" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "rgba(255,255,255,0.3)" }}>
-              <div style={{ height: "100%", width: "100%", background: C.white }} />
-            </div>
-            <div style={{ position: "absolute", top: 16, left: 16, display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ width: 36, height: 36, borderRadius: "50%", overflow: "hidden", background: C.white }}>
-                {viewingStory.userPhoto ? <img src={viewingStory.userPhoto} alt={viewingStory.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>👤</div>}
+
+      {/* Upload Modal */}
+      {showUploadModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div style={{ background: C.white, borderRadius: 18, padding: 24, maxWidth: 400, width: "100%" }}>
+            <h3 style={{ fontWeight: 800, fontSize: 18, marginBottom: 16 }}>Post Story</h3>
+            {previewUrl && (
+              <div style={{ borderRadius: 12, overflow: "hidden", marginBottom: 16, height: 200, background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {selectedFileType === "video"
+                  ? <video src={previewUrl} style={{ width: "100%", height: "100%", objectFit: "contain" }} controls />
+                  : <img src={previewUrl} alt="preview" style={{ width: "100%", height: "100%", objectFit: "contain" }} />}
               </div>
-              <div>
-                <div style={{ color: "white", fontWeight: 700, fontSize: 13 }}>{viewingStory.userName}</div>
-                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 10 }}>Expires in 24hrs</div>
-              </div>
+            )}
+            <div style={{ marginBottom: 14 }}>
+              <label style={S.label}>🎵 Add a song (optional)</label>
+              <input id="songInput" type="file" accept="audio/*" style={{ display: "none" }} onChange={handleSongSelect} />
+              <button style={{ ...S.btn("outline"), width: "100%", padding: "10px" }} onClick={() => document.getElementById("songInput").click()}>
+                {songName ? `🎵 ${songName}` : "Choose a song from your device"}
+              </button>
             </div>
-            <button style={{ position: "absolute", top: 16, right: 16, background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 30, height: 30, cursor: "pointer", fontSize: 14, fontWeight: 700 }} onClick={() => setViewingStory(null)}>X</button>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button style={{ ...S.btn(), flex: 1, opacity: uploading ? 0.7 : 1 }} onClick={handleUpload} disabled={uploading}>
+                {uploading ? "Uploading..." : "Post Story"}
+              </button>
+              <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => { setShowUploadModal(false); setPreviewUrl(""); setSelectedFile(null); setSongUrl(""); setSongName(""); }}>Cancel</button>
+            </div>
           </div>
         </div>
       )}
-    </div>
+
+      {/* Full Screen Story Viewer */}
+      {viewingStory && (
+        <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, display: "flex", flexDirection: "column" }}>
+          {/* Progress bars */}
+          <div style={{ display: "flex", gap: 3, padding: "12px 12px 0", position: "absolute", top: 0, left: 0, right: 0, zIndex: 10 }}>
+            {stories.map((_, i) => (
+              <div key={i} style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.3)", borderRadius: 2, overflow: "hidden" }}>
+                <div style={{
+                  height: "100%", borderRadius: 2, background: "white",
+                  width: i < viewingIndex ? "100%" : i === viewingIndex ? `${progress}%` : "0%",
+                  transition: i === viewingIndex ? "none" : "none"
+                }} />
+              </div>
+            ))}
+          </div>
+
+          {/* User info */}
+          <div style={{ position: "absolute", top: 28, left: 0, right: 0, zIndex: 10, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 40, height: 40, borderRadius: "50%", overflow: "hidden", border: "2px solid white" }}>
+                {viewingStory.imageUrl
+                  ? <img src={viewingStory.imageUrl} alt={viewingStory.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  : <div style={{ height: "100%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>👤</div>}
+              </div>
+              <div>
+                <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{viewingStory.userName}</div>
+                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>24hrs</div>
+              </div>
+            </div>
+            <button style={{ background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={closeStory}>✕</button>
+          </div>
+
+          {/* Media content */}
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}
+            onClick={(e) => {
+              const x = e.clientX;
+              const w = window.innerWidth;
+              if (x < w / 3) goPrevStory();
+              else if (x > (w * 2) / 3) goNextStory();
+            }}>
+            {viewingStory.mediaType === "video"
+              ? <video
+                  ref={videoRef}
+                  src={viewingStory.mediaUrl || viewingStory.imageUrl}
+                  style={{ width: "100%", height: "100vh", objectFit: "contain" }}
+                  autoPlay
+                  playsInline
+                  onEnded={goNextStory}
+                  onTimeUpdate={(e) => {
+                    const pct = (e.target.currentTime / e.target.duration) * 100;
+                    setProgress(pct);
+                  }}
+                />
+              : <img src={viewingStory.mediaUrl || viewingStory.imageUrl} alt="story" style={{ width: "100%", height: "100vh", objectFit: "contain" }} />}
+          </div>
+
+          {/* Song info */}
+          {viewingStory.songName && (
+            <div style={{ position: "absolute", bottom: 30, left: 16, right: 16, zIndex: 10, display: "flex", alignItems: "center", gap: 8, background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "8px 14px" }}>
+              <span style={{ fontSize: 16 }}>🎵</span>
+              <span style={{ color: "white", fontSize: 13, fontWeight: 600 }}>{viewingStory.songName}</span>
+            </div>
+          )}
+
+          {/* Tap hints */}
+          <div style={{ position: "absolute", top: "50%", left: 0, width: "33%", height: "40%", transform: "translateY(-50%)", zIndex: 9 }} onClick={goPrevStory} />
+          <div style={{ position: "absolute", top: "50%", right: 0, width: "33%", height: "40%", transform: "translateY(-50%)", zIndex: 9 }} onClick={goNextStory} />
+        </div>
+      )}
+    </>
   );
 }
 
