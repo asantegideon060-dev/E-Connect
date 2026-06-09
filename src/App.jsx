@@ -1017,6 +1017,24 @@ function OrderTrackingPage({ user }) {
 function NotificationsPage({ user }) {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [notifPermission, setNotifPermission] = useState(
+    "Notification" in window ? Notification.permission : "denied"
+  );
+
+  const requestNotifPermission = async () => {
+    if (!("Notification" in window)) { alert("Your browser does not support notifications."); return; }
+    const result = await Notification.requestPermission();
+    setNotifPermission(result);
+    if (result === "granted" && "serviceWorker" in navigator) {
+      navigator.serviceWorker.ready.then(reg => {
+        reg.showNotification("E-Connect 🔔", {
+          body: "Notifications enabled! You will now receive updates.",
+          icon: "https://res.cloudinary.com/dxmmsq0gq/image/upload/w_192,h_192,c_fill/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg",
+          vibrate: [200, 100, 200],
+        });
+      });
+    }
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -1028,7 +1046,7 @@ function NotificationsPage({ user }) {
     const unsub = onSnapshot(q, snap => {
       setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
-    });
+    }, () => setLoading(false));
     return unsub;
   }, [user]);
 
@@ -1069,6 +1087,26 @@ function NotificationsPage({ user }) {
           </button>
         )}
       </div>
+
+      {/* Push Notification Permission Banner */}
+      {notifPermission !== "granted" && (
+        <div style={{ ...S.card, padding: 16, marginBottom: 16, background: `${C.primary}10`, border: `1px solid ${C.primary}30`, display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ fontSize: 32 }}>🔔</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 3 }}>Enable Push Notifications</div>
+            <div style={{ fontSize: 12, color: C.greyDark }}>Get notified about messages, orders, likes and follows even when the app is closed.</div>
+          </div>
+          <button style={{ ...S.btn(), padding: "8px 14px", fontSize: 12, whiteSpace: "nowrap" }} onClick={requestNotifPermission}>
+            Allow
+          </button>
+        </div>
+      )}
+      {notifPermission === "granted" && (
+        <div style={{ ...S.card, padding: 12, marginBottom: 16, background: "#e6faf8", display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 20 }}>✅</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: C.primary }}>Push notifications are enabled!</span>
+        </div>
+      )}
 
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading notifications...</div>
