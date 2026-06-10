@@ -3036,7 +3036,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {[
                   { label: "MoMo Number", value: "0541940967" },
-                  { label: "Account Name", value: "E-Connect GH" },
+                  { label: "Account Name", value: "Ebenezer Boateng" },
                   { label: "Amount", value: "GH₵20.00" },
                   { label: "Reference", value: "PREMIUM-SUB" },
                 ].map(item => (
@@ -3577,3 +3577,4 @@ export default function App() {
     </div>
   );
 }
+
