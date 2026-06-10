@@ -77,9 +77,19 @@ const S = {
 // ── Auth Page ──────────────────────────────────────────────────
 function Auth({ setUser }) {
   const [isLogin, setIsLogin] = useState(true);
-  const [form, setForm] = useState({ name: "", email: "", password: "", phone: "" });
+  const [form, setForm] = useState({ name: "", email: "", password: "", phone: "", referralCode: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [refBonus, setRefBonus] = useState("");
+
+  // Auto-fill referral code from URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ref = params.get("ref");
+    if (ref) { setForm(f => ({ ...f, referralCode: ref })); setIsLogin(false); setRefBonus("🎉 You were invited! Sign up to get GH₵5 off your first order."); }
+  }, []);
+
+  const generateRefCode = (uid) => uid.slice(0, 8).toUpperCase();
 
   const handle = async () => {
     setError(""); setLoading(true);
@@ -92,10 +102,43 @@ function Auth({ setUser }) {
         const res = await createUserWithEmailAndPassword(auth, form.email, form.password);
         await updateProfile(res.user, { displayName: form.name });
         const adminEmails = ["admin@econnect.gh", "asantegideon060@gmail.com", "selormatsubonuedie@gmail.com", "akowuahisaac686@gmail.com", "nyarkomatthew925491@gmail.com", "ebenezer.boateng009@stu.ucc.edu.gh"];
+        const refCode = generateRefCode(res.user.uid);
+        let referredBy = null;
+
+        // Process referral code if provided
+        if (form.referralCode) {
+          const refSnap = await getDocs(query(collection(db, "users"), where("referralCode", "==", form.referralCode.toUpperCase())));
+          if (!refSnap.empty) {
+            const referrer = refSnap.docs[0];
+            referredBy = referrer.id;
+            // Give referrer GH₵5 reward
+            const currentReward = referrer.data().referralReward || 0;
+            const currentCount = referrer.data().referralCount || 0;
+            await setDoc(doc(db, "users", referrer.id), {
+              referralReward: currentReward + 5,
+              referralCount: currentCount + 1,
+            }, { merge: true });
+            // Credit wallet with referral reward
+            const walletSnap = await getDoc(doc(db, "wallets", referrer.id));
+            const currentWalletBal = walletSnap.exists() ? (walletSnap.data().balance || 0) : 0;
+            await setDoc(doc(db, "wallets", referrer.id), { balance: currentWalletBal + 5, userId: referrer.id }, { merge: true });
+            await addDoc(collection(db, "walletTransactions"), {
+              userId: referrer.id, type: "reward", amount: 5,
+              description: "Referral reward — friend signed up!",
+              createdAt: serverTimestamp(),
+            });
+            await sendNotification(referrer.id, "follow", `🎉 Someone signed up using your referral link! You earned GH₵5 reward. Total: GH₵${currentReward + 5}`, "E-Connect");
+          }
+        }
+
         await setDoc(doc(db, "users", res.user.uid), {
           name: form.name, email: form.email, phone: form.phone,
           role: adminEmails.includes(form.email) ? "admin" : "user",
-          followers: 0, following: 0, createdAt: serverTimestamp()
+          followers: 0, following: 0, createdAt: serverTimestamp(),
+          referralCode: refCode,
+          referredBy: referredBy,
+          referralReward: form.referralCode ? 5 : 0, // new user gets GH₵5 if they used a code
+          referralCount: 0,
         });
         setUser(res.user);
       }
@@ -134,6 +177,13 @@ function Auth({ setUser }) {
         <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>
           {loading ? "Please wait..." : isLogin ? "Login" : "Create Account"}
         </button>
+        {!isLogin && (
+          <div style={{ marginTop: 8, marginBottom: 4 }}>
+            <label style={S.label}>Referral Code (optional)</label>
+            <input style={{ ...S.input, marginBottom: 4 }} placeholder="Enter referral code" value={form.referralCode} onChange={e => setForm({ ...form, referralCode: e.target.value.toUpperCase() })} />
+          </div>
+        )}
+        {refBonus && <div style={{ ...S.alert("success"), marginTop: 8, fontSize: 13 }}>{refBonus}</div>}
         <p style={{ color: C.greyDark, fontSize: 12, textAlign: "center", marginTop: 16 }}>Register with your email to get started</p>
       </div>
     </div>
@@ -1348,7 +1398,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
 }
 
 // ── Product Detail ─────────────────────────────────────────────
-function ProductDetail({ product, setCart, setPage }) {
+function ProductDetail({ product, setCart, setPage, user, startChat }) {
   const [review, setReview] = useState("");
   const [rating, setRating] = useState(5);
   const [reviews, setReviews] = useState([]);
@@ -1361,6 +1411,15 @@ function ProductDetail({ product, setCart, setPage }) {
   }, [product]);
 
   if (!product) return null;
+
+  // Track product view
+  useEffect(() => {
+    if (!product?.id || !product?.sellerId) return;
+    addDoc(collection(db, "productViews"), {
+      productId: product.id, sellerId: product.sellerId,
+      viewedAt: serverTimestamp(),
+    }).catch(() => {});
+  }, [product?.id]);
 
   const addToCart = () => {
     setCart(prev => { const ex = prev.find(i => i.id === product.id); if (ex) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i); return [...prev, { ...product, qty: 1 }]; });
@@ -1390,7 +1449,13 @@ function ProductDetail({ product, setCart, setPage }) {
           <div style={{ background: C.grey, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.greyDark }}>
             📦 {product.stock || 0} items in stock · 📞 Contact: +233 54 194 0967
           </div>
-          <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15 }} onClick={addToCart}>Add to Cart</button>
+          <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, marginBottom: 10 }} onClick={addToCart}>Add to Cart</button>
+          {product.sellerId && product.sellerId !== user?.uid && (
+            <button style={{ ...S.btn("outline"), width: "100%", padding: 14, fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
+              onClick={() => startChat({ id: product.sellerId, name: product.seller, productName: product.name, productId: product.id })}>
+              💬 Chat with Seller
+            </button>
+          )}
         </div>
       </div>
 
@@ -1425,13 +1490,33 @@ function Cart({ cart, setCart, setPage, user }) {
 
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
+  const [walletBalance, setWalletBalance] = useState(0);
+  const [payWithWallet, setPayWithWallet] = useState(false);
+  const [walletError, setWalletError] = useState("");
+
+  useEffect(() => {
+    if (!user) return;
+    getDoc(doc(db, "wallets", user.uid)).then(d => { if (d.exists()) setWalletBalance(d.data().balance || 0); });
+  }, [user]);
+
   const handleOrder = async () => {
     if (!form.name || !form.phone) return;
-    setLoading(true);
+    setWalletError(""); setLoading(true);
+    if (payWithWallet) {
+      if (walletBalance < total) { setWalletError(`Insufficient wallet balance. You have GH₵${walletBalance.toFixed(2)} but need GH₵${total}.`); setLoading(false); return; }
+      // Deduct from wallet
+      await setDoc(doc(db, "wallets", user.uid), { balance: walletBalance - total }, { merge: true });
+      await addDoc(collection(db, "walletTransactions"), {
+        userId: user.uid, type: "payment", amount: total,
+        description: `Order payment (${cart.length} item${cart.length > 1 ? "s" : ""})`,
+        createdAt: serverTimestamp(),
+      });
+    }
     await addDoc(collection(db, "orders"), {
       items: cart, total, customerName: form.name, customerPhone: form.phone,
       address: form.address, delivery: form.delivery, userId: user?.uid || "guest",
-      status: "pending", createdAt: serverTimestamp()
+      status: "pending", paymentMethod: payWithWallet ? "wallet" : "momo",
+      createdAt: serverTimestamp()
     });
     setDone(true); setCart([]);
     setLoading(false);
@@ -1754,22 +1839,65 @@ function ReelsPage({ user }) {
 }
 
 // ── Messages ───────────────────────────────────────────────────
-function Messages({ user }) {
+function Messages({ user, chatSeller, onChatStarted }) {
   const [conversations, setConversations] = useState([]);
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMsg, setNewMsg] = useState("");
   const [newChat, setNewChat] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState("");
+  const [loadingChat, setLoadingChat] = useState(false);
 
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, "conversations"), where("participants", "array-contains", user.uid));
     const unsub = onSnapshot(q, snap => {
-      setConversations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const convos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setConversations(convos);
+      // Auto-open chat with seller if coming from product page
+      if (chatSeller && !loadingChat) {
+        setLoadingChat(true);
+        const existing = convos.find(c => c.participants?.includes(chatSeller.id) && c.participants?.includes(user.uid));
+        if (existing) {
+          setSelected(existing);
+          if (chatSeller.productName && !existing.lastMessage) {
+            // Send automatic first message
+            addDoc(collection(db, "conversations", existing.id, "messages"), {
+              text: `Hi! I have a question about "${chatSeller.productName}". Is it still available?`,
+              senderId: user.uid, senderName: user.displayName, createdAt: serverTimestamp(),
+            });
+            setDoc(doc(db, "conversations", existing.id), { lastMessage: `Hi! I have a question about "${chatSeller.productName}".`, lastMessageAt: serverTimestamp() }, { merge: true });
+          }
+          onChatStarted && onChatStarted();
+        } else {
+          startSellerChat(chatSeller, convos);
+        }
+      }
     });
     return unsub;
-  }, [user]);
+  }, [user, chatSeller]);
+
+  const startSellerChat = async (seller, existingConvos) => {
+    const existing = existingConvos?.find(c => c.participants?.includes(seller.id));
+    if (existing) { setSelected(existing); onChatStarted && onChatStarted(); return; }
+    const convoRef = await addDoc(collection(db, "conversations"), {
+      participants: [user.uid, seller.id],
+      participantNames: [user.displayName, seller.name],
+      lastMessage: seller.productName ? `Hi! About "${seller.productName}"` : "Hello!",
+      lastMessageAt: serverTimestamp(),
+      productId: seller.productId || null,
+      productName: seller.productName || null,
+    });
+    const firstMsg = seller.productName
+      ? `Hi! I have a question about "${seller.productName}". Is it still available?`
+      : "Hello!";
+    await addDoc(collection(db, "conversations", convoRef.id, "messages"), {
+      text: firstMsg, senderId: user.uid, senderName: user.displayName, createdAt: serverTimestamp(),
+    });
+    await sendNotification(seller.id, "comment", `💬 ${user.displayName} wants to ask about "${seller.productName || "your product"}"`, user.displayName);
+    setSelected({ id: convoRef.id, participants: [user.uid, seller.id], participantNames: [user.displayName, seller.name], productName: seller.productName });
+    onChatStarted && onChatStarted();
+  };
 
   useEffect(() => {
     if (!selected) return;
@@ -1835,6 +1963,316 @@ function Messages({ user }) {
 }
 
 // ── Profile ────────────────────────────────────────────────────
+
+// ── Seller Analytics Dashboard ─────────────────────────────────
+function SellerAnalytics({ user }) {
+  const [products, setProducts] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [views, setViews] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [period, setPeriod] = useState("week");
+
+  useEffect(() => {
+    if (!user) return;
+    Promise.all([
+      getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid))),
+      getDocs(query(collection(db, "orders"))),
+    ]).then(([prodSnap, orderSnap]) => {
+      const prods = prodSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const allOrders = orderSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const myOrders = allOrders.filter(o => o.items?.some(i => i.sellerId === user.uid));
+      setProducts(prods);
+      setOrders(myOrders);
+      setLoading(false);
+    });
+    // Track product views
+    const viewsRef = collection(db, "productViews");
+    getDocs(query(viewsRef, where("sellerId", "==", user.uid))).then(snap => {
+      const v = {};
+      snap.docs.forEach(d => { const data = d.data(); v[data.productId] = (v[data.productId] || 0) + 1; });
+      setViews(v);
+    }).catch(() => {});
+  }, [user]);
+
+  const now = Date.now();
+  const periodMs = period === "week" ? 7 * 86400000 : period === "month" ? 30 * 86400000 : 365 * 86400000;
+  const filteredOrders = orders.filter(o => {
+    const t = o.createdAt?.toMillis ? o.createdAt.toMillis() : new Date(o.createdAt || 0).getTime();
+    return now - t < periodMs;
+  });
+
+  const totalRevenue = filteredOrders.reduce((s, o) => {
+    const mine = o.items?.filter(i => i.sellerId === user.uid) || [];
+    return s + mine.reduce((ss, i) => ss + (i.price * i.qty), 0);
+  }, 0);
+
+  const totalOrders = filteredOrders.length;
+  const totalViews = Object.values(views).reduce((s, v) => s + v, 0);
+  const conversionRate = totalViews > 0 ? ((totalOrders / totalViews) * 100).toFixed(1) : 0;
+
+  // Best selling products
+  const productSales = {};
+  orders.forEach(o => {
+    o.items?.filter(i => i.sellerId === user.uid).forEach(item => {
+      productSales[item.id] = (productSales[item.id] || 0) + (item.qty || 1);
+    });
+  });
+  const topProducts = products.sort((a, b) => (productSales[b.id] || 0) - (productSales[a.id] || 0)).slice(0, 5);
+
+  // Revenue by day (last 7 days)
+  const dailyRevenue = Array.from({ length: 7 }, (_, i) => {
+    const day = new Date(now - (6 - i) * 86400000);
+    const label = day.toLocaleDateString("en-GB", { weekday: "short" });
+    const dayRevenue = orders.filter(o => {
+      const t = o.createdAt?.toMillis ? o.createdAt.toMillis() : 0;
+      return Math.abs(t - day.getTime()) < 43200000;
+    }).reduce((s, o) => {
+      const mine = o.items?.filter(i => i.sellerId === user.uid) || [];
+      return s + mine.reduce((ss, i) => ss + (i.price * i.qty), 0);
+    }, 0);
+    return { label, value: dayRevenue };
+  });
+
+  const maxRevenue = Math.max(...dailyRevenue.map(d => d.value), 1);
+
+  if (loading) return <div style={{ textAlign: "center", padding: 60, color: C.greyDark }}>Loading analytics...</div>;
+
+  return (
+    <div style={S.page}>
+      <div style={S.sectionTitle}>📊 Analytics</div>
+      <p style={S.sectionSub}>Your store performance</p>
+
+      {/* Period Filter */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        {["week", "month", "year"].map(p => (
+          <button key={p} style={{ ...S.btn(period === p ? "primary" : "grey"), padding: "8px 16px", textTransform: "capitalize", flex: 1 }} onClick={() => setPeriod(p)}>{p}</button>
+        ))}
+      </div>
+
+      {/* Stats Grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
+        {[
+          { label: "Revenue", value: `GH₵${totalRevenue.toFixed(2)}`, icon: "💰", color: C.primary },
+          { label: "Orders", value: totalOrders, icon: "🛒", color: C.success },
+          { label: "Product Views", value: totalViews, icon: "👁️", color: "#8B5CF6" },
+          { label: "Conversion", value: `${conversionRate}%`, icon: "📈", color: C.accent },
+        ].map((s, i) => (
+          <div key={i} style={{ ...S.card, padding: 16 }}>
+            <div style={{ fontSize: 28, marginBottom: 6 }}>{s.icon}</div>
+            <div style={{ fontWeight: 900, fontSize: 22, color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: 12, color: C.greyDark }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Revenue Chart (7 days) */}
+      <div style={{ ...S.card, padding: 16, marginBottom: 20 }}>
+        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16 }}>Revenue (Last 7 Days)</div>
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 100 }}>
+          {dailyRevenue.map((d, i) => (
+            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+              <div style={{ width: "100%", background: d.value > 0 ? C.primary : C.grey, borderRadius: "4px 4px 0 0", height: `${Math.max((d.value / maxRevenue) * 80, d.value > 0 ? 8 : 4)}px`, transition: "height 0.3s" }} />
+              <span style={{ fontSize: 9, color: C.greyDark }}>{d.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Top Products */}
+      <div style={{ ...S.card, padding: 16, marginBottom: 20 }}>
+        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 12 }}>🏆 Top Products</div>
+        {topProducts.length === 0 ? (
+          <div style={{ color: C.greyDark, fontSize: 13 }}>No products yet.</div>
+        ) : topProducts.map((p, i) => (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: i < topProducts.length - 1 ? `1px solid ${C.border}` : "none" }}>
+            <div style={{ width: 36, height: 36, borderRadius: 8, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
+              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>📦</div>}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
+              <div style={{ fontSize: 12, color: C.greyDark }}>GH₵{p.price} · {productSales[p.id] || 0} sold · {views[p.id] || 0} views</div>
+            </div>
+            <div style={{ fontWeight: 800, color: C.primary, fontSize: 14 }}>#{i + 1}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* All Products Performance */}
+      <div style={{ ...S.card, padding: 16, marginBottom: 80 }}>
+        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 12 }}>All Products</div>
+        {products.length === 0 ? (
+          <div style={{ color: C.greyDark, fontSize: 13 }}>No products listed yet.</div>
+        ) : products.map((p, i) => (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: i < products.length - 1 ? `1px solid ${C.border}` : "none" }}>
+            <div style={{ width: 40, height: 40, borderRadius: 8, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
+              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>📦</div>}
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
+              <div style={{ display: "flex", gap: 10, marginTop: 2 }}>
+                <span style={{ fontSize: 11, color: C.greyDark }}>👁️ {views[p.id] || 0} views</span>
+                <span style={{ fontSize: 11, color: C.success }}>🛒 {productSales[p.id] || 0} sold</span>
+                <span style={{ fontSize: 11, color: p.stock > 0 ? C.primary : C.error }}>📦 {p.stock || 0} left</span>
+              </div>
+            </div>
+            <div style={{ fontWeight: 800, color: C.primary, fontSize: 13 }}>GH₵{((productSales[p.id] || 0) * p.price).toFixed(0)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+// ── Wallet Page ────────────────────────────────────────────────
+function WalletPage({ user, setPage }) {
+  const [balance, setBalance] = useState(0);
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showTopUp, setShowTopUp] = useState(false);
+  const [topUpAmount, setTopUpAmount] = useState("");
+  const [topUpPhone, setTopUpPhone] = useState("");
+  const [topUpLoading, setTopUpLoading] = useState(false);
+  const [topUpDone, setTopUpDone] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(doc(db, "wallets", user.uid), snap => {
+      if (snap.exists()) {
+        setBalance(snap.data().balance || 0);
+      } else {
+        setDoc(doc(db, "wallets", user.uid), { balance: 0, userId: user.uid, createdAt: serverTimestamp() });
+        setBalance(0);
+      }
+      setLoading(false);
+    });
+    const q = query(collection(db, "walletTransactions"), where("userId", "==", user.uid), orderBy("createdAt", "desc"));
+    const unsub2 = onSnapshot(q, snap => {
+      setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    }, () => {});
+    return () => { unsub(); unsub2(); };
+  }, [user]);
+
+  const requestTopUp = async () => {
+    if (!topUpAmount || isNaN(topUpAmount) || Number(topUpAmount) < 1) { alert("Enter a valid amount."); return; }
+    if (!topUpPhone) { alert("Enter your MoMo number."); return; }
+    setTopUpLoading(true);
+    await addDoc(collection(db, "walletTopUpRequests"), {
+      userId: user.uid, userName: user.displayName, userEmail: user.email,
+      amount: Number(topUpAmount), phone: topUpPhone,
+      status: "pending", createdAt: serverTimestamp(),
+    });
+    await sendNotification(user.uid, "premium", `💰 Top-up request of GH₵${topUpAmount} received! Admin will verify and credit your wallet within 1 hour.`, "E-Connect");
+    setTopUpLoading(false);
+    setTopUpDone(true);
+    setTopUpAmount(""); setTopUpPhone("");
+    setTimeout(() => { setTopUpDone(false); setShowTopUp(false); }, 3000);
+  };
+
+  const getIcon = (type) => ({ topup: "💰", payment: "🛒", reward: "🎁", refund: "↩️" }[type] || "💳");
+  const getColor = (type) => (["topup", "reward", "refund"].includes(type) ? C.success : C.error);
+  const getSign = (type) => (["topup", "reward", "refund"].includes(type) ? "+" : "-");
+
+  return (
+    <div style={S.page}>
+      <div style={S.sectionTitle}>My Wallet</div>
+
+      {/* Balance Card */}
+      <div style={{ background: `linear-gradient(135deg, ${C.primary}, #007A6E)`, borderRadius: 20, padding: "28px 24px", marginBottom: 20, color: "white", position: "relative", overflow: "hidden" }}>
+        <div style={{ position: "absolute", top: -20, right: -20, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.08)" }} />
+        <div style={{ position: "absolute", bottom: -30, left: -10, width: 100, height: 100, borderRadius: "50%", background: "rgba(255,255,255,0.05)" }} />
+        <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>Available Balance</div>
+        <div style={{ fontSize: 38, fontWeight: 900, letterSpacing: -1, marginBottom: 4 }}>GH₵{loading ? "..." : balance.toFixed(2)}</div>
+        <div style={{ fontSize: 12, opacity: 0.75 }}>{user?.displayName}</div>
+        <button style={{ marginTop: 16, background: "white", color: C.primary, border: "none", borderRadius: 10, padding: "10px 24px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
+          onClick={() => setShowTopUp(true)}>+ Top Up</button>
+      </div>
+
+      {/* Quick Stats */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+        {[
+          { label: "Total In", value: `GH₵${transactions.filter(t => ["topup","reward","refund"].includes(t.type)).reduce((s,t) => s + (t.amount||0), 0).toFixed(2)}`, icon: "📥" },
+          { label: "Total Spent", value: `GH₵${transactions.filter(t => t.type === "payment").reduce((s,t) => s + (t.amount||0), 0).toFixed(2)}`, icon: "📤" },
+          { label: "Transactions", value: transactions.length, icon: "📋" },
+        ].map((s, i) => (
+          <div key={i} style={{ ...S.card, flex: 1, padding: "12px 10px", textAlign: "center" }}>
+            <div style={{ fontSize: 20, marginBottom: 4 }}>{s.icon}</div>
+            <div style={{ fontWeight: 800, fontSize: 14, color: C.primary }}>{s.value}</div>
+            <div style={{ fontSize: 10, color: C.greyDark }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* How to Top Up */}
+      <div style={{ ...S.card, padding: 16, marginBottom: 20, background: `${C.primary}08` }}>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>💡 How to Top Up</div>
+        <div style={{ fontSize: 13, color: C.greyDark, lineHeight: 1.7 }}>
+          1. Click <b>+ Top Up</b> and enter amount<br/>
+          2. Send MoMo to <b>+233 54 194 0967</b> (Asante Gideon)<br/>
+          3. Enter your MoMo number and submit<br/>
+          4. Admin verifies and credits within <b>1 hour</b>
+        </div>
+      </div>
+
+      {/* Transaction History */}
+      <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 12 }}>Transaction History</div>
+      {transactions.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>
+          <div style={{ fontSize: 48, marginBottom: 8 }}>💳</div>
+          <div>No transactions yet. Top up to get started!</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 80 }}>
+          {transactions.map(t => (
+            <div key={t.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ width: 42, height: 42, borderRadius: "50%", background: `${getColor(t.type)}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
+                {getIcon(t.type)}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{t.description || t.type}</div>
+                <div style={{ fontSize: 12, color: C.greyDark }}>{t.createdAt?.toDate ? t.createdAt.toDate().toLocaleDateString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : ""}</div>
+              </div>
+              <div style={{ fontWeight: 800, fontSize: 16, color: getColor(t.type) }}>
+                {getSign(t.type)}GH₵{t.amount?.toFixed(2)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Top Up Modal */}
+      {showTopUp && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+          <div style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: 28, width: "100%", maxWidth: 480 }}>
+            {topUpDone ? (
+              <div style={{ textAlign: "center", padding: 20 }}>
+                <div style={{ fontSize: 60, marginBottom: 12 }}>✅</div>
+                <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 8 }}>Request Sent!</div>
+                <div style={{ color: C.greyDark, fontSize: 13 }}>Admin will verify your payment and credit your wallet within 1 hour.</div>
+              </div>
+            ) : (
+              <>
+                <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Top Up Wallet</div>
+                <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 20 }}>Send MoMo to <b>+233 54 194 0967</b> then fill this form.</div>
+                <label style={S.label}>Amount (GH₵)</label>
+                <input style={{ ...S.input, marginBottom: 12 }} type="number" placeholder="e.g. 20" value={topUpAmount} onChange={e => setTopUpAmount(e.target.value)} />
+                <label style={S.label}>Your MoMo Number</label>
+                <input style={{ ...S.input, marginBottom: 20 }} placeholder="+233..." value={topUpPhone} onChange={e => setTopUpPhone(e.target.value)} />
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button style={{ ...S.btn(), flex: 1, opacity: topUpLoading ? 0.7 : 1 }} onClick={requestTopUp} disabled={topUpLoading}>
+                    {topUpLoading ? "Submitting..." : "Submit Request"}
+                  </button>
+                  <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowTopUp(false)}>Cancel</button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [profile, setProfile] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -1968,8 +2406,63 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowStore(true)}>
             🏪 My Store
           </button>
+          <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setPage("wallet")}>
+            💰 Wallet
+          </button>
+          <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setPage("analytics")}>
+            📊 Analytics
+          </button>
         </div>
       </div>
+
+      {/* ── Referral Card ─────────────────────────────────── */}
+      {(() => {
+        const refCode = profile?.referralCode || user?.uid?.slice(0, 8).toUpperCase();
+        const refLink = `${window.location.origin}?ref=${refCode}`;
+        const reward = profile?.referralReward || 0;
+        const count = profile?.referralCount || 0;
+        return (
+          <div style={{ ...S.card, padding: 16, marginBottom: 16, background: `linear-gradient(135deg, ${C.primary}10, ${C.accent}10)`, border: `1px solid ${C.primary}30` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 22 }}>🔗</span>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 15 }}>Your Referral Link</div>
+                <div style={{ fontSize: 12, color: C.greyDark }}>Invite friends · Earn GH₵5 per signup</div>
+              </div>
+            </div>
+            <div style={{ background: C.white, borderRadius: 10, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8 }}>
+              <span style={{ fontSize: 12, color: C.primary, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{refLink}</span>
+              <button style={{ ...S.btn(), padding: "6px 12px", fontSize: 11, flexShrink: 0 }} onClick={() => {
+                if (navigator.share) {
+                  navigator.share({ title: "Join E-Connect!", text: "Sign up on E-Connect and start buying & selling easily!", url: refLink });
+                } else {
+                  navigator.clipboard.writeText(refLink);
+                  alert("Referral link copied!");
+                }
+              }}>Share</button>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ flex: 1, background: C.white, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontWeight: 800, fontSize: 20, color: C.primary }}>{count}</div>
+                <div style={{ fontSize: 11, color: C.greyDark }}>Friends Invited</div>
+              </div>
+              <div style={{ flex: 1, background: C.white, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontWeight: 800, fontSize: 20, color: C.success }}>GH₵{reward}</div>
+                <div style={{ fontSize: 11, color: C.greyDark }}>Rewards Earned</div>
+              </div>
+              <div style={{ flex: 1, background: C.white, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontWeight: 800, fontSize: 20, color: C.accent }}>GH₵5</div>
+                <div style={{ fontSize: 11, color: C.greyDark }}>Per Signup</div>
+              </div>
+            </div>
+            {reward > 0 && (
+              <div style={{ marginTop: 10, background: "#e6faf8", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: C.primary, fontWeight: 600, textAlign: "center" }}>
+                🎉 You have GH₵{reward} in referral rewards! Contact admin to redeem.
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
         {["orders", "products", "followers", "following", "friends"].map(t => (
@@ -2394,6 +2887,7 @@ function Admin() {
   const [users, setUsers] = useState([]);
   const [products, setProducts] = useState([]);
   const [ads, setAds] = useState([]);
+  const [topUpRequests, setTopUpRequests] = useState([]);
   const [tab, setTab] = useState("overview");
 
   useEffect(() => {
@@ -2401,7 +2895,30 @@ function Admin() {
     getDocs(collection(db, "users")).then(snap => setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "products")).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "ads")).then(snap => setAds(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const q = query(collection(db, "walletTopUpRequests"), orderBy("createdAt", "desc"));
+    onSnapshot(q, snap => setTopUpRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
   }, []);
+
+  const approveTopUp = async (req) => {
+    // Credit user wallet
+    const walletSnap = await getDoc(doc(db, "wallets", req.userId));
+    const currentBal = walletSnap.exists() ? (walletSnap.data().balance || 0) : 0;
+    await setDoc(doc(db, "wallets", req.userId), { balance: currentBal + req.amount, userId: req.userId }, { merge: true });
+    await addDoc(collection(db, "walletTransactions"), {
+      userId: req.userId, type: "topup", amount: req.amount,
+      description: `Wallet top-up via MoMo (${req.phone})`,
+      createdAt: serverTimestamp(),
+    });
+    await setDoc(doc(db, "walletTopUpRequests", req.id), { status: "approved" }, { merge: true });
+    await sendNotification(req.userId, "premium", `✅ Your wallet top-up of GH₵${req.amount} has been approved! New balance added.`, "E-Connect");
+    setTopUpRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "approved" } : r));
+  };
+
+  const rejectTopUp = async (req) => {
+    await setDoc(doc(db, "walletTopUpRequests", req.id), { status: "rejected" }, { merge: true });
+    await sendNotification(req.userId, "premium", `❌ Your wallet top-up of GH₵${req.amount} was rejected. Contact support if this is an error.`, "E-Connect");
+    setTopUpRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "rejected" } : r));
+  };
 
   const totalRevenue = orders.reduce((s, o) => s + (o.total || 0), 0);
 
@@ -2410,12 +2927,17 @@ function Admin() {
       <div style={S.sectionTitle}>Admin Dashboard</div>
       <p style={S.sectionSub}>Manage E-Connect platform</p>
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        {["overview", "orders", "users", "products", "ads"].map(t => (
+        {["overview", "orders", "users", "products", "ads", "wallet"].map(t => (
           <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 16px", textTransform: "capitalize", position: "relative" }} onClick={() => setTab(t)}>
             {t}
             {t === "ads" && ads.filter(a => a.status === "pending").length > 0 && (
               <span style={{ position: "absolute", top: -4, right: -4, background: C.error, color: "white", borderRadius: "50%", width: 16, height: 16, fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
                 {ads.filter(a => a.status === "pending").length}
+              </span>
+            )}
+            {t === "wallet" && topUpRequests.filter(r => r.status === "pending").length > 0 && (
+              <span style={{ position: "absolute", top: -4, right: -4, background: C.error, color: "white", borderRadius: "50%", width: 16, height: 16, fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {topUpRequests.filter(r => r.status === "pending").length}
               </span>
             )}
           </button>
@@ -2714,6 +3236,7 @@ export default function App() {
   const [page, setPage] = useState("home");
   const [cart, setCart] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [chatSeller, setChatSeller] = useState(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("econnect-theme");
@@ -2791,14 +3314,16 @@ export default function App() {
     switch (page) {
       case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} user={user} />;
-      case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} />;
+      case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
       case "reels": return <ReelsPage user={user} />;
       case "notifications": return <NotificationsPage user={user} />;
       case "orders": return <OrderTrackingPage user={user} />;
       case "location": return <LocationPage user={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
-      case "messages": return <Messages user={user} />;
+      case "messages": return <Messages user={user} chatSeller={chatSeller} onChatStarted={() => setChatSeller(null)} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
+      case "wallet": return <WalletPage user={user} setPage={setPage} />;
+      case "analytics": return <SellerAnalytics user={user} />;
       case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
     }
