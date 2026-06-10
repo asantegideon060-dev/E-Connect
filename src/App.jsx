@@ -2889,9 +2889,11 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
       const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
       const result = await res.json();
       if (!result.secure_url) throw new Error("Upload failed");
-      setProfilePhoto(result.secure_url);
       await updateProfile(auth.currentUser, { photoURL: result.secure_url });
       await setDoc(doc(db, "users", user.uid), { photoURL: result.secure_url }, { merge: true });
+      setProfilePhoto(result.secure_url);
+      // Refresh user object so navbar and all components immediately show new photo
+      setUser(Object.assign(Object.create(Object.getPrototypeOf(auth.currentUser)), auth.currentUser));
     } catch (err) { console.error("Photo upload error:", err); alert("Photo upload failed. Please try again."); }
     setUploadingPhoto(false);
   };
@@ -2900,7 +2902,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
     <div style={{ ...S.page, paddingTop: 0 }}>
       <div style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})`, height: 100, borderRadius: "0 0 20px 20px", marginBottom: -40 }} />
       <div style={{ ...S.card, margin: "0 0 16px", padding: "50px 20px 20px", position: "relative" }}>
-        <div style={{ position: "absolute", top: -30, left: 20, cursor: "pointer" }}>
+        <div style={{ position: "absolute", top: -30, left: 20, cursor: "pointer" }} onClick={() => document.getElementById("profilePhotoInput").click()}>
           <div style={{ width: 72, height: 72, borderRadius: "50%", background: C.white, border: `3px solid ${C.white}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, boxShadow: "0 2px 8px rgba(0,0,0,0.15)", overflow: "hidden", position: "relative" }}>
             {profilePhoto ? <img src={profilePhoto} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span>👤</span>}
             <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.4)", padding: "4px 0", textAlign: "center", fontSize: 10, color: "white", fontWeight: 700, zIndex: 1, pointerEvents: "none" }}>
@@ -2908,7 +2910,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             </div>
           </div>
         </div>
-        <input id="profilePhotoInput" type="file" accept="image/*" style={{ position: "absolute", opacity: 0, width: 72, height: 72, top: 0, left: 0, cursor: "pointer", zIndex: 2 }} onChange={handlePhotoUpload} />
+        <input id="profilePhotoInput" type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handlePhotoUpload} />
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
