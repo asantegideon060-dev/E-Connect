@@ -3639,7 +3639,23 @@ export default function App() {
     return () => { unsub(); userUnsub(); };
   }, [user]);
 
-  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, color: C.primary, fontSize: 20, fontWeight: 700 }}><img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ height: 60, width: "auto", objectFit: "contain" }} /></div>;
+  if (loading) return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, background: "linear-gradient(160deg, #e8faf8 0%, #ffffff 60%, #fff8ee 100%)", position: "relative", overflow: "hidden" }}>
+      {/* Background circles for depth */}
+      <div style={{ position: "absolute", top: -80, right: -80, width: 300, height: 300, borderRadius: "50%", background: `${C.primary}10` }} />
+      <div style={{ position: "absolute", bottom: -60, left: -60, width: 240, height: 240, borderRadius: "50%", background: `#F9731610` }} />
+      {/* Logo */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 20, zIndex: 1 }}>
+        <img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ width: 180, height: 180, objectFit: "contain", borderRadius: 32, boxShadow: "0 12px 40px rgba(0,168,150,0.2)" }} />
+        {/* Loading dots */}
+        <div style={{ display: "flex", gap: 8 }}>
+          {[0,1,2].map(i => (
+            <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: C.primary, opacity: 0.4 + i * 0.2 }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
   if (!user) return <Auth setUser={setUser} />;
 
   const NavIcon = ({ id, active }) => {
