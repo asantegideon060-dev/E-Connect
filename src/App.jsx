@@ -826,7 +826,7 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
       {tab === "products" && (
         filteredProducts.length === 0 ? (
           <div style={{ textAlign: "center", padding: 40 }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
             <div style={{ fontWeight: 700, marginBottom: 8 }}>No products found {cityFilter ? `in ${cityFilter}` : ""}</div>
           </div>
         ) : (
@@ -980,7 +980,7 @@ function OrderTrackingPage({ user }) {
         ) : (
           sellerOrders.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60 }}>
-              <div style={{ fontSize: 56, marginBottom: 12 }}>📦</div>
+              <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
               <div style={{ fontWeight: 700, marginBottom: 8 }}>No customer orders yet</div>
               <div style={{ color: C.greyDark, fontSize: 13 }}>Orders from customers will appear here.</div>
             </div>
@@ -1403,7 +1403,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
         <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading products...</div>
       ) : filtered.length === 0 ? (
         <div style={{ textAlign: "center", padding: 40 }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
           <p style={{ color: C.greyDark }}>No products yet. Be the first to add one!</p>
         </div>
       ) : (
@@ -1598,7 +1598,7 @@ function Cart({ cart, setCart, setPage, user }) {
 
   if (done) return (
     <div style={{ ...S.page, textAlign: "center", paddingTop: 80 }}>
-      <div style={{ fontSize: 80, marginBottom: 16 }}>✅</div>
+      <div style={{ width: 80, height: 80, borderRadius: "50%", background: `${C.success}15`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, margin: "0 auto 16px" }}><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke={C.success} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
       <h2 style={{ fontWeight: 800, fontSize: 24, color: C.success }}>Order Placed!</h2>
       <p style={{ color: C.greyDark }}>Your order has been saved. The seller will contact you at {form.phone}.</p>
       <p style={{ color: C.greyDark, fontSize: 13 }}>Support: +233 54 194 0967</p>
@@ -1611,7 +1611,7 @@ function Cart({ cart, setCart, setPage, user }) {
       <p style={S.sectionSub}>{cart.length} item{cart.length !== 1 ? "s" : ""}</p>
       {cart.length === 0 ? (
         <div style={{ textAlign: "center", padding: 60 }}>
-          <div style={{ fontSize: 64, marginBottom: 16 }}>🛒</div>
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 16, opacity: 0.5 }}><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
           <p style={{ color: C.greyDark }}>Your cart is empty.</p>
           <button style={{ ...S.btn(), marginTop: 16 }} onClick={() => setPage("home")}>Browse Products</button>
         </div>
@@ -1779,7 +1779,7 @@ function LivePage({ user, setPage, setCart }) {
     <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, display: "flex", flexDirection: "column" }}>
       {streamEnded ? (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "white" }}>
-          <div style={{ fontSize: 60, marginBottom: 16 }}>📴</div>
+          <div style={{ width: 60, height: 60, borderRadius: "50%", background: "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="23" y1="1" x2="1" y2="23"/></svg></div>
           <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 8 }}>Live Ended</div>
           <div style={{ color: "rgba(255,255,255,0.6)", marginBottom: 24 }}>This live stream has ended.</div>
           <button style={{ ...S.btn(), padding: "12px 28px" }} onClick={() => { setViewing(null); setStreamEnded(false); }}>Back to Lives</button>
@@ -1894,7 +1894,7 @@ function LivePage({ user, setPage, setCart }) {
 
       {liveStreams.length === 0 ? (
         <div style={{ textAlign: "center", padding: 60 }}>
-          <div style={{ fontSize: 64, marginBottom: 16 }}>📡</div>
+          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 16, opacity: 0.5 }}><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>
           <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>No Live Streams</div>
           <div style={{ color: C.greyDark, fontSize: 14, marginBottom: 24 }}>Nobody is live right now. Be the first to go live!</div>
           <button style={{ ...S.btn(), padding: "12px 28px" }} onClick={() => setShowGoLive(true)}>🎥 Start Live Selling</button>
@@ -2306,12 +2306,12 @@ function Messages({ user, chatSeller, onChatStarted }) {
           </div>
           {conversations.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60 }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>💬</div>
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
               <p style={{ color: C.greyDark }}>No messages yet. Start a conversation!</p>
             </div>
           ) : conversations.map(c => (
             <div key={c.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, marginBottom: 8, cursor: "pointer" }} onClick={() => setSelected(c)}>
-              <div style={S.avatar(48)}>💬</div>
+              <div style={{ ...S.avatar(48), background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 700 }}>{c.participantNames?.filter(n => n !== user.displayName).join(", ") || "Chat"}</div>
                 <div style={{ color: C.greyDark, fontSize: 13 }}>{c.lastMessage || "No messages yet"}</div>
@@ -2598,7 +2598,7 @@ function WalletPage({ user, setPage }) {
       <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 12 }}>Transaction History</div>
       {transactions.length === 0 ? (
         <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>
-          <div style={{ fontSize: 48, marginBottom: 8 }}>💳</div>
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8, opacity: 0.5 }}><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
           <div>No transactions yet. Top up to get started!</div>
         </div>
       ) : (
