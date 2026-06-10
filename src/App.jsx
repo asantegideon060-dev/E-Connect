@@ -81,8 +81,6 @@ function Auth({ setUser }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const generateRefCode = (uid) => uid.slice(0, 8).toUpperCase();
-
   const handle = async () => {
     setError(""); setLoading(true);
     try {
@@ -94,31 +92,6 @@ function Auth({ setUser }) {
         const res = await createUserWithEmailAndPassword(auth, form.email, form.password);
         await updateProfile(res.user, { displayName: form.name });
         const adminEmails = ["admin@econnect.gh", "asantegideon060@gmail.com", "selormatsubonuedie@gmail.com", "akowuahisaac686@gmail.com", "nyarkomatthew925491@gmail.com", "ebenezer.boateng009@stu.ucc.edu.gh"];
-        const refCode = generateRefCode(res.user.uid);
-        let referredBy = null;
-
-        // Process referral code if provided
-        if (form.referralCode) {
-          const refSnap = await getDocs(query(collection(db, "users"), where("referralCode", "==", form.referralCode.toUpperCase())));
-          if (!refSnap.empty) {
-            const referrer = refSnap.docs[0];
-            referredBy = referrer.id;
-            // Give referrer GH₵5 reward
-            const currentReward = referrer.data().referralReward || 0;
-            const currentCount = referrer.data().referralCount || 0;
-            await setDoc(doc(db, "users", referrer.id), {
-              referralReward: currentReward + 5,
-              referralCount: currentCount + 1,
-            }, { merge: true });
-            await addDoc(collection(db, "walletTransactions"), {
-              userId: referrer.id, type: "reward", amount: 5,
-              description: "Referral reward — friend signed up!",
-              createdAt: serverTimestamp(),
-            });
-            await sendNotification(referrer.id, "follow", `🎉 Someone signed up using your referral link! You earned GH₵5 reward. Total: GH₵${currentReward + 5}`, "E-Connect");
-          }
-        }
-
         await setDoc(doc(db, "users", res.user.uid), {
           name: form.name, email: form.email, phone: form.phone,
           role: adminEmails.includes(form.email) ? "admin" : "user",
@@ -161,7 +134,6 @@ function Auth({ setUser }) {
         <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>
           {loading ? "Please wait..." : isLogin ? "Login" : "Create Account"}
         </button>
-        }>{refBonus}</div>}
         <p style={{ color: C.greyDark, fontSize: 12, textAlign: "center", marginTop: 16 }}>Register with your email to get started</p>
       </div>
     </div>
@@ -2791,55 +2763,6 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           </button>
         </div>
       </div>
-
-      {/* ── Referral Card ─────────────────────────────────── */}
-      {(() => {
-        const refCode = profile?.referralCode || user?.uid?.slice(0, 8).toUpperCase();
-        const refLink = `${window.location.origin}?ref=${refCode}`;
-        const reward = profile?.referralReward || 0;
-        const count = profile?.referralCount || 0;
-        return (
-          <div style={{ ...S.card, padding: 16, marginBottom: 16, background: `linear-gradient(135deg, ${C.primary}10, ${C.accent}10)`, border: `1px solid ${C.primary}30` }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <span style={{ fontSize: 22 }}>🔗</span>
-              <div>
-                <div style={{ fontWeight: 800, fontSize: 15 }}>Your Referral Link</div>
-                <div style={{ fontSize: 12, color: C.greyDark }}>Invite friends · Earn GH₵5 per signup</div>
-              </div>
-            </div>
-            <div style={{ background: C.white, borderRadius: 10, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8 }}>
-              <span style={{ fontSize: 12, color: C.primary, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{refLink}</span>
-              <button style={{ ...S.btn(), padding: "6px 12px", fontSize: 11, flexShrink: 0 }} onClick={() => {
-                if (navigator.share) {
-                  navigator.share({ title: "Join E-Connect!", text: "Sign up on E-Connect and start buying & selling easily!", url: refLink });
-                } else {
-                  navigator.clipboard.writeText(refLink);
-                  alert("Referral link copied!");
-                }
-              }}>Share</button>
-            </div>
-            <div style={{ display: "flex", gap: 10 }}>
-              <div style={{ flex: 1, background: C.white, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
-                <div style={{ fontWeight: 800, fontSize: 20, color: C.primary }}>{count}</div>
-                <div style={{ fontSize: 11, color: C.greyDark }}>Friends Invited</div>
-              </div>
-              <div style={{ flex: 1, background: C.white, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
-                <div style={{ fontWeight: 800, fontSize: 20, color: C.success }}>GH₵{reward}</div>
-                <div style={{ fontSize: 11, color: C.greyDark }}>Rewards Earned</div>
-              </div>
-              <div style={{ flex: 1, background: C.white, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
-                <div style={{ fontWeight: 800, fontSize: 20, color: C.accent }}>GH₵5</div>
-                <div style={{ fontSize: 11, color: C.greyDark }}>Per Signup</div>
-              </div>
-            </div>
-            {reward > 0 && (
-              <div style={{ marginTop: 10, background: "#e6faf8", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: C.primary, fontWeight: 600, textAlign: "center" }}>
-                🎉 You have GH₵{reward} in referral rewards! Contact admin to redeem.
-              </div>
-            )}
-          </div>
-        );
-      })()}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
         {["orders", "products", "followers", "following", "friends"].map(t => (
