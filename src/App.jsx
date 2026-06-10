@@ -2745,20 +2745,21 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             <button style={{ ...S.btn("grey"), padding: "8px 14px", fontSize: 12, color: C.error }} onClick={handleLogout}>Logout</button>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-          <button style={{ ...S.btn(), flex: 1, background: isPremium ? `linear-gradient(135deg, ${C.accent}, #FFA500)` : `linear-gradient(135deg, ${C.accent}, #FFA500)`, color: "#333", fontWeight: 800 }}
+        {/* Action Buttons - 2x2 grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
+          <button style={{ background: `linear-gradient(135deg, ${C.accent}, #FFA500)`, border: "none", borderRadius: 12, padding: "12px 10px", fontWeight: 800, fontSize: 13, color: "#333", cursor: "pointer", textAlign: "center" }}
             onClick={() => !isPremium && setShowPremium(true)}>
-            {isPremium
-              ? `⭐ Premium Active${profile?.premiumExpiry ? " · Expires " + new Date(profile.premiumExpiry?.toMillis ? profile.premiumExpiry.toMillis() : profile.premiumExpiry).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}`
-              : "⭐ Go Premium · GH₵20/mo"}
+            ⭐ {isPremium
+              ? `Premium · Exp ${profile?.premiumExpiry ? new Date(profile.premiumExpiry?.toMillis ? profile.premiumExpiry.toMillis() : profile.premiumExpiry).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}`
+              : "Go Premium · GH₵20/mo"}
           </button>
-          <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowStore(true)}>
+          <button style={{ ...S.btn("outline"), padding: "12px 10px", fontSize: 13, fontWeight: 700, borderRadius: 12 }} onClick={() => setShowStore(true)}>
             🏪 My Store
           </button>
-          <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setPage("wallet")}>
+          <button style={{ ...S.btn("outline"), padding: "12px 10px", fontSize: 13, fontWeight: 700, borderRadius: 12 }} onClick={() => setPage("wallet")}>
             💰 Wallet
           </button>
-          <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setPage("analytics")}>
+          <button style={{ ...S.btn("outline"), padding: "12px 10px", fontSize: 13, fontWeight: 700, borderRadius: 12 }} onClick={() => setPage("analytics")}>
             📊 Analytics
           </button>
         </div>
