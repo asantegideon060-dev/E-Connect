@@ -3670,7 +3670,16 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => { setUser(u); setLoading(false); });
+    const unsub = onAuthStateChanged(auth, u => {
+      setUser(u);
+      setLoading(false);
+      if (u) {
+        getDoc(doc(db, "users", u.uid)).then(d => {
+          if (d.exists()) setCurrentUserPhoto(d.data().photoURL || u.photoURL || "");
+          else setCurrentUserPhoto(u.photoURL || "");
+        }).catch(() => setCurrentUserPhoto(u.photoURL || ""));
+      }
+    });
     return unsub;
   }, []);
 
