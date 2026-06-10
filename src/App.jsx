@@ -2856,45 +2856,55 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
     const file = e.target.files[0];
     if (!file) return;
     setUploadingPhoto(true);
-    // Reset input so Android can re-select same file next time
     e.target.value = "";
     try {
-      // Compress/resize on canvas for Android compatibility
-      const compressedBlob = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          const img = new Image();
-          img.onload = () => {
-            const MAX = 800;
-            let w = img.width, h = img.height;
-            if (w > MAX || h > MAX) {
-              if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
-              else { w = Math.round(w * MAX / h); h = MAX; }
-            }
-            const canvas = document.createElement("canvas");
-            canvas.width = w; canvas.height = h;
-            canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-            canvas.toBlob(resolve, "image/jpeg", 0.85);
+      // Try canvas compression; fall back to raw file if it fails (e.g. HEIC/WebP on some Android)
+      let uploadBlob = file;
+      try {
+        const compressedBlob = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const img = new Image();
+            img.onload = () => {
+              const MAX = 800;
+              let w = img.width, h = img.height;
+              if (w > MAX || h > MAX) {
+                if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+                else { w = Math.round(w * MAX / h); h = MAX; }
+              }
+              const canvas = document.createElement("canvas");
+              canvas.width = w; canvas.height = h;
+              canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+              canvas.toBlob((blob) => {
+                if (blob) resolve(blob);
+                else reject(new Error("canvas.toBlob returned null"));
+              }, "image/jpeg", 0.85);
+            };
+            img.onerror = () => reject(new Error("Image failed to load"));
+            img.src = ev.target.result;
           };
-          img.onerror = reject;
-          img.src = ev.target.result;
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
+          reader.onerror = () => reject(new Error("FileReader failed"));
+          reader.readAsDataURL(file);
+        });
+        uploadBlob = compressedBlob;
+      } catch (compressErr) {
+        console.warn("Compression failed, uploading original:", compressErr);
+      }
       const data = new FormData();
-      data.append("file", compressedBlob, "profile.jpg");
+      data.append("file", uploadBlob, "profile.jpg");
       data.append("upload_preset", "Econnect");
       data.append("cloud_name", "dxmmsq0gq");
       const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
       const result = await res.json();
-      if (!result.secure_url) throw new Error("Upload failed");
+      if (!result.secure_url) throw new Error(result.error?.message || "Upload failed");
       await updateProfile(auth.currentUser, { photoURL: result.secure_url });
       await setDoc(doc(db, "users", user.uid), { photoURL: result.secure_url }, { merge: true });
       setProfilePhoto(result.secure_url);
-      // Refresh user object so navbar and all components immediately show new photo
-      setUser(Object.assign(Object.create(Object.getPrototypeOf(auth.currentUser)), auth.currentUser));
-    } catch (err) { console.error("Photo upload error:", err); alert("Photo upload failed. Please try again."); }
+      setUser({ ...auth.currentUser, photoURL: result.secure_url });
+    } catch (err) {
+      console.error("Photo upload error:", err);
+      alert("Photo upload failed: " + err.message);
+    }
     setUploadingPhoto(false);
   };
 
