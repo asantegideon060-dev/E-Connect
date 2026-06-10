@@ -2022,10 +2022,10 @@ function ReelsPage({ user }) {
     setUploading(false);
   };
 
-  if (loading) return <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#000", color: "white", fontSize: 16, fontFamily: FONT }}>Loading Reels...</div>;
+  if (loading) return <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.offWhite, color: C.primary, fontSize: 16, fontFamily: FONT, fontWeight: 700 }}>Loading Reels...</div>;
 
   if (reels.length === 0) return (
-    <div style={{ height: "100vh", background: "#000", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "white", fontFamily: FONT }}>
+    <div style={{ height: "100vh", background: C.offWhite, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.text, fontFamily: FONT }}>
       <div style={{ fontSize: 64, marginBottom: 16 }}>🎬</div>
       <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>No Reels Yet</div>
       <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 13, marginBottom: 24 }}>Be the first to upload!</div>
