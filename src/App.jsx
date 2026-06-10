@@ -669,7 +669,7 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
 
   useEffect(() => {
     getDocs(collection(db, "users")).then(snap => setSellers(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.isSeller && s.city)));
-    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted && p.sellerCity)));
+    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted)));
   }, []);
 
   const detectLocation = () => {
@@ -3088,7 +3088,7 @@ function Admin() {
   useEffect(() => {
     getDocs(collection(db, "orders")).then(snap => setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users")).then(snap => setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    getDocs(collection(db, "products")).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(collection(db, "products")).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted)));
     getDocs(collection(db, "ads")).then(snap => setAds(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
   }, []);
 
@@ -3237,8 +3237,8 @@ function Discover({ setPage, setSelectedProduct, user }) {
   const [friends, setFriends] = useState({});
 
   useEffect(() => {
-    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    getDocs(collection(db, "users")).then(snap => setSellers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted)));
+    getDocs(collection(db, "users")).then(snap => setSellers(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.isSeller && s.businessName)));
     if (user) {
       getDocs(collection(db, "users", user.uid, "following")).then(snap => {
         const f = {}; snap.docs.forEach(d => f[d.id] = true); setFollowing(f);
