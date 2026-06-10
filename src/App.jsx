@@ -77,17 +77,9 @@ const S = {
 // ── Auth Page ──────────────────────────────────────────────────
 function Auth({ setUser }) {
   const [isLogin, setIsLogin] = useState(true);
-  const [form, setForm] = useState({ name: "", email: "", password: "", phone: "", referralCode: "" });
+  const [form, setForm] = useState({ name: "", email: "", password: "", phone: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [refBonus, setRefBonus] = useState("");
-
-  // Auto-fill referral code from URL
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const ref = params.get("ref");
-    if (ref) { setForm(f => ({ ...f, referralCode: ref })); setIsLogin(false); setRefBonus("🎉 You were invited! Sign up to get GH₵5 off your first order."); }
-  }, []);
 
   const generateRefCode = (uid) => uid.slice(0, 8).toUpperCase();
 
@@ -118,10 +110,6 @@ function Auth({ setUser }) {
               referralReward: currentReward + 5,
               referralCount: currentCount + 1,
             }, { merge: true });
-            // Credit wallet with referral reward
-            const walletSnap = await getDoc(doc(db, "wallets", referrer.id));
-            const currentWalletBal = walletSnap.exists() ? (walletSnap.data().balance || 0) : 0;
-            await setDoc(doc(db, "wallets", referrer.id), { balance: currentWalletBal + 5, userId: referrer.id }, { merge: true });
             await addDoc(collection(db, "walletTransactions"), {
               userId: referrer.id, type: "reward", amount: 5,
               description: "Referral reward — friend signed up!",
@@ -135,10 +123,6 @@ function Auth({ setUser }) {
           name: form.name, email: form.email, phone: form.phone,
           role: adminEmails.includes(form.email) ? "admin" : "user",
           followers: 0, following: 0, createdAt: serverTimestamp(),
-          referralCode: refCode,
-          referredBy: referredBy,
-          referralReward: form.referralCode ? 5 : 0, // new user gets GH₵5 if they used a code
-          referralCount: 0,
         });
         setUser(res.user);
       }
@@ -177,13 +161,7 @@ function Auth({ setUser }) {
         <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>
           {loading ? "Please wait..." : isLogin ? "Login" : "Create Account"}
         </button>
-        {!isLogin && (
-          <div style={{ marginTop: 8, marginBottom: 4 }}>
-            <label style={S.label}>Referral Code (optional)</label>
-            <input style={{ ...S.input, marginBottom: 4 }} placeholder="Enter referral code" value={form.referralCode} onChange={e => setForm({ ...form, referralCode: e.target.value.toUpperCase() })} />
-          </div>
-        )}
-        {refBonus && <div style={{ ...S.alert("success"), marginTop: 8, fontSize: 13 }}>{refBonus}</div>}
+        }>{refBonus}</div>}
         <p style={{ color: C.greyDark, fontSize: 12, textAlign: "center", marginTop: 16 }}>Register with your email to get started</p>
       </div>
     </div>
@@ -2653,134 +2631,6 @@ function WalletPage({ user, setPage }) {
   );
 }
 
-// ── User Profile Modal (WhatsApp-style) ────────────────────────
-function UserProfileModal({ userId, currentUser, onClose, onStartChat }) {
-  const [profile, setProfile] = useState(null);
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [following, setFollowing] = useState(false);
-  const [followerCount, setFollowerCount] = useState(0);
-
-  useEffect(() => {
-    if (!userId) return;
-    setLoading(true);
-    Promise.all([
-      getDoc(doc(db, "users", userId)),
-      getDocs(query(collection(db, "products"), where("sellerId", "==", userId))),
-      getDoc(doc(db, "users", userId, "followers", currentUser.uid)),
-      getDocs(collection(db, "users", userId, "followers")),
-    ]).then(([userDoc, prodSnap, followDoc, followersSnap]) => {
-      if (userDoc.exists()) setProfile({ id: userId, ...userDoc.data() });
-      setProducts(prodSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted));
-      setFollowing(followDoc.exists());
-      setFollowerCount(followersSnap.size);
-      setLoading(false);
-    });
-  }, [userId]);
-
-  const toggleFollow = async () => {
-    if (!currentUser || !userId || userId === currentUser.uid) return;
-    const ref = doc(db, "users", userId, "followers", currentUser.uid);
-    const myRef = doc(db, "users", currentUser.uid, "following", userId);
-    if (following) {
-      await Promise.all([
-        setDoc(ref, { deleted: true }, { merge: true }),
-        setDoc(myRef, { deleted: true }, { merge: true }),
-      ]);
-      setFollowing(false);
-      setFollowerCount(c => Math.max(0, c - 1));
-    } else {
-      const name = currentUser.displayName || "Someone";
-      await Promise.all([
-        setDoc(ref, { name, photoURL: currentUser.photoURL || "" }),
-        setDoc(myRef, { name: profile?.name || "User", photoURL: profile?.photoURL || "" }),
-      ]);
-      setFollowing(true);
-      setFollowerCount(c => c + 1);
-    }
-  };
-
-  if (!userId) return null;
-  return (
-    <div style={S.modal} onClick={onClose}>
-      <div style={{ ...S.modalBox, padding: 0, overflow: "hidden", maxWidth: 420 }} onClick={e => e.stopPropagation()}>
-        {/* Header banner */}
-        <div style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})`, height: 80, position: "relative" }}>
-          <button onClick={onClose} style={{ position: "absolute", top: 12, right: 12, background: "rgba(0,0,0,0.3)", border: "none", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", color: "white", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>×</button>
-        </div>
-        {loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: C.greyDark }}>Loading profile...</div>
-        ) : !profile ? (
-          <div style={{ padding: 40, textAlign: "center", color: C.greyDark }}>User not found.</div>
-        ) : (
-          <div style={{ padding: "0 20px 20px" }}>
-            {/* Avatar */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginTop: -36, marginBottom: 12 }}>
-              <div style={{ width: 72, height: 72, borderRadius: "50%", border: `3px solid ${C.white}`, background: C.grey, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.15)", flexShrink: 0 }}>
-                {profile.photoURL
-                  ? <img src={profile.photoURL} alt={profile.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28 }}>👤</div>}
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {userId !== currentUser.uid && (
-                  <>
-                    <button style={{ ...S.btn(following ? "grey" : "primary"), padding: "8px 16px", fontSize: 13 }} onClick={toggleFollow}>
-                      {following ? "Unfollow" : "Follow"}
-                    </button>
-                    {onStartChat && (
-                      <button style={{ ...S.btn("outline"), padding: "8px 14px", fontSize: 13 }} onClick={() => { onStartChat(profile); onClose(); }}>
-                        💬 Message
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-            {/* Name & bio */}
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2 }}>
-              <span style={{ fontWeight: 800, fontSize: 18 }}>{profile.name || "User"}</span>
-              {profile.verified && <VerifiedBadge size={17} />}
-              {profile.premium && <svg width="15" height="15" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>}
-            </div>
-            {profile.bio && <div style={{ fontSize: 13, color: C.greyDark, marginBottom: 8 }}>{profile.bio}</div>}
-            {profile.city && <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 8 }}>📍 {profile.city}</div>}
-            {/* Stats */}
-            <div style={{ display: "flex", gap: 20, marginBottom: 16, padding: "12px 0", borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}` }}>
-              {[{ num: products.length, label: "Products" }, { num: followerCount, label: "Followers" }].map(s => (
-                <div key={s.label}>
-                  <div style={{ fontWeight: 800, fontSize: 18, color: C.primary }}>{s.num}</div>
-                  <div style={{ fontSize: 11, color: C.greyDark }}>{s.label}</div>
-                </div>
-              ))}
-              {profile.businessName && (
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 14, color: C.text }}>{profile.businessName}</div>
-                  <div style={{ fontSize: 11, color: C.greyDark }}>Store</div>
-                </div>
-              )}
-            </div>
-            {/* Products */}
-            {products.length > 0 && (
-              <>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 10 }}>Products</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-                  {products.slice(0, 6).map(p => (
-                    <div key={p.id} style={{ borderRadius: 10, overflow: "hidden", background: C.grey, aspectRatio: "1" }}>
-                      {p.image
-                        ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                        : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>🛍️</div>}
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [profile, setProfile] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -2827,12 +2677,25 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
   }, [user]);
 
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [profilePhoto, setProfilePhoto] = useState(user?.photoURL || "");
+  const [profilePhoto, setProfilePhoto] = useState("");
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [editForm, setEditForm] = useState({ name: user?.displayName || "", phone: "", bio: "" });
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
-  const [viewingUserId, setViewingUserId] = useState(null);
+
+  // Load photo from Firestore first (most reliable on Android)
+  useEffect(() => {
+    if (!user?.uid) return;
+    getDoc(doc(db, "users", user.uid)).then(d => {
+      if (d.exists()) {
+        const photoURL = d.data().photoURL || user?.photoURL || "";
+        setProfilePhoto(photoURL);
+        setEditForm(prev => ({ ...prev, phone: d.data().phone || "", bio: d.data().bio || "" }));
+      } else {
+        setProfilePhoto(user?.photoURL || "");
+      }
+    });
+  }, [user?.uid]);
 
   const handleLogout = async () => { await signOut(auth); setUser(null); };
 
@@ -2856,55 +2719,22 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
     const file = e.target.files[0];
     if (!file) return;
     setUploadingPhoto(true);
-    e.target.value = "";
     try {
-      // Try canvas compression; fall back to raw file if it fails (e.g. HEIC/WebP on some Android)
-      let uploadBlob = file;
-      try {
-        const compressedBlob = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = (ev) => {
-            const img = new Image();
-            img.onload = () => {
-              const MAX = 800;
-              let w = img.width, h = img.height;
-              if (w > MAX || h > MAX) {
-                if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
-                else { w = Math.round(w * MAX / h); h = MAX; }
-              }
-              const canvas = document.createElement("canvas");
-              canvas.width = w; canvas.height = h;
-              canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-              canvas.toBlob((blob) => {
-                if (blob) resolve(blob);
-                else reject(new Error("canvas.toBlob returned null"));
-              }, "image/jpeg", 0.85);
-            };
-            img.onerror = () => reject(new Error("Image failed to load"));
-            img.src = ev.target.result;
-          };
-          reader.onerror = () => reject(new Error("FileReader failed"));
-          reader.readAsDataURL(file);
-        });
-        uploadBlob = compressedBlob;
-      } catch (compressErr) {
-        console.warn("Compression failed, uploading original:", compressErr);
-      }
       const data = new FormData();
-      data.append("file", uploadBlob, "profile.jpg");
+      data.append("file", file);
       data.append("upload_preset", "Econnect");
       data.append("cloud_name", "dxmmsq0gq");
       const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
       const result = await res.json();
-      if (!result.secure_url) throw new Error(result.error?.message || "Upload failed");
-      await updateProfile(auth.currentUser, { photoURL: result.secure_url });
-      await setDoc(doc(db, "users", user.uid), { photoURL: result.secure_url }, { merge: true });
-      setProfilePhoto(result.secure_url);
-      setUser({ ...auth.currentUser, photoURL: result.secure_url });
-    } catch (err) {
-      console.error("Photo upload error:", err);
-      alert("Photo upload failed: " + err.message);
-    }
+      if (!result.secure_url) throw new Error("Upload failed");
+      const photoURL = result.secure_url;
+      // 1. Update local state immediately so it shows right away
+      setProfilePhoto(photoURL);
+      // 2. Save to Firestore (most reliable across all devices)
+      await setDoc(doc(db, "users", user.uid), { photoURL }, { merge: true });
+      // 3. Update Firebase Auth profile (may be slow on Android but Firestore is source of truth)
+      try { await updateProfile(auth.currentUser, { photoURL }); } catch (e) { console.log("Auth update slow, Firestore saved"); }
+    } catch (err) { console.error(err); alert("Photo upload failed. Please try again."); }
     setUploadingPhoto(false);
   };
 
@@ -2915,7 +2745,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
         <div style={{ position: "absolute", top: -30, left: 20, cursor: "pointer" }} onClick={() => document.getElementById("profilePhotoInput").click()}>
           <div style={{ width: 72, height: 72, borderRadius: "50%", background: C.white, border: `3px solid ${C.white}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, boxShadow: "0 2px 8px rgba(0,0,0,0.15)", overflow: "hidden", position: "relative" }}>
             {profilePhoto ? <img src={profilePhoto} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span>👤</span>}
-            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.4)", padding: "4px 0", textAlign: "center", fontSize: 10, color: "white", fontWeight: 700, zIndex: 1, pointerEvents: "none" }}>
+            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.4)", padding: "4px 0", textAlign: "center", fontSize: 10, color: "white", fontWeight: 700 }}>
               {uploadingPhoto ? "..." : "Edit"}
             </div>
           </div>
@@ -2962,7 +2792,54 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
         </div>
       </div>
 
-
+      {/* ── Referral Card ─────────────────────────────────── */}
+      {(() => {
+        const refCode = profile?.referralCode || user?.uid?.slice(0, 8).toUpperCase();
+        const refLink = `${window.location.origin}?ref=${refCode}`;
+        const reward = profile?.referralReward || 0;
+        const count = profile?.referralCount || 0;
+        return (
+          <div style={{ ...S.card, padding: 16, marginBottom: 16, background: `linear-gradient(135deg, ${C.primary}10, ${C.accent}10)`, border: `1px solid ${C.primary}30` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <span style={{ fontSize: 22 }}>🔗</span>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 15 }}>Your Referral Link</div>
+                <div style={{ fontSize: 12, color: C.greyDark }}>Invite friends · Earn GH₵5 per signup</div>
+              </div>
+            </div>
+            <div style={{ background: C.white, borderRadius: 10, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8 }}>
+              <span style={{ fontSize: 12, color: C.primary, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{refLink}</span>
+              <button style={{ ...S.btn(), padding: "6px 12px", fontSize: 11, flexShrink: 0 }} onClick={() => {
+                if (navigator.share) {
+                  navigator.share({ title: "Join E-Connect!", text: "Sign up on E-Connect and start buying & selling easily!", url: refLink });
+                } else {
+                  navigator.clipboard.writeText(refLink);
+                  alert("Referral link copied!");
+                }
+              }}>Share</button>
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ flex: 1, background: C.white, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontWeight: 800, fontSize: 20, color: C.primary }}>{count}</div>
+                <div style={{ fontSize: 11, color: C.greyDark }}>Friends Invited</div>
+              </div>
+              <div style={{ flex: 1, background: C.white, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontWeight: 800, fontSize: 20, color: C.success }}>GH₵{reward}</div>
+                <div style={{ fontSize: 11, color: C.greyDark }}>Rewards Earned</div>
+              </div>
+              <div style={{ flex: 1, background: C.white, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontWeight: 800, fontSize: 20, color: C.accent }}>GH₵5</div>
+                <div style={{ fontSize: 11, color: C.greyDark }}>Per Signup</div>
+              </div>
+            </div>
+            {reward > 0 && (
+              <div style={{ marginTop: 10, background: "#e6faf8", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: C.primary, fontWeight: 600, textAlign: "center" }}>
+                🎉 You have GH₵{reward} in referral rewards! Contact admin to redeem.
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
         {["orders", "products", "followers", "following", "friends"].map(t => (
@@ -3029,15 +2906,9 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {followers.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>No followers yet.</div> :
           followers.map(f => (
-            <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => setViewingUserId(f.id)}>
-              <div style={{ width: 44, height: 44, borderRadius: "50%", overflow: "hidden", background: C.grey, flexShrink: 0 }}>
-                {f.photoURL ? <img src={f.photoURL} alt={f.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ ...S.avatar(44), fontSize: 20 }}>👤</div>}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
-                <div style={{ fontSize: 11, color: C.greyDark }}>Tap to view profile</div>
-              </div>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
+            <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={S.avatar(44)}>👤</div>
+              <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
             </div>
           ))}
         </div>
@@ -3047,15 +2918,9 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {following.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Not following anyone yet.</div> :
           following.map(f => (
-            <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => setViewingUserId(f.id)}>
-              <div style={{ width: 44, height: 44, borderRadius: "50%", overflow: "hidden", background: C.grey, flexShrink: 0 }}>
-                {f.photoURL ? <img src={f.photoURL} alt={f.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ ...S.avatar(44), fontSize: 20 }}>👤</div>}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
-                <div style={{ fontSize: 11, color: C.greyDark }}>Tap to view profile</div>
-              </div>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
+            <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={S.avatar(44)}>👤</div>
+              <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
             </div>
           ))}
         </div>
@@ -3065,15 +2930,9 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {friends.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>No friends yet. Go to Discover to add friends!</div> :
           friends.map(f => (
-            <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => setViewingUserId(f.id)}>
-              <div style={{ width: 44, height: 44, borderRadius: "50%", overflow: "hidden", background: C.grey, flexShrink: 0 }}>
-                {f.photoURL ? <img src={f.photoURL} alt={f.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ ...S.avatar(44), fontSize: 20 }}>👤</div>}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
-                <div style={{ fontSize: 11, color: C.greyDark }}>Tap to view profile</div>
-              </div>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
+            <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={S.avatar(44)}>👤</div>
+              <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
             </div>
           ))}
         </div>
@@ -3088,15 +2947,6 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid))).then(snap => setMyProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted)));
             setEditingProduct(null);
           }}
-        />
-      )}
-
-      {viewingUserId && (
-        <UserProfileModal
-          userId={viewingUserId}
-          currentUser={user}
-          onClose={() => setViewingUserId(null)}
-          onStartChat={(seller) => { setViewingUserId(null); setPage("messages"); }}
         />
       )}
 
@@ -3805,6 +3655,7 @@ export default function App() {
   const [cart, setCart] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [chatSeller, setChatSeller] = useState(null);
+  const [currentUserPhoto, setCurrentUserPhoto] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("econnect-theme");
@@ -3848,7 +3699,11 @@ export default function App() {
     if (!user) return;
     const q = query(collection(db, "notifications"), where("toUserId", "==", user.uid), where("read", "==", false));
     const unsub = onSnapshot(q, snap => setUnreadCount(snap.size));
-    return unsub;
+    // Listen for profile photo changes in Firestore
+    const userUnsub = onSnapshot(doc(db, "users", user.uid), snap => {
+      if (snap.exists() && snap.data().photoURL) setCurrentUserPhoto(snap.data().photoURL);
+    });
+    return () => { unsub(); userUnsub(); };
   }, [user]);
 
   if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, color: C.primary, fontSize: 20, fontWeight: 700 }}><img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ height: 60, width: "auto", objectFit: "contain" }} /></div>;
@@ -3925,8 +3780,8 @@ export default function App() {
           {/* Profile with photo */}
           <button onClick={() => setPage("profile")} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 1, padding: "2px 4px" }}>
             <div style={{ width: 32, height: 32, borderRadius: "50%", overflow: "hidden", border: `2px solid ${page === "profile" ? C.primary : C.border}`, background: C.grey, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {user?.photoURL
-                ? <img src={user.photoURL} alt="profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              {currentUserPhoto
+                ? <img src={currentUserPhoto} alt="profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>}
             </div>
             <span style={{ fontSize: 9, fontWeight: 700, color: page === "profile" ? C.primary : C.greyDark }}>Profile</span>
