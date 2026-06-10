@@ -1513,32 +1513,26 @@ function Cart({ cart, setCart, setPage, user }) {
 
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  const [walletBalance, setWalletBalance] = useState(0);
-  const [payWithWallet, setPayWithWallet] = useState(false);
-  const [walletError, setWalletError] = useState("");
+  const [sellerContacts, setSellerContacts] = useState([]);
 
   useEffect(() => {
-    if (!user) return;
-    getDoc(doc(db, "wallets", user.uid)).then(d => { if (d.exists()) setWalletBalance(d.data().balance || 0); });
-  }, [user]);
+    // Load seller MoMo numbers for items in cart
+    if (!cart.length) return;
+    const sellerIds = [...new Set(cart.map(i => i.sellerId).filter(Boolean))];
+    Promise.all(sellerIds.map(id => getDoc(doc(db, "users", id)))).then(docs => {
+      setSellerContacts(docs.filter(d => d.exists()).map(d => ({
+        id: d.id, name: d.data().businessName || d.data().name, contact: d.data().storeContact || d.data().phone || ""
+      })));
+    });
+  }, [cart]);
 
   const handleOrder = async () => {
     if (!form.name || !form.phone) return;
-    setWalletError(""); setLoading(true);
-    if (payWithWallet) {
-      if (walletBalance < total) { setWalletError(`Insufficient wallet balance. You have GH₵${walletBalance.toFixed(2)} but need GH₵${total}.`); setLoading(false); return; }
-      // Deduct from wallet
-      await setDoc(doc(db, "wallets", user.uid), { balance: walletBalance - total }, { merge: true });
-      await addDoc(collection(db, "walletTransactions"), {
-        userId: user.uid, type: "payment", amount: total,
-        description: `Order payment (${cart.length} item${cart.length > 1 ? "s" : ""})`,
-        createdAt: serverTimestamp(),
-      });
-    }
+    setLoading(true);
     await addDoc(collection(db, "orders"), {
       items: cart, total, customerName: form.name, customerPhone: form.phone,
       address: form.address, delivery: form.delivery, userId: user?.uid || "guest",
-      status: "pending", paymentMethod: payWithWallet ? "wallet" : "momo",
+      status: "pending", paymentMethod: "momo",
       createdAt: serverTimestamp()
     });
     setDone(true); setCart([]);
@@ -1602,8 +1596,18 @@ function Cart({ cart, setCart, setPage, user }) {
               ))}
             </div>
             {form.delivery === "delivery" && <input style={{ ...S.input, marginBottom: 12 }} placeholder="Delivery address" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} />}
-            <div style={{ background: `${C.primary}10`, borderRadius: 10, padding: 12, marginBottom: 16, fontSize: 13 }}>
-              📞 Payment contact: +233 54 194 0967
+            {/* Seller MoMo numbers */}
+            <div style={{ background: `${C.primary}10`, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>📞 Send MoMo payment to seller{sellerContacts.length > 1 ? "s" : ""}:</div>
+              {sellerContacts.length > 0 ? sellerContacts.map(s => (
+                <div key={s.id} style={{ fontSize: 13, marginBottom: 4, display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: C.greyDark }}>{s.name}</span>
+                  <span style={{ fontWeight: 700, color: C.primary }}>{s.contact || "Contact seller directly"}</span>
+                </div>
+              )) : (
+                <div style={{ fontSize: 12, color: C.greyDark }}>Contact the seller directly for payment details.</div>
+              )}
+              <div style={{ fontSize: 11, color: C.greyDark, marginTop: 6 }}>Pay the seller after placing your order.</div>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button style={{ ...S.btn(), flex: 1, opacity: loading ? 0.7 : 1 }} onClick={handleOrder} disabled={loading}>{loading ? "Placing..." : "Place Order"}</button>
@@ -2455,154 +2459,6 @@ function SellerAnalytics({ user }) {
 
 
 // ── Wallet Page ────────────────────────────────────────────────
-function WalletPage({ user, setPage }) {
-  const [balance, setBalance] = useState(0);
-  const [transactions, setTransactions] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [showTopUp, setShowTopUp] = useState(false);
-  const [topUpAmount, setTopUpAmount] = useState("");
-  const [topUpPhone, setTopUpPhone] = useState("");
-  const [topUpLoading, setTopUpLoading] = useState(false);
-  const [topUpDone, setTopUpDone] = useState(false);
-
-  useEffect(() => {
-    if (!user) return;
-    const unsub = onSnapshot(doc(db, "wallets", user.uid), snap => {
-      if (snap.exists()) {
-        setBalance(snap.data().balance || 0);
-      } else {
-        setDoc(doc(db, "wallets", user.uid), { balance: 0, userId: user.uid, createdAt: serverTimestamp() });
-        setBalance(0);
-      }
-      setLoading(false);
-    });
-    const q = query(collection(db, "walletTransactions"), where("userId", "==", user.uid), orderBy("createdAt", "desc"));
-    const unsub2 = onSnapshot(q, snap => {
-      setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, () => {});
-    return () => { unsub(); unsub2(); };
-  }, [user]);
-
-  const requestTopUp = async () => {
-    if (!topUpAmount || isNaN(topUpAmount) || Number(topUpAmount) < 1) { alert("Enter a valid amount."); return; }
-    if (!topUpPhone) { alert("Enter your MoMo number."); return; }
-    setTopUpLoading(true);
-    await addDoc(collection(db, "walletTopUpRequests"), {
-      userId: user.uid, userName: user.displayName, userEmail: user.email,
-      amount: Number(topUpAmount), phone: topUpPhone,
-      status: "pending", createdAt: serverTimestamp(),
-    });
-    await sendNotification(user.uid, "premium", `💰 Top-up request of GH₵${topUpAmount} received! Admin will verify and credit your wallet within 1 hour.`, "E-Connect");
-    setTopUpLoading(false);
-    setTopUpDone(true);
-    setTopUpAmount(""); setTopUpPhone("");
-    setTimeout(() => { setTopUpDone(false); setShowTopUp(false); }, 3000);
-  };
-
-  const getIcon = (type) => ({ topup: "💰", payment: "🛒", reward: "🎁", refund: "↩️" }[type] || "💳");
-  const getColor = (type) => (["topup", "reward", "refund"].includes(type) ? C.success : C.error);
-  const getSign = (type) => (["topup", "reward", "refund"].includes(type) ? "+" : "-");
-
-  return (
-    <div style={S.page}>
-      <div style={S.sectionTitle}>My Wallet</div>
-
-      {/* Balance Card */}
-      <div style={{ background: `linear-gradient(135deg, ${C.primary}, #007A6E)`, borderRadius: 20, padding: "28px 24px", marginBottom: 20, color: "white", position: "relative", overflow: "hidden" }}>
-        <div style={{ position: "absolute", top: -20, right: -20, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.08)" }} />
-        <div style={{ position: "absolute", bottom: -30, left: -10, width: 100, height: 100, borderRadius: "50%", background: "rgba(255,255,255,0.05)" }} />
-        <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>Available Balance</div>
-        <div style={{ fontSize: 38, fontWeight: 900, letterSpacing: -1, marginBottom: 4 }}>GH₵{loading ? "..." : balance.toFixed(2)}</div>
-        <div style={{ fontSize: 12, opacity: 0.75 }}>{user?.displayName}</div>
-        <button style={{ marginTop: 16, background: "white", color: C.primary, border: "none", borderRadius: 10, padding: "10px 24px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
-          onClick={() => setShowTopUp(true)}>+ Top Up</button>
-      </div>
-
-      {/* Quick Stats */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-        {[
-          { label: "Total In", value: `GH₵${transactions.filter(t => ["topup","reward","refund"].includes(t.type)).reduce((s,t) => s + (t.amount||0), 0).toFixed(2)}`, icon: "📥" },
-          { label: "Total Spent", value: `GH₵${transactions.filter(t => t.type === "payment").reduce((s,t) => s + (t.amount||0), 0).toFixed(2)}`, icon: "📤" },
-          { label: "Transactions", value: transactions.length, icon: "📋" },
-        ].map((s, i) => (
-          <div key={i} style={{ ...S.card, flex: 1, padding: "12px 10px", textAlign: "center" }}>
-            <div style={{ fontSize: 20, marginBottom: 4 }}>{s.icon}</div>
-            <div style={{ fontWeight: 800, fontSize: 14, color: C.primary }}>{s.value}</div>
-            <div style={{ fontSize: 10, color: C.greyDark }}>{s.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* How to Top Up */}
-      <div style={{ ...S.card, padding: 16, marginBottom: 20, background: `${C.primary}08` }}>
-        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>💡 How to Top Up</div>
-        <div style={{ fontSize: 13, color: C.greyDark, lineHeight: 1.7 }}>
-          1. Click <b>+ Top Up</b> and enter amount<br/>
-          2. Send MoMo to <b>+233 54 194 0967</b> (Asante Gideon)<br/>
-          3. Enter your MoMo number and submit<br/>
-          4. Admin verifies and credits within <b>1 hour</b>
-        </div>
-      </div>
-
-      {/* Transaction History */}
-      <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 12 }}>Transaction History</div>
-      {transactions.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8, opacity: 0.5 }}><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-          <div>No transactions yet. Top up to get started!</div>
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 80 }}>
-          {transactions.map(t => (
-            <div key={t.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 42, height: 42, borderRadius: "50%", background: `${getColor(t.type)}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
-                {getIcon(t.type)}
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>{t.description || t.type}</div>
-                <div style={{ fontSize: 12, color: C.greyDark }}>{t.createdAt?.toDate ? t.createdAt.toDate().toLocaleDateString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : ""}</div>
-              </div>
-              <div style={{ fontWeight: 800, fontSize: 16, color: getColor(t.type) }}>
-                {getSign(t.type)}GH₵{t.amount?.toFixed(2)}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Top Up Modal */}
-      {showTopUp && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-          <div style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: 28, width: "100%", maxWidth: 480 }}>
-            {topUpDone ? (
-              <div style={{ textAlign: "center", padding: 20 }}>
-                <div style={{ fontSize: 60, marginBottom: 12 }}>✅</div>
-                <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 8 }}>Request Sent!</div>
-                <div style={{ color: C.greyDark, fontSize: 13 }}>Admin will verify your payment and credit your wallet within 1 hour.</div>
-              </div>
-            ) : (
-              <>
-                <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Top Up Wallet</div>
-                <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 20 }}>Send MoMo to <b>+233 54 194 0967</b> then fill this form.</div>
-                <label style={S.label}>Amount (GH₵)</label>
-                <input style={{ ...S.input, marginBottom: 12 }} type="number" placeholder="e.g. 20" value={topUpAmount} onChange={e => setTopUpAmount(e.target.value)} />
-                <label style={S.label}>Your MoMo Number</label>
-                <input style={{ ...S.input, marginBottom: 20 }} placeholder="+233..." value={topUpPhone} onChange={e => setTopUpPhone(e.target.value)} />
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button style={{ ...S.btn(), flex: 1, opacity: topUpLoading ? 0.7 : 1 }} onClick={requestTopUp} disabled={topUpLoading}>
-                    {topUpLoading ? "Submitting..." : "Submit Request"}
-                  </button>
-                  <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowTopUp(false)}>Cancel</button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [profile, setProfile] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -2755,9 +2611,6 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           </button>
           <button style={{ ...S.btn("outline"), padding: "12px 10px", fontSize: 13, fontWeight: 700, borderRadius: 12 }} onClick={() => setShowStore(true)}>
             🏪 My Store
-          </button>
-          <button style={{ ...S.btn("outline"), padding: "12px 10px", fontSize: 13, fontWeight: 700, borderRadius: 12 }} onClick={() => setPage("wallet")}>
-            💰 Wallet
           </button>
           <button style={{ ...S.btn("outline"), padding: "12px 10px", fontSize: 13, fontWeight: 700, borderRadius: 12 }} onClick={() => setPage("analytics")}>
             📊 Analytics
@@ -3229,7 +3082,7 @@ function Admin() {
   const [users, setUsers] = useState([]);
   const [products, setProducts] = useState([]);
   const [ads, setAds] = useState([]);
-  const [topUpRequests, setTopUpRequests] = useState([]);
+
   const [tab, setTab] = useState("overview");
 
   useEffect(() => {
@@ -3237,30 +3090,7 @@ function Admin() {
     getDocs(collection(db, "users")).then(snap => setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "products")).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "ads")).then(snap => setAds(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const q = query(collection(db, "walletTopUpRequests"), orderBy("createdAt", "desc"));
-    onSnapshot(q, snap => setTopUpRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
   }, []);
-
-  const approveTopUp = async (req) => {
-    // Credit user wallet
-    const walletSnap = await getDoc(doc(db, "wallets", req.userId));
-    const currentBal = walletSnap.exists() ? (walletSnap.data().balance || 0) : 0;
-    await setDoc(doc(db, "wallets", req.userId), { balance: currentBal + req.amount, userId: req.userId }, { merge: true });
-    await addDoc(collection(db, "walletTransactions"), {
-      userId: req.userId, type: "topup", amount: req.amount,
-      description: `Wallet top-up via MoMo (${req.phone})`,
-      createdAt: serverTimestamp(),
-    });
-    await setDoc(doc(db, "walletTopUpRequests", req.id), { status: "approved" }, { merge: true });
-    await sendNotification(req.userId, "premium", `✅ Your wallet top-up of GH₵${req.amount} has been approved! New balance added.`, "E-Connect");
-    setTopUpRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "approved" } : r));
-  };
-
-  const rejectTopUp = async (req) => {
-    await setDoc(doc(db, "walletTopUpRequests", req.id), { status: "rejected" }, { merge: true });
-    await sendNotification(req.userId, "premium", `❌ Your wallet top-up of GH₵${req.amount} was rejected. Contact support if this is an error.`, "E-Connect");
-    setTopUpRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "rejected" } : r));
-  };
 
   const totalRevenue = orders.reduce((s, o) => s + (o.total || 0), 0);
 
@@ -3269,7 +3099,7 @@ function Admin() {
       <div style={S.sectionTitle}>Admin Dashboard</div>
       <p style={S.sectionSub}>Manage E-Connect platform</p>
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        {["overview", "orders", "users", "products", "ads", "wallet"].map(t => (
+        {["overview", "orders", "users", "products", "ads", ].map(t => (
           <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 16px", textTransform: "capitalize", position: "relative" }} onClick={() => setTab(t)}>
             {t}
             {t === "ads" && ads.filter(a => a.status === "pending").length > 0 && (
@@ -3277,11 +3107,7 @@ function Admin() {
                 {ads.filter(a => a.status === "pending").length}
               </span>
             )}
-            {t === "wallet" && topUpRequests.filter(r => r.status === "pending").length > 0 && (
-              <span style={{ position: "absolute", top: -4, right: -4, background: C.error, color: "white", borderRadius: "50%", width: 16, height: 16, fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {topUpRequests.filter(r => r.status === "pending").length}
-              </span>
-            )}
+
           </button>
         ))}
       </div>
@@ -3695,7 +3521,6 @@ export default function App() {
       case "location": return <LocationPage user={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "messages": return <Messages user={user} chatSeller={chatSeller} onChatStarted={() => setChatSeller(null)} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
-      case "wallet": return <WalletPage user={user} setPage={setPage} />;
       case "analytics": return <SellerAnalytics user={user} />;
       case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
@@ -3752,4 +3577,3 @@ export default function App() {
     </div>
   );
 }
-
