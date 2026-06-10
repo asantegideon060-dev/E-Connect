@@ -1187,6 +1187,27 @@ function NotificationsPage({ user }) {
   );
 }
 
+
+// ── Shop Hours Helper ───────────────────────────────────────────
+function getShopStatus(seller) {
+  if (!seller?.shopHoursEnabled) return { isOpen: true, label: "" };
+  const now = new Date();
+  const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const today = days[now.getDay()];
+  const shopDays = seller.shopDays || ["Mon","Tue","Wed","Thu","Fri"];
+  if (!shopDays.includes(today)) return { isOpen: false, label: `🔴 Closed today · Opens ${shopDays[0] || "Monday"}` };
+  const [openH, openM] = (seller.openTime || "08:00").split(":").map(Number);
+  const [closeH, closeM] = (seller.closeTime || "18:00").split(":").map(Number);
+  const nowMins = now.getHours() * 60 + now.getMinutes();
+  const openMins = openH * 60 + openM;
+  const closeMins = closeH * 60 + closeM;
+  if (nowMins < openMins) return { isOpen: false, label: `🔴 Closed · Opens at ${seller.openTime}` };
+  if (nowMins >= closeMins) return { isOpen: false, label: `🔴 Closed · Opens tomorrow at ${seller.openTime}` };
+  const minsLeft = closeMins - nowMins;
+  if (minsLeft <= 30) return { isOpen: true, label: `🟡 Closing soon · Closes at ${seller.closeTime}` };
+  return { isOpen: true, label: `🟢 Open · Closes at ${seller.closeTime}` };
+}
+
 // ── Send Notification Helper ────────────────────────────────────
 async function sendNotification(toUserId, type, message, fromUserName) {
   if (!toUserId) return;
@@ -1412,14 +1433,22 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
 
   if (!product) return null;
 
-  // Track product view
+  const [sellerData, setSellerData] = useState(null);
+
+  // Track product view & load seller data
   useEffect(() => {
     if (!product?.id || !product?.sellerId) return;
     addDoc(collection(db, "productViews"), {
       productId: product.id, sellerId: product.sellerId,
       viewedAt: serverTimestamp(),
     }).catch(() => {});
+    getDoc(doc(db, "users", product.sellerId)).then(d => {
+      if (d.exists()) setSellerData(d.data());
+    }).catch(() => {});
   }, [product?.id]);
+
+  // Attach sellerData to product for rendering
+  const productWithSeller = { ...product, sellerData };
 
   const addToCart = () => {
     setCart(prev => { const ex = prev.find(i => i.id === product.id); if (ex) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i); return [...prev, { ...product, qty: 1 }]; });
@@ -1443,7 +1472,21 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
         <div style={{ padding: 20 }}>
           <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 4 }}>{product.category}</div>
           <h2 style={{ fontWeight: 800, fontSize: 22, margin: "0 0 4px" }}>{product.name}</h2>
-          <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 12 }}>By {product.seller}</div>
+          <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8 }}>By {product.seller}</div>
+          {productWithSeller.sellerData && (() => {
+            const status = getShopStatus(product.sellerData);
+            if (!status.label) return null;
+            return (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: status.isOpen ? "#e6faf8" : "#FEE2E2", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 600, color: status.isOpen ? C.success : C.error, marginBottom: 12 }}>
+                {status.label}
+              </div>
+            );
+          })()}
+          {productWithSeller.sellerData && !getShopStatus(productWithSeller.sellerData).isOpen && (
+            <div style={{ background: "#FEE2E2", border: "1px solid #FECACA", borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 13, color: C.error, fontWeight: 600 }}>
+              ⚠️ This shop is currently closed. You can still add to cart but the seller may not respond until they reopen.
+            </div>
+          )}
           <div style={{ color: C.primary, fontWeight: 800, fontSize: 28, marginBottom: 12 }}>GH₵{product.price}</div>
           {product.description && <p style={{ color: C.text, fontSize: 14, lineHeight: 1.6, marginBottom: 16 }}>{product.description}</p>}
           <div style={{ background: C.grey, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.greyDark }}>
@@ -2284,7 +2327,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [friends, setFriends] = useState([]);
   const [showStore, setShowStore] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
-  const [storeForm, setStoreForm] = useState({ businessName: "", description: "", contact: "", logoUrl: "", city: "", adType: "image", adMediaUrl: "", adTitle: "", adDescription: "", adThumbnail: "", adUploading: false });
+  const [storeForm, setStoreForm] = useState({ businessName: "", description: "", contact: "", logoUrl: "", city: "", adType: "image", adMediaUrl: "", adTitle: "", adDescription: "", adThumbnail: "", adUploading: false, openTime: "08:00", closeTime: "18:00", shopDays: ["Mon","Tue","Wed","Thu","Fri"], shopHoursEnabled: false });
   const [storeSaved, setStoreSaved] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
@@ -2295,7 +2338,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
       if (d.exists()) {
         const data = d.data();
         setProfile(data);
-        setStoreForm({ businessName: data.businessName || "", description: data.storeDescription || "", contact: data.storeContact || "", logoUrl: data.logoUrl || "" });
+        setStoreForm(prev => ({ ...prev, businessName: data.businessName || "", description: data.storeDescription || "", contact: data.storeContact || "", logoUrl: data.logoUrl || "", openTime: data.openTime || "08:00", closeTime: data.closeTime || "18:00", shopDays: data.shopDays || ["Mon","Tue","Wed","Thu","Fri"], shopHoursEnabled: data.shopHoursEnabled || false }));
         // Check premium expiry
         if (data.premium && data.premiumExpiry) {
           const expiry = data.premiumExpiry.toMillis ? data.premiumExpiry.toMillis() : new Date(data.premiumExpiry).getTime();
@@ -2602,7 +2645,45 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             <label style={S.label}>Store Description</label>
             <textarea style={{ ...S.input, marginBottom: 12, height: 80, resize: "vertical" }} placeholder="What do you sell?" value={storeForm.description} onChange={e => setStoreForm({ ...storeForm, description: e.target.value })} />
             <label style={S.label}>Contact (Phone or WhatsApp)</label>
-            <input style={{ ...S.input, marginBottom: 12 }} placeholder="+233..." value={storeForm.contact} onChange={e => setStoreForm({ ...storeForm, contact: e.target.value })} />
+            <input style={{ ...S.input, marginBottom: 16 }} placeholder="+233..." value={storeForm.contact} onChange={e => setStoreForm({ ...storeForm, contact: e.target.value })} />
+
+            {/* Shop Hours */}
+            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16, marginBottom: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>🕐 Shop Hours</div>
+                  <div style={{ fontSize: 12, color: C.greyDark }}>Show open/closed status to buyers</div>
+                </div>
+                <div style={{ width: 44, height: 24, borderRadius: 12, background: storeForm.shopHoursEnabled ? C.primary : C.grey, cursor: "pointer", position: "relative", transition: "background 0.2s" }}
+                  onClick={() => setStoreForm(prev => ({ ...prev, shopHoursEnabled: !prev.shopHoursEnabled }))}>
+                  <div style={{ position: "absolute", top: 2, left: storeForm.shopHoursEnabled ? 22 : 2, width: 20, height: 20, borderRadius: "50%", background: "white", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }} />
+                </div>
+              </div>
+              {storeForm.shopHoursEnabled && (
+                <>
+                  <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={S.label}>Opens at</label>
+                      <input type="time" style={{ ...S.input }} value={storeForm.openTime} onChange={e => setStoreForm({ ...storeForm, openTime: e.target.value })} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={S.label}>Closes at</label>
+                      <input type="time" style={{ ...S.input }} value={storeForm.closeTime} onChange={e => setStoreForm({ ...storeForm, closeTime: e.target.value })} />
+                    </div>
+                  </div>
+                  <label style={S.label}>Open Days</label>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+                    {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(day => (
+                      <button key={day} style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${storeForm.shopDays?.includes(day) ? C.primary : C.border}`, background: storeForm.shopDays?.includes(day) ? `${C.primary}15` : "white", color: storeForm.shopDays?.includes(day) ? C.primary : C.greyDark, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                        onClick={() => {
+                          const days = storeForm.shopDays || [];
+                          setStoreForm(prev => ({ ...prev, shopDays: days.includes(day) ? days.filter(d => d !== day) : [...days, day] }));
+                        }}>{day}</button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
             <label style={S.label}>City / Location</label>
             <select style={{ ...S.input, marginBottom: 16 }} value={storeForm.city} onChange={e => setStoreForm({ ...storeForm, city: e.target.value })}>
               <option value="">Select your city</option>
@@ -2746,7 +2827,10 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button style={{ ...S.btn(), flex: 1 }} onClick={async () => {
-                await setDoc(doc(db, "users", user.uid), { businessName: storeForm.businessName, storeDescription: storeForm.description, storeContact: storeForm.contact, logoUrl: storeForm.logoUrl, isSeller: true, city: storeForm.city || "" }, { merge: true });
+                await setDoc(doc(db, "users", user.uid), { businessName: storeForm.businessName, storeDescription: storeForm.description, storeContact: storeForm.contact, logoUrl: storeForm.logoUrl, isSeller: true, city: storeForm.city || "", openTime: storeForm.openTime, closeTime: storeForm.closeTime, shopDays: storeForm.shopDays, shopHoursEnabled: storeForm.shopHoursEnabled }, { merge: true });
+                // Also update all seller's products with shop hours so cards can show status
+                const myProdsSnap = await getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid)));
+                await Promise.all(myProdsSnap.docs.map(d => setDoc(doc(db, "products", d.id), { openTime: storeForm.openTime, closeTime: storeForm.closeTime, shopDays: storeForm.shopDays, shopHoursEnabled: storeForm.shopHoursEnabled }, { merge: true })));
                 setStoreSaved(true); setTimeout(() => { setStoreSaved(false); setShowStore(false); }, 2000);
               }}>Save Store</button>
               <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowStore(false)}>Close</button>
