@@ -2910,7 +2910,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             </div>
           </div>
         </div>
-        <input id="profilePhotoInput" type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handlePhotoUpload} />
+        <input id="profilePhotoInput" type="file" accept="image/*" style={{ display: "none" }} onChange={handlePhotoUpload} />
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
