@@ -834,7 +834,7 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
             {filteredProducts.map(p => (
               <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
                 <div style={{ height: 130, background: C.grey, overflow: "hidden" }}>
-                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>📦</div>}
+                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
                 </div>
                 <div style={{ padding: 10 }}>
                   <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
@@ -1208,6 +1208,36 @@ function getShopStatus(seller) {
   return { isOpen: true, label: `🟢 Open · Closes at ${seller.closeTime}` };
 }
 
+
+// ── Product Image Placeholder ───────────────────────────────────
+function ProductPlaceholder({ name, category, size = "100%" }) {
+  const gradients = [
+    "linear-gradient(135deg, #00A896, #00D4B8)",
+    "linear-gradient(135deg, #F97316, #FB923C)",
+    "linear-gradient(135deg, #8B5CF6, #A78BFA)",
+    "linear-gradient(135deg, #EC4899, #F472B6)",
+    "linear-gradient(135deg, #0EA5E9, #38BDF8)",
+    "linear-gradient(135deg, #10B981, #34D399)",
+    "linear-gradient(135deg, #F59E0B, #FCD34D)",
+    "linear-gradient(135deg, #EF4444, #F87171)",
+  ];
+  const categoryIcons = {
+    "Fashion": "👗", "Food": "🍔", "Electronics": "📱", "Beauty": "💄",
+    "Sports": "⚽", "Home": "🏠", "Health": "💊", "Books": "📚",
+    "Toys": "🧸", "Jewelry": "💍", "Shoes": "👟", "Bags": "👜",
+  };
+  const letter = (name || "P").charAt(0).toUpperCase();
+  const gradient = gradients[letter.charCodeAt(0) % gradients.length];
+  const icon = categoryIcons[category] || null;
+  return (
+    <div style={{ width: size, height: "100%", background: gradient, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
+      {icon && <div style={{ fontSize: 28, opacity: 0.9 }}>{icon}</div>}
+      <div style={{ fontSize: icon ? 22 : 40, fontWeight: 900, color: "white", opacity: 0.95, textShadow: "0 2px 8px rgba(0,0,0,0.2)", letterSpacing: -1 }}>{letter}</div>
+      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.8)", fontWeight: 600, textAlign: "center", maxWidth: 80, lineHeight: 1.2 }}>{(name || "").slice(0, 20)}</div>
+    </div>
+  );
+}
+
 // ── Send Notification Helper ────────────────────────────────────
 async function sendNotification(toUserId, type, message, fromUserName) {
   if (!toUserId) return;
@@ -1344,7 +1374,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
             {filtered.filter(p => p.premium).slice(0, 4).map(p => (
               <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", border: `2px solid #FFD700` }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
                 <div style={{ height: 140, overflow: "hidden", background: C.grey, position: "relative" }}>
-                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 48 }}>📦</div>}
+                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
                   <div style={{ position: "absolute", top: 8, right: 8, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
                     Premium
@@ -1381,7 +1411,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
           {filtered.map(p => (
             <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
               <div style={{ height: 140, overflow: "hidden", background: C.grey }}>
-                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => e.target.style.display = "none"} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 48 }}>📦</div>}
+                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => e.target.style.display = "none"} /> : <ProductPlaceholder name={p.name} category={p.category} />}
               </div>
               <div style={{ padding: 12 }}>
                 <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{p.name}</div>
@@ -1467,7 +1497,7 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
       <button style={{ ...S.btn("grey"), marginBottom: 16, color: C.text }} onClick={() => setPage("home")}>← Back</button>
       <div style={S.card}>
         <div style={{ height: 260, overflow: "hidden", borderRadius: "14px 14px 0 0", background: C.grey }}>
-          {product.image ? <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 80 }}>📦</div>}
+          {product.image ? <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
         </div>
         <div style={{ padding: 20 }}>
           <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 4 }}>{product.category}</div>
@@ -1590,7 +1620,7 @@ function Cart({ cart, setCart, setPage, user }) {
           {cart.map(item => (
             <div key={item.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
               <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
-                {item.image ? <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>📦</div>}
+                {item.image ? <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{item.name}</div>
@@ -1790,7 +1820,7 @@ function LivePage({ user, setPage, setCart }) {
                 {viewing.products.slice(0, 3).map(p => (
                   <div key={p.id} style={{ background: "rgba(0,0,0,0.7)", borderRadius: 10, padding: 8, width: 70, cursor: "pointer" }} onClick={() => buyFromLive(p)}>
                     <div style={{ width: 54, height: 54, borderRadius: 8, overflow: "hidden", background: C.grey, marginBottom: 4 }}>
-                      {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>📦</div>}
+                      {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
                     </div>
                     <div style={{ fontSize: 9, color: "white", fontWeight: 700, lineHeight: 1.2, marginBottom: 2 }}>{p.name?.slice(0, 12)}</div>
                     <div style={{ fontSize: 10, color: C.accent, fontWeight: 800 }}>GH₵{p.price}</div>
@@ -1843,7 +1873,7 @@ function LivePage({ user, setPage, setCart }) {
       {myStream.products?.map(p => (
         <div key={p.id} style={{ ...S.card, padding: 12, display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
           <div style={{ width: 48, height: 48, borderRadius: 8, overflow: "hidden", background: C.grey }}>
-            {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>📦</div>}
+            {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
           </div>
           <div style={{ flex: 1 }}>
             <div style={{ fontWeight: 700 }}>{p.name}</div>
@@ -1913,7 +1943,7 @@ function LivePage({ user, setPage, setCart }) {
                   <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 10, border: `2px solid ${selected ? C.primary : C.border}`, background: selected ? `${C.primary}08` : "white", cursor: "pointer" }}
                     onClick={() => setLiveForm(prev => ({ ...prev, products: selected ? prev.products.filter(x => x.id !== p.id) : [...prev.products, p] }))}>
                     <div style={{ width: 40, height: 40, borderRadius: 8, overflow: "hidden", background: C.grey }}>
-                      {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>📦</div>}
+                      {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
                     </div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
@@ -2436,7 +2466,7 @@ function SellerAnalytics({ user }) {
         ) : topProducts.map((p, i) => (
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: i < topProducts.length - 1 ? `1px solid ${C.border}` : "none" }}>
             <div style={{ width: 36, height: 36, borderRadius: 8, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
-              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>📦</div>}
+              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
@@ -2455,7 +2485,7 @@ function SellerAnalytics({ user }) {
         ) : products.map((p, i) => (
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: i < products.length - 1 ? `1px solid ${C.border}` : "none" }}>
             <div style={{ width: 40, height: 40, borderRadius: 8, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
-              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>📦</div>}
+              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
@@ -2859,7 +2889,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           {myProducts.map(p => (
             <div key={p.id} style={{ ...S.card, overflow: "hidden" }}>
               <div style={{ height: 120, background: C.grey, overflow: "hidden", position: "relative" }}>
-                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4 }}><div style={{ fontSize: 28 }}>📦</div><div style={{ fontSize: 10, color: C.greyDark }}>No photo</div></div>}
+                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
                 <button style={{ position: "absolute", top: 6, right: 6, background: C.white, border: "none", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", color: C.primary, boxShadow: "0 1px 4px rgba(0,0,0,0.15)" }}
                   onClick={() => setEditingProduct(p)}>
                   Edit
@@ -3533,7 +3563,7 @@ function Discover({ setPage, setSelectedProduct, user }) {
                 {filteredProducts.filter(p => p.premium).map(p => (
                   <div key={"prem-" + p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", border: `2px solid #FFD700` }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
                     <div style={{ height: 120, background: C.grey, overflow: "hidden", position: "relative" }}>
-                      {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>📦</div>}
+                      {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
                       <div style={{ position: "absolute", top: 6, right: 6, background: "#FFD700", borderRadius: "50%", width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
                       </div>
@@ -3555,7 +3585,7 @@ function Discover({ setPage, setSelectedProduct, user }) {
           {filteredProducts.map(p => (
             <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
               <div style={{ height: 140, background: C.grey, overflow: "hidden" }}>
-                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 40 }}>📦</div>}
+                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
               </div>
               <div style={{ padding: 12 }}>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
