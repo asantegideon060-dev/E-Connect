@@ -40,19 +40,32 @@ const CATEGORIES = ["All", "Fashion", "Electronics", "Beauty", "Food", "Sports",
 
 
 // ── Verified Badge SVG ─────────────────────────────────────────
+// ── Badge System ──────────────────────────────────────────────
+// Blue Tick: Admin verified, trusted long-term user (MEDIUM size)
 const VerifiedBadge = ({ size = 16 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
+  <svg width={size} height={size} viewBox="0 0 24 24" style={{ flexShrink: 0, verticalAlign: "middle" }}>
     <circle cx="12" cy="12" r="10" fill="#1DA1F2"/>
     <path d="M9 12l2 2 4-4" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
   </svg>
 );
 
-// ── Premium Star SVG ───────────────────────────────────────────
-const PremiumStar = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="#FFD700" style={{ marginLeft: 4, verticalAlign: "middle" }}>
-    <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
+// Gold Star: Premium subscriber (LARGE size - most prominent)
+const PremiumBadge = ({ size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" style={{ flexShrink: 0, verticalAlign: "middle" }}>
+    <circle cx="12" cy="12" r="11" fill="#FFD700"/>
+    <path d="M12 4L14.09 9.26L20 10.27L16 14.14L17.09 20.02L12 17.27L6.91 20.02L8 14.14L4 10.27L9.91 9.26L12 4Z" fill="#333"/>
   </svg>
 );
+
+// Trending badge: New store, no special status (SMALL)
+const TrendingBadge = () => (
+  <span style={{ background: "linear-gradient(135deg, #FF6B6B, #FF8E53)", color: "white", fontSize: 8, fontWeight: 800, padding: "2px 5px", borderRadius: 6, verticalAlign: "middle", letterSpacing: 0.3 }}>
+    🔥 NEW
+  </span>
+);
+
+// Legacy PremiumStar kept for backward compat
+const PremiumStar = () => <PremiumBadge size={14} />;
 
 const S = {
   app: { fontFamily: FONT, background: C.offWhite, minHeight: "100vh", color: C.text, paddingBottom: 80 },
@@ -182,6 +195,7 @@ function AddProductModal({ user, onClose, onAdded }) {
         seller: user.displayName || "Unknown", sellerId: user.uid,
         sellerVerified: userData.verified || false,
         sellerPremium: userData.premium || false,
+        isSeller: userData.isSeller || false,
         likes: 0, rating: 0, reviews: 0, premium: userData.premium || false,
         createdAt: serverTimestamp()
       });
@@ -756,7 +770,9 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
                 <div style={{ flex: 1 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ fontWeight: 700, fontSize: 15 }}>{s.businessName || s.name}</span>
-                    {s.verified && <VerifiedBadge size={14} />}
+                    {s.premium && <PremiumBadge size={18} />}
+                    {!s.premium && s.verified && <VerifiedBadge size={14} />}
+                    {!s.premium && !s.verified && s.isSeller && <TrendingBadge />}
                     {s.premium && <svg width="12" height="12" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>}
                   </div>
                   <div style={{ fontSize: 12, color: C.greyDark, marginTop: 2 }}>📍 {s.city}</div>
@@ -789,7 +805,10 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
                 <div style={{ padding: 10 }}>
                   <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
                   <div style={{ fontSize: 11, color: C.greyDark, display: "flex", alignItems: "center", gap: 3 }}>
-                    {p.seller} {p.sellerVerified && <VerifiedBadge size={11} />}
+                    {p.seller}
+                    {p.sellerPremium && <PremiumBadge size={15} />}
+                    {!p.sellerPremium && p.sellerVerified && <VerifiedBadge size={12} />}
+                    {!p.sellerPremium && !p.sellerVerified && p.isSeller && <TrendingBadge />}
                   </div>
                   <div style={{ fontSize: 11, color: C.greyDark }}>📍 {p.sellerCity}</div>
                   <div style={{ color: C.primary, fontWeight: 800, marginTop: 4 }}>GH₵{p.price}</div>
@@ -1257,6 +1276,65 @@ function ApprovedAdsBanner() {
   );
 }
 
+// ── Premium Carousel ─────────────────────────────────────────
+function PremiumCarousel({ products, setSelectedProduct, setPage }) {
+  const [current, setCurrent] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (paused || products.length <= 1) return;
+    timerRef.current = setInterval(() => setCurrent(prev => (prev + 1) % products.length), 2000);
+    return () => clearInterval(timerRef.current);
+  }, [paused, products.length]);
+
+  if (!products.length) return null;
+  const p = products[current];
+
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <PremiumBadge size={20} />
+        <span style={{ fontWeight: 800, fontSize: 16 }}>Premium</span>
+        <span style={{ fontSize: 12, color: C.greyDark, marginLeft: 4 }}>{products.length} products</span>
+      </div>
+      <div style={{ ...S.card, overflow: "hidden", cursor: "pointer", border: "2.5px solid #FFD700", position: "relative" }}
+        onClick={() => { setSelectedProduct(p); setPage("product"); }}
+        onTouchStart={() => setPaused(true)}
+        onTouchEnd={() => setPaused(false)}>
+        <div style={{ height: 180, background: C.grey, position: "relative", overflow: "hidden" }}>
+          {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(transparent 40%, rgba(0,0,0,0.6) 100%)" }} />
+          <div style={{ position: "absolute", top: 10, left: 10, background: "#FFD700", borderRadius: 20, padding: "4px 12px", fontSize: 11, fontWeight: 800, color: "#333", display: "flex", alignItems: "center", gap: 5 }}>
+            <PremiumBadge size={12} /> Premium
+          </div>
+          <div style={{ position: "absolute", bottom: 12, left: 12, right: 12 }}>
+            <div style={{ fontWeight: 800, fontSize: 17, color: "white", marginBottom: 2 }}>{p.name}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.85)" }}>{p.seller}</span>
+              <PremiumBadge size={14} />
+            </div>
+          </div>
+        </div>
+        <div style={{ padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ color: C.primary, fontWeight: 900, fontSize: 18 }}>GH₵{p.price}</span>
+          <span style={{ fontSize: 11, color: C.greyDark }}>{paused ? "👆 Hold to pause" : "Auto-scrolling"}</span>
+        </div>
+        {/* Dots */}
+        {products.length > 1 && (
+          <div style={{ display: "flex", gap: 4, justifyContent: "center", paddingBottom: 10 }}>
+            {products.map((_, i) => (
+              <div key={i} onClick={e => { e.stopPropagation(); setCurrent(i); }}
+                style={{ width: i === current ? 18 : 6, height: 6, borderRadius: 3, background: i === current ? "#FFD700" : C.grey, transition: "width 0.3s", cursor: "pointer" }} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 // ── Home Page ──────────────────────────────────────────────────
 function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
   const [products, setProducts] = useState([]);
@@ -1314,31 +1392,8 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
         ))}
       </div>
 
-      {filtered.some(p => p.premium) && (
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
-            <span style={{ fontWeight: 800, fontSize: 15 }}>Premium Stores</span>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
-            {filtered.filter(p => p.premium).slice(0, 4).map(p => (
-              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", border: `2px solid #FFD700` }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
-                <div style={{ height: 140, overflow: "hidden", background: C.grey, position: "relative" }}>
-                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
-                  <div style={{ position: "absolute", top: 8, right: 8, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
-                    Premium
-                  </div>
-                </div>
-                <div style={{ padding: 12 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
-                  <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 4 }}>{p.seller}</div>
-                  <div style={{ color: C.primary, fontWeight: 800, fontSize: 16 }}>GH₵{p.price}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+      {filtered.some(p => p.sellerPremium) && (
+        <PremiumCarousel products={filtered.filter(p => p.sellerPremium)} setSelectedProduct={setSelectedProduct} setPage={setPage} />
       )}
 
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -1367,7 +1422,9 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
                 <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{p.name}</div>
                 <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 8, display: "flex", alignItems: "center", gap: 4 }}>
                   {p.seller}
-                  {p.sellerVerified && <VerifiedBadge size={12} />}
+                  {p.sellerPremium && <PremiumBadge size={16} />}
+                  {!p.sellerPremium && p.sellerVerified && <VerifiedBadge size={13} />}
+                  {!p.sellerPremium && !p.sellerVerified && p.isSeller && <TrendingBadge />}
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <span style={{ color: C.primary, fontWeight: 800, fontSize: 16 }}>GH₵{p.price}</span>
@@ -1452,7 +1509,12 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
         <div style={{ padding: 20 }}>
           <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 4 }}>{product.category}</div>
           <h2 style={{ fontWeight: 800, fontSize: 22, margin: "0 0 4px" }}>{product.name}</h2>
-          <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8 }}>By {product.seller}</div>
+          <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+            By {product.seller}
+            {product.sellerPremium && <PremiumBadge size={18} />}
+            {!product.sellerPremium && product.sellerVerified && <VerifiedBadge size={15} />}
+            {!product.sellerPremium && !product.sellerVerified && product.isSeller && <TrendingBadge />}
+          </div>
           {productWithSeller.sellerData && (() => {
             const status = getShopStatus(product.sellerData);
             if (!status.label) return null;
@@ -1636,10 +1698,14 @@ function LivePage({ user, setPage, setCart }) {
   const [loading, setLoading] = useState(false);
   const [streamEnded, setStreamEnded] = useState(false);
   const [facingMode, setFacingMode] = useState("user");
+  const [muted, setMuted] = useState(false);
   const [showProducts, setShowProducts] = useState(false);
+  const [floatingEmojis, setFloatingEmojis] = useState([]);
+  const [isSharing, setIsSharing] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const chatEndRef = useRef(null);
+  const emojiId = useRef(0);
 
   useEffect(() => {
     const q = query(collection(db, "liveStreams"), where("status", "==", "live"), orderBy("startedAt", "desc"));
@@ -1666,7 +1732,7 @@ function LivePage({ user, setPage, setCart }) {
       setLiveChat(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     });
-    const viewerRef = doc(db, "liveStreams", viewing.id, "viewers", user?.uid || "guest");
+    const viewerRef = doc(db, "liveStreams", viewing.id, "viewers", user?.uid || "guest_" + Date.now());
     setDoc(viewerRef, { joinedAt: serverTimestamp() }, { merge: true });
     const viewersUnsub = onSnapshot(collection(db, "liveStreams", viewing.id, "viewers"), snap => setViewers(snap.size));
     const streamUnsub = onSnapshot(doc(db, "liveStreams", viewing.id), snap => {
@@ -1690,6 +1756,24 @@ function LivePage({ user, setPage, setCart }) {
     await startCamera(newFacing);
   };
 
+  const toggleMute = () => {
+    if (streamRef.current) {
+      const audioTrack = streamRef.current.getAudioTracks()[0];
+      if (audioTrack) { audioTrack.enabled = !audioTrack.enabled; setMuted(!audioTrack.enabled); }
+    }
+  };
+
+  const addFloatingEmoji = (emoji) => {
+    const id = emojiId.current++;
+    setFloatingEmojis(prev => [...prev, { id, emoji, x: Math.random() * 60 + 20 }]);
+    setTimeout(() => setFloatingEmojis(prev => prev.filter(e => e.id !== id)), 2500);
+  };
+
+  const handleScreenTap = (e) => {
+    const emojis = ["❤️", "🔥", "👏", "😍", "💯", "🎉", "👑", "✨"];
+    addFloatingEmoji(emojis[Math.floor(Math.random() * emojis.length)]);
+  };
+
   const goLive = async () => {
     if (!liveForm.title) { alert("Please enter a title."); return; }
     setLoading(true);
@@ -1701,6 +1785,13 @@ function LivePage({ user, setPage, setCart }) {
       status: "live", viewerCount: 0,
       startedAt: serverTimestamp(),
     });
+    // Notify all followers
+    try {
+      const followersSnap = await getDocs(collection(db, "users", user.uid, "followers"));
+      await Promise.all(followersSnap.docs.map(d =>
+        sendNotification(d.id, "premium", `🔴 ${user.displayName} is now LIVE! "${liveForm.title}" — Join now!`, user.displayName)
+      ));
+    } catch (e) {}
     setMyStream({ id: streamDoc.id, ...liveForm, sellerId: user.uid, sellerName: user.displayName, status: "live" });
     setShowGoLive(false);
     setLoading(false);
@@ -1720,7 +1811,17 @@ function LivePage({ user, setPage, setCart }) {
     await addDoc(collection(db, "liveStreams", viewing.id, "chat"), {
       text: msg, userId: user?.uid, userName: user?.displayName || "Guest",
       userPhoto: user?.photoURL || "",
+      type: "message",
       createdAt: serverTimestamp(),
+    });
+  };
+
+  const sendLiveEmoji = async (emoji) => {
+    addFloatingEmoji(emoji);
+    if (!viewing) return;
+    await addDoc(collection(db, "liveStreams", viewing.id, "chat"), {
+      text: emoji, userId: user?.uid, userName: user?.displayName || "Guest",
+      type: "emoji", createdAt: serverTimestamp(),
     });
   };
 
@@ -1730,146 +1831,203 @@ function LivePage({ user, setPage, setCart }) {
       if (ex) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i);
       return [...prev, { ...product, qty: 1 }];
     });
+    addFloatingEmoji("🛒");
   };
 
-  // ── Viewer: Full Screen TikTok/Instagram Live ──────────────────
+  const shareLive = async () => {
+    const url = `${window.location.origin}`;
+    if (navigator.share) {
+      await navigator.share({ title: `${user?.displayName} is LIVE!`, text: `Join ${user?.displayName} live on E-Connect: "${myStream?.title}"`, url });
+    } else {
+      navigator.clipboard.writeText(url);
+      alert("Link copied! Share it with your followers.");
+    }
+  };
+
+  // ── VIEWER: Full Screen TikTok/IG Style Live ──────────────────
   if (viewing) return (
-    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, display: "flex", flexDirection: "column", fontFamily: FONT }}>
+    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, display: "flex", flexDirection: "column", fontFamily: FONT, overflow: "hidden" }}
+      onClick={handleScreenTap}>
+
+      {/* Background video area */}
+      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, #0f0c29, #302b63, #24243e)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ opacity: 0.15, fontSize: 80 }}>🎥</div>
+      </div>
+
+      {/* Floating emojis */}
+      {floatingEmojis.map(e => (
+        <div key={e.id} style={{ position: "absolute", bottom: 200, left: `${e.x}%`, fontSize: 32, animation: "none", zIndex: 20, pointerEvents: "none",
+          transition: "all 2.5s ease-out", transform: "translateY(-120px)", opacity: 0 }}
+          ref={el => { if (el) { setTimeout(() => { el.style.transform = "translateY(-180px)"; el.style.opacity = "1"; }, 50); setTimeout(() => { el.style.opacity = "0"; }, 2000); }, 0 }}>
+          {e.emoji}
+        </div>
+      ))}
+
+      {/* Gradient overlays */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 140, background: "linear-gradient(180deg, rgba(0,0,0,0.8) 0%, transparent 100%)", zIndex: 2 }} />
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 320, background: "linear-gradient(0deg, rgba(0,0,0,0.9) 0%, transparent 100%)", zIndex: 2 }} />
+
       {streamEnded ? (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "white" }}>
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 10 }}>
           <div style={{ width: 70, height: 70, borderRadius: "50%", background: "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><line x1="17" y1="11" x2="17" y2="17"/><line x1="14" y1="14" x2="20" y2="14"/></svg>
           </div>
-          <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 8 }}>Live Ended</div>
-          <div style={{ color: "rgba(255,255,255,0.6)", marginBottom: 24, fontSize: 14 }}>This live stream has ended.</div>
+          <div style={{ fontWeight: 800, fontSize: 20, color: "white", marginBottom: 8 }}>Live Ended</div>
+          <div style={{ color: "rgba(255,255,255,0.6)", marginBottom: 24 }}>This live stream has ended.</div>
           <button style={{ ...S.btn(), padding: "12px 28px" }} onClick={() => { setViewing(null); setStreamEnded(false); }}>Back to Lives</button>
         </div>
-      ) : (
-        <>
-          {/* Video Background */}
-          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, #1a1a2e 0%, #16213e 100%)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div style={{ textAlign: "center", color: "white", opacity: 0.3 }}>
-              <div style={{ fontSize: 60 }}>🎥</div>
-              <div style={{ fontSize: 13 }}>Live Stream</div>
+      ) : (<>
+        {/* TOP BAR */}
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "48px 16px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 42, height: 42, borderRadius: "50%", overflow: "hidden", border: "2px solid white", background: "#333" }}>
+              {viewing.sellerPhoto ? <img src={viewing.sellerPhoto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white" }}>👤</div>}
             </div>
+            <div>
+              <div style={{ color: "white", fontWeight: 800, fontSize: 15 }}>{viewing.sellerName}</div>
+              <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}>{viewing.title}</div>
+            </div>
+            <div style={{ background: C.error, borderRadius: 6, padding: "3px 8px", fontSize: 11, fontWeight: 800, color: "white", marginLeft: 4 }}>🔴 LIVE</div>
           </div>
-
-          {/* Gradient overlays */}
-          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 120, background: "linear-gradient(180deg, rgba(0,0,0,0.7) 0%, transparent 100%)", zIndex: 1 }} />
-          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 300, background: "linear-gradient(0deg, rgba(0,0,0,0.85) 0%, transparent 100%)", zIndex: 1 }} />
-
-          {/* Top bar */}
-          <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ width: 40, height: 40, borderRadius: "50%", overflow: "hidden", border: "2px solid white", background: "#333" }}>
-                {viewing.sellerPhoto ? <img src={viewing.sellerPhoto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white" }}>👤</div>}
-              </div>
-              <div>
-                <div style={{ color: "white", fontWeight: 800, fontSize: 14 }}>{viewing.sellerName}</div>
-                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>{viewing.title}</div>
-              </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "5px 10px", fontSize: 12, color: "white", display: "flex", alignItems: "center", gap: 4 }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              {viewers}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ background: C.error, borderRadius: 6, padding: "3px 8px", fontSize: 11, fontWeight: 800, color: "white" }}>🔴 LIVE</div>
-              <div style={{ background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "4px 10px", fontSize: 12, color: "white", display: "flex", alignItems: "center", gap: 4 }}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                {viewers}
-              </div>
-              <button style={{ background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => { setViewing(null); setStreamEnded(false); }}>✕</button>
-            </div>
+            <button style={{ background: "rgba(255,255,255,0.15)", border: "none", color: "white", borderRadius: "50%", width: 34, height: 34, cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}
+              onClick={e => { e.stopPropagation(); setViewing(null); setStreamEnded(false); }}>✕</button>
           </div>
+        </div>
 
-          {/* Products panel - right side */}
-          {viewing.products?.length > 0 && (
-            <div style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", zIndex: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-              <button style={{ background: "rgba(0,0,0,0.6)", border: "none", borderRadius: 20, padding: "6px 10px", color: "white", fontSize: 11, fontWeight: 700, cursor: "pointer", marginBottom: 4 }} onClick={() => setShowProducts(!showProducts)}>
-                🛒 {viewing.products.length}
-              </button>
-              {showProducts && viewing.products.slice(0, 4).map(p => (
-                <div key={p.id} style={{ background: "rgba(0,0,0,0.75)", borderRadius: 12, padding: 8, width: 80, cursor: "pointer", backdropFilter: "blur(10px)" }} onClick={() => { buyFromLive(p); }}>
-                  <div style={{ width: 64, height: 64, borderRadius: 8, overflow: "hidden", background: "#333", marginBottom: 4 }}>
-                    {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
-                  </div>
-                  <div style={{ fontSize: 9, color: "white", fontWeight: 700, lineHeight: 1.2, marginBottom: 2 }}>{p.name?.slice(0, 14)}</div>
-                  <div style={{ fontSize: 10, color: C.accent, fontWeight: 800 }}>GH₵{p.price}</div>
-                  <div style={{ fontSize: 9, background: C.primary, color: "white", borderRadius: 4, padding: "2px 0", textAlign: "center", marginTop: 3 }}>+ Cart</div>
+        {/* PRODUCTS SIDE */}
+        {viewing.products?.length > 0 && (
+          <div style={{ position: "absolute", right: 10, top: "30%", zIndex: 10 }} onClick={e => e.stopPropagation()}>
+            <button style={{ background: "rgba(0,0,0,0.6)", border: "none", borderRadius: 20, padding: "6px 10px", color: "white", fontSize: 11, fontWeight: 700, cursor: "pointer", marginBottom: 8, width: "100%", backdropFilter: "blur(8px)" }}
+              onClick={() => setShowProducts(!showProducts)}>
+              🛒 {viewing.products.length}
+            </button>
+            {showProducts && viewing.products.slice(0, 4).map(p => (
+              <div key={p.id} style={{ background: "rgba(0,0,0,0.75)", borderRadius: 12, padding: 8, width: 78, cursor: "pointer", marginBottom: 8, backdropFilter: "blur(10px)" }}
+                onClick={() => buyFromLive(p)}>
+                <div style={{ width: 62, height: 62, borderRadius: 8, overflow: "hidden", background: "#333", marginBottom: 4 }}>
+                  {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
                 </div>
-              ))}
-            </div>
-          )}
-
-          {/* Live Chat - floating over video */}
-          <div style={{ position: "absolute", bottom: 70, left: 0, right: viewing.products?.length > 0 ? 100 : 16, zIndex: 10, maxHeight: 200, overflowY: "auto", padding: "0 16px", display: "flex", flexDirection: "column", gap: 6, justifyContent: "flex-end" }}>
-            {liveChat.slice(-15).map(msg => (
-              <div key={msg.id} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                <div style={{ width: 26, height: 26, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
-                  {msg.userPhoto ? <img src={msg.userPhoto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "white" }}>👤</div>}
-                </div>
-                <div style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(4px)", borderRadius: "0 12px 12px 12px", padding: "6px 10px", maxWidth: "80%" }}>
-                  <span style={{ fontWeight: 700, color: C.primary, fontSize: 12 }}>{msg.userName} </span>
-                  <span style={{ color: "white", fontSize: 13 }}>{msg.text}</span>
-                </div>
+                <div style={{ fontSize: 9, color: "white", fontWeight: 700, lineHeight: 1.2, marginBottom: 2 }}>{p.name?.slice(0, 12)}</div>
+                <div style={{ fontSize: 10, color: C.accent, fontWeight: 800 }}>GH₵{p.price}</div>
+                <div style={{ fontSize: 9, background: C.primary, color: "white", borderRadius: 4, padding: "2px 0", textAlign: "center", marginTop: 3 }}>+ Cart</div>
               </div>
             ))}
-            <div ref={chatEndRef} />
           </div>
+        )}
 
-          {/* Chat Input */}
-          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 16px", display: "flex", gap: 10, alignItems: "center", zIndex: 10, background: "rgba(0,0,0,0.3)", backdropFilter: "blur(10px)" }}>
-            <div style={{ width: 32, height: 32, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
-              {user?.photoURL ? <img src={user.photoURL} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "white" }}>👤</div>}
+        {/* FLOATING CHAT */}
+        <div style={{ position: "absolute", bottom: 130, left: 12, right: viewing.products?.length > 0 ? 100 : 12, zIndex: 10, maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}
+          onClick={e => e.stopPropagation()}>
+          {liveChat.filter(m => m.type !== "emoji").slice(-12).map(msg => (
+            <div key={msg.id} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <div style={{ width: 28, height: 28, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
+                {msg.userPhoto ? <img src={msg.userPhoto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "white" }}>👤</div>}
+              </div>
+              <div style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", borderRadius: "0 12px 12px 12px", padding: "6px 12px", maxWidth: "85%" }}>
+                <span style={{ fontWeight: 700, color: C.primary, fontSize: 12 }}>{msg.userName} </span>
+                <span style={{ color: "white", fontSize: 13 }}>{msg.text}</span>
+              </div>
             </div>
-            <input
-              style={{ flex: 1, background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 24, padding: "10px 16px", color: "white", fontSize: 14, outline: "none" }}
+          ))}
+          <div ref={chatEndRef} />
+        </div>
+
+        {/* EMOJI ROW + CHAT INPUT */}
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 10, padding: "8px 12px 24px" }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", gap: 10, marginBottom: 8, justifyContent: "center" }}>
+            {["❤️","🔥","😍","👏","💯","🎉","👑","✨"].map(em => (
+              <button key={em} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: "50%", width: 36, height: 36, cursor: "pointer", fontSize: 18, backdropFilter: "blur(8px)" }}
+                onClick={() => sendLiveEmoji(em)}>{em}</button>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={{ width: 34, height: 34, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
+              {user?.photoURL ? <img src={user.photoURL} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 14 }}>👤</div>}
+            </div>
+            <input style={{ flex: 1, background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.25)", borderRadius: 24, padding: "10px 16px", color: "white", fontSize: 14, outline: "none", backdropFilter: "blur(8px)" }}
               placeholder="Say something..."
               value={chatMsg}
               onChange={e => setChatMsg(e.target.value)}
               onKeyDown={e => e.key === "Enter" && sendChat()}
             />
-            <button style={{ background: C.primary, border: "none", borderRadius: "50%", width: 38, height: 38, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }} onClick={sendChat}>
+            <button style={{ background: C.primary, border: "none", borderRadius: "50%", width: 38, height: 38, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+              onClick={sendChat}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
           </div>
-        </>
-      )}
+        </div>
+      </>)}
     </div>
   );
 
-  // ── Seller: Active Live View ───────────────────────────────────
+  // ── SELLER: Live Broadcast View ────────────────────────────────
   if (myStream) return (
-    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, fontFamily: FONT }}>
-      {/* Live video preview */}
-      <video ref={videoRef} autoPlay muted playsInline style={{ width: "100%", height: "100vh", objectFit: "cover" }} />
+    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, fontFamily: FONT, overflow: "hidden" }}
+      onClick={handleScreenTap}>
+
+      {/* Camera preview */}
+      <video ref={videoRef} autoPlay muted playsInline style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
 
       {/* Gradient overlays */}
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 120, background: "linear-gradient(180deg, rgba(0,0,0,0.8) 0%, transparent 100%)" }} />
-      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 200, background: "linear-gradient(0deg, rgba(0,0,0,0.9) 0%, transparent 100%)" }} />
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 160, background: "linear-gradient(180deg, rgba(0,0,0,0.85) 0%, transparent 100%)" }} />
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 280, background: "linear-gradient(0deg, rgba(0,0,0,0.9) 0%, transparent 100%)" }} />
 
-      {/* Top bar */}
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "14px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ background: C.error, borderRadius: 8, padding: "4px 10px", fontSize: 12, fontWeight: 800, color: "white" }}>🔴 LIVE</div>
-          <div style={{ background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "4px 10px", fontSize: 12, color: "white" }}>👁️ {viewers}</div>
+      {/* Floating emojis */}
+      {floatingEmojis.map(e => (
+        <div key={e.id} style={{ position: "absolute", bottom: 200, left: `${e.x}%`, fontSize: 32, zIndex: 20, pointerEvents: "none", transition: "all 2.5s ease-out" }}
+          ref={el => { if (el) { setTimeout(() => { el.style.transform = "translateY(-160px)"; el.style.opacity = "0"; }, 100); } }}>
+          {e.emoji}
         </div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button style={{ background: "rgba(0,0,0,0.5)", border: "none", borderRadius: 20, padding: "6px 14px", color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }} onClick={switchCamera}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-            Flip
+      ))}
+
+      {/* TOP CONTROLS */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "50px 16px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ background: C.error, borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 800, color: "white" }}>🔴 LIVE</div>
+          <div style={{ background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "5px 10px", fontSize: 12, color: "white", display: "flex", alignItems: "center", gap: 4 }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            {viewers}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {/* Mute */}
+          <button style={{ background: muted ? "rgba(255,0,0,0.5)" : "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 40, height: 40, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            onClick={e => { e.stopPropagation(); toggleMute(); }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round">
+              {muted ? <><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></> : <><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></>}
+            </svg>
           </button>
-          <button style={{ background: C.error, border: "none", borderRadius: 20, padding: "6px 14px", color: "white", fontSize: 13, fontWeight: 700, cursor: "pointer" }} onClick={endStream}>End</button>
+          {/* Flip camera */}
+          <button style={{ background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 40, height: 40, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            onClick={e => { e.stopPropagation(); switchCamera(); }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </button>
+          {/* Share */}
+          <button style={{ background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 40, height: 40, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            onClick={e => { e.stopPropagation(); shareLive(); }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          </button>
+          {/* End */}
+          <button style={{ background: C.error, border: "none", borderRadius: 20, padding: "0 16px", height: 40, color: "white", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
+            onClick={e => { e.stopPropagation(); endStream(); }}>End</button>
         </div>
       </div>
 
-      {/* Title */}
-      <div style={{ position: "absolute", top: 60, left: 16, zIndex: 10 }}>
+      {/* Live title */}
+      <div style={{ position: "absolute", top: 110, left: 16, zIndex: 10 }}>
         <div style={{ color: "white", fontWeight: 800, fontSize: 16 }}>{myStream.title}</div>
       </div>
 
       {/* Products on right */}
       {myStream.products?.length > 0 && (
-        <div style={{ position: "absolute", right: 12, top: "40%", transform: "translateY(-50%)", zIndex: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ position: "absolute", right: 10, top: "35%", transform: "translateY(-50%)", zIndex: 10 }} onClick={e => e.stopPropagation()}>
           {myStream.products.slice(0, 3).map(p => (
-            <div key={p.id} style={{ background: "rgba(0,0,0,0.7)", borderRadius: 12, padding: 8, width: 72, backdropFilter: "blur(8px)" }}>
+            <div key={p.id} style={{ background: "rgba(0,0,0,0.7)", borderRadius: 12, padding: 8, width: 72, marginBottom: 8, backdropFilter: "blur(8px)" }}>
               <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#333", marginBottom: 4 }}>
                 {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
               </div>
@@ -1880,24 +2038,44 @@ function LivePage({ user, setPage, setCart }) {
         </div>
       )}
 
-      {/* Bottom info */}
-      <div style={{ position: "absolute", bottom: 16, left: 16, right: 16, zIndex: 10 }}>
-        <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 12, textAlign: "center" }}>You are live · Share the app link for viewers to join</div>
+      {/* CHAT - scrollable by finger */}
+      <div style={{ position: "absolute", bottom: 70, left: 12, right: myStream.products?.length > 0 ? 95 : 12, zIndex: 10, maxHeight: 180, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}
+        onClick={e => e.stopPropagation()}>
+        {liveChat.filter(m => m.type !== "emoji").slice(-15).map(msg => (
+          <div key={msg.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 26, height: 26, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
+              {msg.userPhoto ? <img src={msg.userPhoto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "white" }}>👤</div>}
+            </div>
+            <div style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", borderRadius: "0 10px 10px 10px", padding: "5px 10px" }}>
+              <span style={{ fontWeight: 700, color: C.primary, fontSize: 11 }}>{msg.userName}: </span>
+              <span style={{ color: "white", fontSize: 12 }}>{msg.text}</span>
+            </div>
+          </div>
+        ))}
+        <div ref={chatEndRef} />
+      </div>
+
+      {/* BOTTOM - hint */}
+      <div style={{ position: "absolute", bottom: 16, left: 0, right: 0, zIndex: 10, display: "flex", justifyContent: "center" }} onClick={e => e.stopPropagation()}>
+        <div style={{ background: "rgba(0,0,0,0.4)", borderRadius: 20, padding: "6px 16px", display: "flex", gap: 16, alignItems: "center" }}>
+          <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>👆 Tap screen to send emojis</span>
+          <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>📜 Scroll chat above</span>
+        </div>
       </div>
     </div>
   );
 
-  // ── Live Streams List ──────────────────────────────────────────
+  // ── LIVE STREAMS LIST ──────────────────────────────────────────
   return (
     <div style={S.page}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
         <div style={S.sectionTitle}>🔴 Live</div>
-        <button style={{ ...S.btn(), padding: "8px 16px", fontSize: 13 }} onClick={() => setShowGoLive(true)}>Go Live</button>
+        <button style={{ ...S.btn(), padding: "8px 16px", fontSize: 13 }} onClick={() => setShowGoLive(true)}>+ Go Live</button>
       </div>
-      <p style={{ ...S.sectionSub, marginBottom: 20 }}>Watch sellers, ask questions, buy instantly</p>
+      <p style={{ ...S.sectionSub, marginBottom: 20 }}>Watch sellers live · Buy directly · Ask questions</p>
 
       {liveStreams.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 60 }}>
+        <div style={{ textAlign: "center", padding: "60px 20px" }}>
           <div style={{ width: 80, height: 80, borderRadius: "50%", background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>
           </div>
@@ -1906,12 +2084,12 @@ function LivePage({ user, setPage, setCart }) {
           <button style={{ ...S.btn(), padding: "12px 28px" }} onClick={() => setShowGoLive(true)}>🎥 Start Live Selling</button>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 80 }}>
           {liveStreams.map(stream => (
             <div key={stream.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => setViewing(stream)}>
-              <div style={{ height: 120, background: "linear-gradient(135deg, #1a1a2e, #16213e)", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-                <div style={{ width: 52, height: 52, borderRadius: "50%", border: "3px solid white", overflow: "hidden", background: "#333" }}>
-                  {stream.sellerPhoto ? <img src={stream.sellerPhoto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 22 }}>🎥</div>}
+              <div style={{ height: 130, background: "linear-gradient(135deg, #1a1a2e, #16213e)", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+                <div style={{ width: 54, height: 54, borderRadius: "50%", border: "3px solid white", overflow: "hidden", background: "#333" }}>
+                  {stream.sellerPhoto ? <img src={stream.sellerPhoto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 24 }}>🎥</div>}
                 </div>
                 <div style={{ position: "absolute", top: 8, left: 8, background: C.error, borderRadius: 6, padding: "2px 7px", fontSize: 10, fontWeight: 800, color: "white" }}>🔴 LIVE</div>
                 <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 10, padding: "2px 7px", fontSize: 10, color: "white", display: "flex", alignItems: "center", gap: 3 }}>
@@ -1931,12 +2109,12 @@ function LivePage({ user, setPage, setCart }) {
         </div>
       )}
 
-      {/* Go Live Modal */}
+      {/* GO LIVE MODAL */}
       {showGoLive && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 500, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-          <div style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }}>
+          <div style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 480, maxHeight: "88vh", overflowY: "auto" }}>
             <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>🎥 Go Live</div>
-            <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 20 }}>Start selling live to your followers</div>
+            <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 20 }}>Your followers will be notified when you go live</div>
             <label style={S.label}>Live Title *</label>
             <input style={{ ...S.input, marginBottom: 12 }} placeholder="e.g. Weekend Fashion Sale!" value={liveForm.title} onChange={e => setLiveForm({ ...liveForm, title: e.target.value })} />
             <label style={S.label}>Description (optional)</label>
@@ -1964,8 +2142,8 @@ function LivePage({ user, setPage, setCart }) {
                 );
               })}
             </div>
-            <div style={{ background: "#FFF3CD", borderRadius: 10, padding: 12, fontSize: 12, color: "#856404", marginBottom: 20 }}>
-              ⚠️ Allow camera and microphone access when prompted.
+            <div style={{ background: "#e8f9f7", borderRadius: 10, padding: 12, fontSize: 12, color: C.primary, fontWeight: 600, marginBottom: 20 }}>
+              📢 All your followers will get a notification when you go live!
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button style={{ ...S.btn(), flex: 1, opacity: loading ? 0.7 : 1 }} onClick={goLive} disabled={loading}>
@@ -2024,11 +2202,38 @@ function ReelsPage({ user, setPage, setViewingUser }) {
   };
 
   const handleLike = async (reel) => {
+    if (!user) return;
     const isLiked = liked[reel.id];
     setLiked(prev => ({ ...prev, [reel.id]: !isLiked }));
     setReels(prev => prev.map(r => r.id === reel.id ? { ...r, likes: (r.likes || 0) + (isLiked ? -1 : 1) } : r));
-    await setDoc(doc(db, "reelLikes", reel.id + "_" + (user?.uid || "g")), { liked: !isLiked, createdAt: serverTimestamp() }, { merge: true });
-    if (!isLiked && reel.userId && reel.userId !== user?.uid) await sendNotification(reel.userId, "like", `${user?.displayName || "Someone"} liked your reel`, user?.displayName);
+    // Save full user info permanently in reelLikes subcollection
+    const likeRef = doc(db, "reels", reel.id, "likes", user.uid);
+    if (isLiked) {
+      await setDoc(likeRef, { liked: false, removedAt: serverTimestamp() }, { merge: true });
+    } else {
+      await setDoc(likeRef, {
+        liked: true,
+        userId: user.uid,
+        userName: user.displayName || "User",
+        userPhoto: user.photoURL || "",
+        likedAt: serverTimestamp(),
+      });
+    }
+    await setDoc(doc(db, "reels", reel.id), { likes: (reel.likes || 0) + (isLiked ? -1 : 1) }, { merge: true });
+    if (!isLiked && reel.userId && reel.userId !== user?.uid) {
+      await sendNotification(reel.userId, "like", `❤️ ${user.displayName || "Someone"} liked your reel`, user.displayName);
+    }
+  };
+
+  const [showLikes, setShowLikes] = useState(false);
+  const [reelLikes, setReelLikes] = useState([]);
+  const [likesReelId, setLikesReelId] = useState(null);
+
+  const loadLikes = async (reelId) => {
+    setLikesReelId(reelId);
+    const snap = await getDocs(query(collection(db, "reels", reelId, "likes"), where("liked", "==", true)));
+    setReelLikes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    setShowLikes(true);
   };
 
   const handleFollow = async (reel) => {
@@ -2052,13 +2257,35 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     setComments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
   };
 
+  // Load existing likes for current user on mount
+  useEffect(() => {
+    if (!user || reels.length === 0) return;
+    reels.forEach(async reel => {
+      const likeSnap = await getDoc(doc(db, "reels", reel.id, "likes", user.uid)).catch(() => null);
+      if (likeSnap?.exists() && likeSnap.data().liked) {
+        setLiked(prev => ({ ...prev, [reel.id]: true }));
+      }
+    });
+  }, [reels.length, user?.uid]);
+
   const postComment = async (reelId) => {
-    if (!newComment.trim()) return;
-    await addDoc(collection(db, "reels", reelId, "comments"), { text: newComment, userName: user?.displayName || "User", userPhoto: user?.photoURL || "", createdAt: serverTimestamp() });
-    setNewComment(""); loadComments(reelId);
+    if (!newComment.trim() || !user) return;
+    const commentText = newComment.trim();
+    setNewComment("");
+    await addDoc(collection(db, "reels", reelId, "comments"), {
+      text: commentText,
+      userId: user.uid,
+      userName: user.displayName || "User",
+      userPhoto: user.photoURL || "",
+      createdAt: serverTimestamp(),
+    });
+    loadComments(reelId);
     setReels(prev => prev.map(r => r.id === reelId ? { ...r, comments: (r.comments || 0) + 1 } : r));
+    await setDoc(doc(db, "reels", reelId), { comments: (reels.find(r => r.id === reelId)?.comments || 0) + 1 }, { merge: true });
     const reelData = reels.find(r => r.id === reelId);
-    if (reelData?.userId && reelData.userId !== user?.uid) await sendNotification(reelData.userId, "comment", `${user?.displayName || "Someone"} commented on your reel: "${newComment.slice(0, 30)}..."`, user?.displayName);
+    if (reelData?.userId && reelData.userId !== user.uid) {
+      await sendNotification(reelData.userId, "comment", `💬 ${user.displayName || "Someone"} commented on your reel: "${commentText.slice(0, 40)}"`, user.displayName);
+    }
   };
 
   const handleVideoUpload = async (e) => {
@@ -2134,13 +2361,16 @@ function ReelsPage({ user, setPage, setViewingUser }) {
         </div>
 
         {[
-          { icon: liked[reel.id] ? "❤️" : "🤍", count: reel.likes || 0, action: () => handleLike(reel) },
+          { icon: liked[reel.id] ? "❤️" : "🤍", count: reel.likes || 0, action: () => handleLike(reel), longPressAction: reel.userId === user?.uid ? () => loadLikes(reel.id) : null },
           { icon: "💬", count: reel.comments || 0, action: () => { setShowComments(true); loadComments(reel.id); } },
           { icon: "↗️", count: reel.shares || 0, action: () => handleShare(reel) },
         ].map((btn, i) => (
           <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
             <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 30, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.5))" }} onClick={btn.action}>{btn.icon}</button>
-            <span style={{ color: "white", fontSize: 12, fontWeight: 700 }}>{btn.count}</span>
+            <span style={{ color: "white", fontSize: 12, fontWeight: 700, textDecoration: btn.longPressAction ? "underline" : "none" }}
+              onClick={e => { e.stopPropagation(); if (btn.longPressAction) btn.longPressAction(); }}>
+              {btn.count}{btn.longPressAction ? " 👁" : ""}
+            </span>
           </div>
         ))}
 
@@ -2739,7 +2969,8 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontWeight: 800, fontSize: 18 }}>{user?.displayName || "User"}</span>
-              {profile?.verified && <VerifiedBadge size={18} />}
+              {profile?.premium && <PremiumBadge size={24} />}
+              {!profile?.premium && profile?.verified && <VerifiedBadge size={20} />}
               {profile?.premium && <svg width="16" height="16" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>}
             </div>
             <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8 }}>{user?.email}</div>
