@@ -39,6 +39,43 @@ const FONT = "'DM Sans', 'Nunito', sans-serif";
 const CATEGORIES = ["All", "Fashion", "Electronics", "Beauty", "Food", "Sports", "Home"];
 
 
+
+// ── Push Notification Helper ───────────────────────────────────
+const VAPID_PUBLIC_KEY = "BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDkBWine1tDo7J6i6bNG0Q0MhGMmkRZZ8oTBFcDQlrFA";
+
+async function registerPushNotifications() {
+  try {
+    if (!("Notification" in window)) return { success: false, reason: "not_supported" };
+    if (!("serviceWorker" in navigator)) return { success: false, reason: "no_sw" };
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") return { success: false, reason: "denied" };
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: VAPID_PUBLIC_KEY,
+      });
+    }
+    return { success: true, subscription: JSON.stringify(sub) };
+  } catch (err) {
+    console.error("Push registration error:", err);
+    return { success: false, reason: err.message };
+  }
+}
+
+async function showLocalNotification(title, body, icon) {
+  if (Notification.permission === "granted") {
+    const reg = await navigator.serviceWorker.ready;
+    reg.showNotification(title, {
+      body, icon: icon || "/icon-192.png",
+      badge: "/icon-192.png",
+      vibrate: [100, 50, 100],
+      data: { url: window.location.href },
+    });
+  }
+}
+
 // ── Verified Badge SVG ─────────────────────────────────────────
 const VerifiedBadge = ({ size = 16 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
@@ -68,7 +105,7 @@ const S = {
   divider: { height: 1, background: C.border, margin: "20px 0" },
   modal: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 },
   modalBox: { background: C.white, borderRadius: 18, padding: 28, maxWidth: 480, width: "100%", maxHeight: "90vh", overflowY: "auto" },
-  avatar: (size = 40) => ({ width: size, height: size, borderRadius: "50%", background: `${C.primary}20`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.45, flexShrink: 0 }),
+  avatar: (size = 40) => ({ width: size, height: size, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, overflow: "hidden", border: `1px solid ${C.border}` }),
   bottomNav: { position: "fixed", bottom: 0, left: 0, right: 0, background: C.white, borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-around", alignItems: "center", padding: "8px 0 12px", zIndex: 100 },
   bottomBtn: (active) => ({ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, background: "none", border: "none", cursor: "pointer", color: active ? C.primary : C.greyDark, fontFamily: FONT, fontSize: 10, fontWeight: active ? 700 : 500, padding: "4px 16px" }),
   alert: (type) => ({ background: type === "success" ? "rgba(49,162,76,0.1)" : "rgba(250,62,62,0.1)", border: `1px solid ${type === "success" ? C.success : C.error}`, borderRadius: 10, padding: "10px 14px", fontSize: 13, color: type === "success" ? C.success : C.error, marginBottom: 12 }),
@@ -95,7 +132,7 @@ function Auth({ setUser }) {
         await setDoc(doc(db, "users", res.user.uid), {
           name: form.name, email: form.email, phone: form.phone,
           role: adminEmails.includes(form.email) ? "admin" : "user",
-          followers: 0, following: 0, createdAt: serverTimestamp(),
+          followers: 0, following: 0, createdAt: serverTimestamp()
         });
         setUser(res.user);
       }
@@ -109,7 +146,7 @@ function Auth({ setUser }) {
     <div style={{ minHeight: "100vh", background: `linear-gradient(135deg, ${C.primary}15, ${C.offWhite})`, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <div style={{ ...S.card, padding: 32, maxWidth: 420, width: "100%" }}>
         <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ height: 80, width: "auto", objectFit: "contain", marginBottom: 4 }} />
+          <div style={{ fontWeight: 900, fontSize: 32, color: C.primary, marginBottom: 4 }}>E-Connect</div>
           <div style={{ color: C.greyDark, fontSize: 13 }}>Social Commerce for African Businesses</div>
         </div>
         <div style={{ display: "flex", background: C.grey, borderRadius: 10, padding: 4, marginBottom: 24 }}>
@@ -238,19 +275,7 @@ function AddProductModal({ user, onClose, onAdded }) {
 function StoriesBar({ user }) {
   const [stories, setStories] = useState([]);
   const [viewingStory, setViewingStory] = useState(null);
-  const [viewingIndex, setViewingIndex] = useState(0);
   const [uploading, setUploading] = useState(false);
-  const [showUploadModal, setShowUploadModal] = useState(false);
-  const [selectedFile, setSelectedFile] = useState(null);
-  const [selectedFileType, setSelectedFileType] = useState("image");
-  const [previewUrl, setPreviewUrl] = useState("");
-  const [songUrl, setSongUrl] = useState("");
-  const [songName, setSongName] = useState("");
-  const [progress, setProgress] = useState(0);
-  const progressRef = useRef(null);
-  const audioRef = useRef(null);
-  const videoRef = useRef(null);
-  const STORY_DURATION = 5000;
 
   const fetchStories = async () => {
     const snap = await getDocs(collection(db, "stories"));
@@ -265,285 +290,69 @@ function StoriesBar({ user }) {
 
   useEffect(() => { fetchStories(); }, []);
 
-  // Auto-advance story progress
-  useEffect(() => {
-    if (!viewingStory) { setProgress(0); return; }
-    if (viewingStory.mediaType === "video") return; // video controls its own progress
-    setProgress(0);
-    const start = Date.now();
-    progressRef.current = setInterval(() => {
-      const elapsed = Date.now() - start;
-      const pct = Math.min((elapsed / STORY_DURATION) * 100, 100);
-      setProgress(pct);
-      if (pct >= 100) {
-        clearInterval(progressRef.current);
-        goNextStory();
-      }
-    }, 50);
-    return () => clearInterval(progressRef.current);
-  }, [viewingStory, viewingIndex]);
-
-  const goNextStory = () => {
-    if (viewingIndex < stories.length - 1) {
-      setViewingIndex(i => i + 1);
-      setViewingStory(stories[viewingIndex + 1]);
-    } else {
-      closeStory();
-    }
-  };
-
-  const goPrevStory = () => {
-    if (viewingIndex > 0) {
-      setViewingIndex(i => i - 1);
-      setViewingStory(stories[viewingIndex - 1]);
-    }
-  };
-
-  const closeStory = () => {
-    clearInterval(progressRef.current);
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-    setViewingStory(null);
-    setViewingIndex(0);
-    setProgress(0);
-  };
-
-  const openStory = (s, idx) => {
-    setViewingStory(s);
-    setViewingIndex(idx);
-    if (s.songUrl) {
-      const audio = new Audio(s.songUrl);
-      audio.loop = true;
-      audio.play().catch(() => {});
-      audioRef.current = audio;
-    }
-  };
-
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const isVideo = file.type.startsWith("video/");
-    if (isVideo) {
-      // Check duration
-      const url = URL.createObjectURL(file);
-      const vid = document.createElement("video");
-      vid.src = url;
-      vid.onloadedmetadata = () => {
-        if (vid.duration > 60) {
-          alert("Video must be 1 minute or less.");
-          return;
-        }
-        setSelectedFile(file);
-        setSelectedFileType("video");
-        setPreviewUrl(url);
-        setShowUploadModal(true);
-      };
-    } else {
-      setSelectedFile(file);
-      setSelectedFileType("image");
-      setPreviewUrl(URL.createObjectURL(file));
-      setShowUploadModal(true);
-    }
-  };
-
-  const handleSongSelect = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setSongUrl(URL.createObjectURL(file));
-    setSongName(file.name.replace(/\.[^/.]+$/, ""));
-  };
-
-  const handleUpload = async () => {
-    if (!selectedFile) return;
+  const handleStoryUpload = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
     setUploading(true);
     try {
-      const isVideo = selectedFileType === "video";
       const data = new FormData();
-      data.append("file", selectedFile);
-      data.append("upload_preset", "Econnect");
-      data.append("cloud_name", "dxmmsq0gq");
-      const endpoint = isVideo
-        ? "https://api.cloudinary.com/v1_1/dxmmsq0gq/video/upload"
-        : "https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload";
-      const res = await fetch(endpoint, { method: "POST", body: data });
+      data.append("file", file); data.append("upload_preset", "Econnect"); data.append("cloud_name", "dxmmsq0gq");
+      const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
       const result = await res.json();
-
-      let uploadedSongUrl = "";
-      if (songUrl && songUrl.startsWith("blob:")) {
-        const songFile = document.getElementById("songInput").files[0];
-        if (songFile) {
-          const sData = new FormData();
-          sData.append("file", songFile);
-          sData.append("upload_preset", "Econnect");
-          sData.append("cloud_name", "dxmmsq0gq");
-          const sRes = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/raw/upload", { method: "POST", body: sData });
-          const sResult = await sRes.json();
-          uploadedSongUrl = sResult.secure_url || "";
-        }
-      }
-
-      // Get thumbnail for preview circle
-      const thumbnail = isVideo
-        ? result.secure_url.replace("/upload/", "/upload/so_0,w_200,h_200,c_fill/").replace(".mp4", ".jpg")
-        : result.secure_url;
-
       await addDoc(collection(db, "stories"), {
-        mediaUrl: result.secure_url,
-        imageUrl: thumbnail,
-        mediaType: isVideo ? "video" : "image",
-        userName: user?.displayName || "User",
-        userId: user?.uid,
-        userPhoto: user?.photoURL || "",
-        songUrl: uploadedSongUrl,
-        songName: songName || "",
-        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-        createdAt: serverTimestamp(),
+        imageUrl: result.secure_url, userName: user?.displayName || "User",
+        userId: user?.uid, userPhoto: user?.photoURL || "",
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), createdAt: serverTimestamp(),
       });
-      setShowUploadModal(false);
-      setSelectedFile(null);
-      setPreviewUrl("");
-      setSongUrl("");
-      setSongName("");
       fetchStories();
-    } catch (err) { console.error(err); alert("Upload failed. Try again."); }
+    } catch (err) { console.error(err); }
     setUploading(false);
   };
 
   return (
-    <>
-      <div style={{ ...S.card, padding: "14px 16px", marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
-          {/* Add Story Button */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
-            onClick={() => document.getElementById("storyFileInput").click()}>
-            <div style={{ width: 58, height: 58, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `2px dashed ${C.primary}` }}>
-              {uploading ? <span style={{ fontSize: 11, color: C.primary, fontWeight: 700 }}>...</span> : <span style={{ fontSize: 26 }}>+</span>}
-            </div>
-            <span style={{ fontSize: 10, color: C.greyDark, fontWeight: 600 }}>Add Story</span>
-            <input id="storyFileInput" type="file" accept="image/*,video/*" style={{ display: "none" }} onChange={handleFileSelect} />
+    <div style={{ ...S.card, padding: "14px 16px", marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 14, overflowX: "auto", paddingBottom: 4 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
+          onClick={() => document.getElementById("storyUploadInput").click()}>
+          <div style={{ width: 58, height: 58, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `2px dashed ${C.primary}` }}>
+            {uploading ? <span style={{ fontSize: 11, color: C.primary, fontWeight: 700 }}>...</span> : <span style={{ fontSize: 26 }}>+</span>}
           </div>
-
-          {/* Story Thumbnails */}
-          {stories.map((s, idx) => (
-            <div key={s.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
-              onClick={() => openStory(s, idx)}>
-              <div style={{ width: 58, height: 58, borderRadius: "50%", background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, padding: 2.5, position: "relative" }}>
-                <div style={{ width: "100%", height: "100%", borderRadius: "50%", overflow: "hidden", background: C.grey }}>
-                  {s.imageUrl
-                    ? <img src={s.imageUrl} alt={s.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
-                </div>
-                {s.mediaType === "video" && (
-                  <div style={{ position: "absolute", bottom: 0, right: 0, background: "rgba(0,0,0,0.7)", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <span style={{ fontSize: 8, color: "white" }}>▶</span>
-                  </div>
-                )}
-              </div>
-              <span style={{ fontSize: 10, color: C.text, fontWeight: 600, textAlign: "center", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.userName}</span>
-            </div>
-          ))}
-          {stories.length === 0 && <div style={{ display: "flex", alignItems: "center", color: C.greyDark, fontSize: 13, paddingLeft: 8 }}>No stories yet. Be the first!</div>}
+          <span style={{ fontSize: 10, color: C.greyDark, fontWeight: 600 }}>Add Story</span>
+          <input id="storyUploadInput" type="file" accept="image/*" style={{ display: "none" }} onChange={handleStoryUpload} />
         </div>
+        {stories.map(s => (
+          <div key={s.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
+            onClick={() => setViewingStory(s)}>
+            <div style={{ width: 58, height: 58, borderRadius: "50%", background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, padding: 2.5 }}>
+              <div style={{ width: "100%", height: "100%", borderRadius: "50%", overflow: "hidden", background: C.white }}>
+                {s.userPhoto ? <img src={s.userPhoto} alt={s.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
+              </div>
+            </div>
+            <span style={{ fontSize: 10, color: C.text, fontWeight: 600, textAlign: "center", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.userName}</span>
+          </div>
+        ))}
+        {stories.length === 0 && <div style={{ display: "flex", alignItems: "center", color: C.greyDark, fontSize: 13, paddingLeft: 8 }}>No stories yet. Be the first!</div>}
       </div>
-
-      {/* Upload Modal */}
-      {showUploadModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <div style={{ background: C.white, borderRadius: 18, padding: 24, maxWidth: 400, width: "100%" }}>
-            <h3 style={{ fontWeight: 800, fontSize: 18, marginBottom: 16 }}>Post Story</h3>
-            {previewUrl && (
-              <div style={{ borderRadius: 12, overflow: "hidden", marginBottom: 16, height: 200, background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {selectedFileType === "video"
-                  ? <video src={previewUrl} style={{ width: "100%", height: "100%", objectFit: "contain" }} controls />
-                  : <img src={previewUrl} alt="preview" style={{ width: "100%", height: "100%", objectFit: "contain" }} />}
-              </div>
-            )}
-            <div style={{ marginBottom: 14 }}>
-              <label style={S.label}>🎵 Add a song (optional)</label>
-              <input id="songInput" type="file" accept="audio/*" style={{ display: "none" }} onChange={handleSongSelect} />
-              <button style={{ ...S.btn("outline"), width: "100%", padding: "10px" }} onClick={() => document.getElementById("songInput").click()}>
-                {songName ? `🎵 ${songName}` : "Choose a song from your device"}
-              </button>
-            </div>
-            <div style={{ display: "flex", gap: 10 }}>
-              <button style={{ ...S.btn(), flex: 1, opacity: uploading ? 0.7 : 1 }} onClick={handleUpload} disabled={uploading}>
-                {uploading ? "Uploading..." : "Post Story"}
-              </button>
-              <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => { setShowUploadModal(false); setPreviewUrl(""); setSelectedFile(null); setSongUrl(""); setSongName(""); }}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Full Screen Story Viewer */}
       {viewingStory && (
-        <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, display: "flex", flexDirection: "column" }}>
-          {/* Progress bars */}
-          <div style={{ display: "flex", gap: 3, padding: "12px 12px 0", position: "absolute", top: 0, left: 0, right: 0, zIndex: 10 }}>
-            {stories.map((_, i) => (
-              <div key={i} style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.3)", borderRadius: 2, overflow: "hidden" }}>
-                <div style={{
-                  height: "100%", borderRadius: 2, background: "white",
-                  width: i < viewingIndex ? "100%" : i === viewingIndex ? `${progress}%` : "0%",
-                  transition: i === viewingIndex ? "none" : "none"
-                }} />
-              </div>
-            ))}
-          </div>
-
-          {/* User info */}
-          <div style={{ position: "absolute", top: 28, left: 0, right: 0, zIndex: 10, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 16px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ width: 40, height: 40, borderRadius: "50%", overflow: "hidden", border: "2px solid white" }}>
-                {viewingStory.imageUrl
-                  ? <img src={viewingStory.imageUrl} alt={viewingStory.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  : <div style={{ height: "100%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>👤</div>}
+        <div style={{ ...S.modal, zIndex: 400 }} onClick={() => setViewingStory(null)}>
+          <div style={{ background: C.secondary, borderRadius: 18, width: 300, height: 480, position: "relative", overflow: "hidden" }}>
+            <img src={viewingStory.imageUrl} alt="story" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "rgba(255,255,255,0.3)" }}>
+              <div style={{ height: "100%", width: "100%", background: C.white }} />
+            </div>
+            <div style={{ position: "absolute", top: 16, left: 16, display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ width: 36, height: 36, borderRadius: "50%", overflow: "hidden", background: C.white }}>
+                {viewingStory.userPhoto ? <img src={viewingStory.userPhoto} alt={viewingStory.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>👤</div>}
               </div>
               <div>
-                <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{viewingStory.userName}</div>
-                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>24hrs</div>
+                <div style={{ color: "white", fontWeight: 700, fontSize: 13 }}>{viewingStory.userName}</div>
+                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 10 }}>Expires in 24hrs</div>
               </div>
             </div>
-            <button style={{ background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={closeStory}>✕</button>
+            <button style={{ position: "absolute", top: 16, right: 16, background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 30, height: 30, cursor: "pointer", fontSize: 14, fontWeight: 700 }} onClick={() => setViewingStory(null)}>X</button>
           </div>
-
-          {/* Media content */}
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}
-            onClick={(e) => {
-              const x = e.clientX;
-              const w = window.innerWidth;
-              if (x < w / 3) goPrevStory();
-              else if (x > (w * 2) / 3) goNextStory();
-            }}>
-            {viewingStory.mediaType === "video"
-              ? <video
-                  ref={videoRef}
-                  src={viewingStory.mediaUrl || viewingStory.imageUrl}
-                  style={{ width: "100%", height: "100vh", objectFit: "contain" }}
-                  autoPlay
-                  playsInline
-                  onEnded={goNextStory}
-                  onTimeUpdate={(e) => {
-                    const pct = (e.target.currentTime / e.target.duration) * 100;
-                    setProgress(pct);
-                  }}
-                />
-              : <img src={viewingStory.mediaUrl || viewingStory.imageUrl} alt="story" style={{ width: "100%", height: "100vh", objectFit: "contain" }} />}
-          </div>
-
-          {/* Song info */}
-          {viewingStory.songName && (
-            <div style={{ position: "absolute", bottom: 30, left: 16, right: 16, zIndex: 10, display: "flex", alignItems: "center", gap: 8, background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "8px 14px" }}>
-              <span style={{ fontSize: 16 }}>🎵</span>
-              <span style={{ color: "white", fontSize: 13, fontWeight: 600 }}>{viewingStory.songName}</span>
-            </div>
-          )}
-
-          {/* Tap hints */}
-          <div style={{ position: "absolute", top: "50%", left: 0, width: "33%", height: "40%", transform: "translateY(-50%)", zIndex: 9 }} onClick={goPrevStory} />
-          <div style={{ position: "absolute", top: "50%", right: 0, width: "33%", height: "40%", transform: "translateY(-50%)", zIndex: 9 }} onClick={goNextStory} />
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -669,7 +478,7 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
 
   useEffect(() => {
     getDocs(collection(db, "users")).then(snap => setSellers(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.isSeller && s.city)));
-    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted)));
+    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted && p.sellerCity)));
   }, []);
 
   const detectLocation = () => {
@@ -776,7 +585,7 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
       {tab === "products" && (
         filteredProducts.length === 0 ? (
           <div style={{ textAlign: "center", padding: 40 }}>
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
             <div style={{ fontWeight: 700, marginBottom: 8 }}>No products found {cityFilter ? `in ${cityFilter}` : ""}</div>
           </div>
         ) : (
@@ -784,7 +593,7 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
             {filteredProducts.map(p => (
               <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
                 <div style={{ height: 130, background: C.grey, overflow: "hidden" }}>
-                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>📦</div>}
                 </div>
                 <div style={{ padding: 10 }}>
                   <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
@@ -930,7 +739,7 @@ function OrderTrackingPage({ user }) {
         ) : (
           sellerOrders.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60 }}>
-              <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+              <div style={{ fontSize: 56, marginBottom: 12 }}>📦</div>
               <div style={{ fontWeight: 700, marginBottom: 8 }}>No customer orders yet</div>
               <div style={{ color: C.greyDark, fontSize: 13 }}>Orders from customers will appear here.</div>
             </div>
@@ -1017,24 +826,6 @@ function OrderTrackingPage({ user }) {
 function NotificationsPage({ user }) {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [notifPermission, setNotifPermission] = useState(
-    "Notification" in window ? Notification.permission : "denied"
-  );
-
-  const requestNotifPermission = async () => {
-    if (!("Notification" in window)) { alert("Your browser does not support notifications."); return; }
-    const result = await Notification.requestPermission();
-    setNotifPermission(result);
-    if (result === "granted" && "serviceWorker" in navigator) {
-      navigator.serviceWorker.ready.then(reg => {
-        reg.showNotification("E-Connect 🔔", {
-          body: "Notifications enabled! You will now receive updates.",
-          icon: "https://res.cloudinary.com/dxmmsq0gq/image/upload/w_192,h_192,c_fill/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg",
-          vibrate: [200, 100, 200],
-        });
-      });
-    }
-  };
 
   useEffect(() => {
     if (!user) return;
@@ -1046,7 +837,7 @@ function NotificationsPage({ user }) {
     const unsub = onSnapshot(q, snap => {
       setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);
-    }, () => setLoading(false));
+    });
     return unsub;
   }, [user]);
 
@@ -1088,26 +879,6 @@ function NotificationsPage({ user }) {
         )}
       </div>
 
-      {/* Push Notification Permission Banner */}
-      {notifPermission !== "granted" && (
-        <div style={{ ...S.card, padding: 16, marginBottom: 16, background: `${C.primary}10`, border: `1px solid ${C.primary}30`, display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ fontSize: 32 }}>🔔</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 3 }}>Enable Push Notifications</div>
-            <div style={{ fontSize: 12, color: C.greyDark }}>Get notified about messages, orders, likes and follows even when the app is closed.</div>
-          </div>
-          <button style={{ ...S.btn(), padding: "8px 14px", fontSize: 12, whiteSpace: "nowrap" }} onClick={requestNotifPermission}>
-            Allow
-          </button>
-        </div>
-      )}
-      {notifPermission === "granted" && (
-        <div style={{ ...S.card, padding: 12, marginBottom: 16, background: "#e6faf8", display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 20 }}>✅</span>
-          <span style={{ fontSize: 13, fontWeight: 600, color: C.primary }}>Push notifications are enabled!</span>
-        </div>
-      )}
-
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading notifications...</div>
       ) : notifications.length === 0 ? (
@@ -1137,57 +908,6 @@ function NotificationsPage({ user }) {
   );
 }
 
-
-// ── Shop Hours Helper ───────────────────────────────────────────
-function getShopStatus(seller) {
-  if (!seller?.shopHoursEnabled) return { isOpen: true, label: "" };
-  const now = new Date();
-  const days = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-  const today = days[now.getDay()];
-  const shopDays = seller.shopDays || ["Mon","Tue","Wed","Thu","Fri"];
-  if (!shopDays.includes(today)) return { isOpen: false, label: `🔴 Closed today · Opens ${shopDays[0] || "Monday"}` };
-  const [openH, openM] = (seller.openTime || "08:00").split(":").map(Number);
-  const [closeH, closeM] = (seller.closeTime || "18:00").split(":").map(Number);
-  const nowMins = now.getHours() * 60 + now.getMinutes();
-  const openMins = openH * 60 + openM;
-  const closeMins = closeH * 60 + closeM;
-  if (nowMins < openMins) return { isOpen: false, label: `🔴 Closed · Opens at ${seller.openTime}` };
-  if (nowMins >= closeMins) return { isOpen: false, label: `🔴 Closed · Opens tomorrow at ${seller.openTime}` };
-  const minsLeft = closeMins - nowMins;
-  if (minsLeft <= 30) return { isOpen: true, label: `🟡 Closing soon · Closes at ${seller.closeTime}` };
-  return { isOpen: true, label: `🟢 Open · Closes at ${seller.closeTime}` };
-}
-
-
-// ── Product Image Placeholder ───────────────────────────────────
-function ProductPlaceholder({ name, category, size = "100%" }) {
-  const gradients = [
-    "linear-gradient(135deg, #00A896, #00D4B8)",
-    "linear-gradient(135deg, #F97316, #FB923C)",
-    "linear-gradient(135deg, #8B5CF6, #A78BFA)",
-    "linear-gradient(135deg, #EC4899, #F472B6)",
-    "linear-gradient(135deg, #0EA5E9, #38BDF8)",
-    "linear-gradient(135deg, #10B981, #34D399)",
-    "linear-gradient(135deg, #F59E0B, #FCD34D)",
-    "linear-gradient(135deg, #EF4444, #F87171)",
-  ];
-  const categoryIcons = {
-    "Fashion": "👗", "Food": "🍔", "Electronics": "📱", "Beauty": "💄",
-    "Sports": "⚽", "Home": "🏠", "Health": "💊", "Books": "📚",
-    "Toys": "🧸", "Jewelry": "💍", "Shoes": "👟", "Bags": "👜",
-  };
-  const letter = (name || "P").charAt(0).toUpperCase();
-  const gradient = gradients[letter.charCodeAt(0) % gradients.length];
-  const icon = categoryIcons[category] || null;
-  return (
-    <div style={{ width: size, height: "100%", background: gradient, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
-      {icon && <div style={{ fontSize: 28, opacity: 0.9 }}>{icon}</div>}
-      <div style={{ fontSize: icon ? 22 : 40, fontWeight: 900, color: "white", opacity: 0.95, textShadow: "0 2px 8px rgba(0,0,0,0.2)", letterSpacing: -1 }}>{letter}</div>
-      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.8)", fontWeight: 600, textAlign: "center", maxWidth: 80, lineHeight: 1.2 }}>{(name || "").slice(0, 20)}</div>
-    </div>
-  );
-}
-
 // ── Send Notification Helper ────────────────────────────────────
 async function sendNotification(toUserId, type, message, fromUserName) {
   if (!toUserId) return;
@@ -1196,20 +916,7 @@ async function sendNotification(toUserId, type, message, fromUserName) {
       toUserId, type, message, fromUserName: fromUserName || "",
       read: false, createdAt: serverTimestamp(),
     });
-    if ("Notification" in window && Notification.permission === "granted" && "serviceWorker" in navigator) {
-      const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", ad_approved: "⭐", premium: "⭐", review: "⭐" };
-      const icon = icons[type] || "🔔";
-      navigator.serviceWorker.ready.then(reg => {
-        reg.showNotification("E-Connect " + icon, {
-          body: message,
-          icon: "/icon-192.png",
-          badge: "/icon-192.png",
-          vibrate: [200, 100, 200],
-          tag: type,
-          renotify: true,
-        });
-      }).catch(() => {});
-    }
+    await showLocalNotification("E-Connect", message, "/icon-192.png");
   } catch (err) { console.error("Notification error:", err); }
 }
 
@@ -1324,7 +1031,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
             {filtered.filter(p => p.premium).slice(0, 4).map(p => (
               <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", border: `2px solid #FFD700` }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
                 <div style={{ height: 140, overflow: "hidden", background: C.grey, position: "relative" }}>
-                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 48 }}>📦</div>}
                   <div style={{ position: "absolute", top: 8, right: 8, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
                     Premium
@@ -1353,7 +1060,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
         <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading products...</div>
       ) : filtered.length === 0 ? (
         <div style={{ textAlign: "center", padding: 40 }}>
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>📦</div>
           <p style={{ color: C.greyDark }}>No products yet. Be the first to add one!</p>
         </div>
       ) : (
@@ -1361,7 +1068,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
           {filtered.map(p => (
             <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
               <div style={{ height: 140, overflow: "hidden", background: C.grey }}>
-                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => e.target.style.display = "none"} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => e.target.style.display = "none"} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 48 }}>📦</div>}
               </div>
               <div style={{ padding: 12 }}>
                 <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{p.name}</div>
@@ -1399,7 +1106,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
 }
 
 // ── Product Detail ─────────────────────────────────────────────
-function ProductDetail({ product, setCart, setPage, user, startChat }) {
+function ProductDetail({ product, setCart, setPage }) {
   const [review, setReview] = useState("");
   const [rating, setRating] = useState(5);
   const [reviews, setReviews] = useState([]);
@@ -1412,23 +1119,6 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
   }, [product]);
 
   if (!product) return null;
-
-  const [sellerData, setSellerData] = useState(null);
-
-  // Track product view & load seller data
-  useEffect(() => {
-    if (!product?.id || !product?.sellerId) return;
-    addDoc(collection(db, "productViews"), {
-      productId: product.id, sellerId: product.sellerId,
-      viewedAt: serverTimestamp(),
-    }).catch(() => {});
-    getDoc(doc(db, "users", product.sellerId)).then(d => {
-      if (d.exists()) setSellerData(d.data());
-    }).catch(() => {});
-  }, [product?.id]);
-
-  // Attach sellerData to product for rendering
-  const productWithSeller = { ...product, sellerData };
 
   const addToCart = () => {
     setCart(prev => { const ex = prev.find(i => i.id === product.id); if (ex) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i); return [...prev, { ...product, qty: 1 }]; });
@@ -1447,38 +1137,18 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
       <button style={{ ...S.btn("grey"), marginBottom: 16, color: C.text }} onClick={() => setPage("home")}>← Back</button>
       <div style={S.card}>
         <div style={{ height: 260, overflow: "hidden", borderRadius: "14px 14px 0 0", background: C.grey }}>
-          {product.image ? <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
+          {product.image ? <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 80 }}>📦</div>}
         </div>
         <div style={{ padding: 20 }}>
           <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 4 }}>{product.category}</div>
           <h2 style={{ fontWeight: 800, fontSize: 22, margin: "0 0 4px" }}>{product.name}</h2>
-          <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8 }}>By {product.seller}</div>
-          {productWithSeller.sellerData && (() => {
-            const status = getShopStatus(product.sellerData);
-            if (!status.label) return null;
-            return (
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: status.isOpen ? "#e6faf8" : "#FEE2E2", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 600, color: status.isOpen ? C.success : C.error, marginBottom: 12 }}>
-                {status.label}
-              </div>
-            );
-          })()}
-          {productWithSeller.sellerData && !getShopStatus(productWithSeller.sellerData).isOpen && (
-            <div style={{ background: "#FEE2E2", border: "1px solid #FECACA", borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 13, color: C.error, fontWeight: 600 }}>
-              ⚠️ This shop is currently closed. You can still add to cart but the seller may not respond until they reopen.
-            </div>
-          )}
+          <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 12 }}>By {product.seller}</div>
           <div style={{ color: C.primary, fontWeight: 800, fontSize: 28, marginBottom: 12 }}>GH₵{product.price}</div>
           {product.description && <p style={{ color: C.text, fontSize: 14, lineHeight: 1.6, marginBottom: 16 }}>{product.description}</p>}
           <div style={{ background: C.grey, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.greyDark }}>
             📦 {product.stock || 0} items in stock · 📞 Contact: +233 54 194 0967
           </div>
-          <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, marginBottom: 10 }} onClick={addToCart}>Add to Cart</button>
-          {product.sellerId && product.sellerId !== user?.uid && (
-            <button style={{ ...S.btn("outline"), width: "100%", padding: 14, fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-              onClick={() => startChat({ id: product.sellerId, name: product.seller, productName: product.name, productId: product.id })}>
-              💬 Chat with Seller
-            </button>
-          )}
+          <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15 }} onClick={addToCart}>Add to Cart</button>
         </div>
       </div>
 
@@ -1513,27 +1183,13 @@ function Cart({ cart, setCart, setPage, user }) {
 
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  const [sellerContacts, setSellerContacts] = useState([]);
-
-  useEffect(() => {
-    // Load seller MoMo numbers for items in cart
-    if (!cart.length) return;
-    const sellerIds = [...new Set(cart.map(i => i.sellerId).filter(Boolean))];
-    Promise.all(sellerIds.map(id => getDoc(doc(db, "users", id)))).then(docs => {
-      setSellerContacts(docs.filter(d => d.exists()).map(d => ({
-        id: d.id, name: d.data().businessName || d.data().name, contact: d.data().storeContact || d.data().phone || ""
-      })));
-    });
-  }, [cart]);
-
   const handleOrder = async () => {
     if (!form.name || !form.phone) return;
     setLoading(true);
     await addDoc(collection(db, "orders"), {
       items: cart, total, customerName: form.name, customerPhone: form.phone,
       address: form.address, delivery: form.delivery, userId: user?.uid || "guest",
-      status: "pending", paymentMethod: "momo",
-      createdAt: serverTimestamp()
+      status: "pending", createdAt: serverTimestamp()
     });
     setDone(true); setCart([]);
     setLoading(false);
@@ -1542,7 +1198,7 @@ function Cart({ cart, setCart, setPage, user }) {
 
   if (done) return (
     <div style={{ ...S.page, textAlign: "center", paddingTop: 80 }}>
-      <div style={{ width: 80, height: 80, borderRadius: "50%", background: `${C.success}15`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16, margin: "0 auto 16px" }}><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke={C.success} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>
+      <div style={{ fontSize: 80, marginBottom: 16 }}>✅</div>
       <h2 style={{ fontWeight: 800, fontSize: 24, color: C.success }}>Order Placed!</h2>
       <p style={{ color: C.greyDark }}>Your order has been saved. The seller will contact you at {form.phone}.</p>
       <p style={{ color: C.greyDark, fontSize: 13 }}>Support: +233 54 194 0967</p>
@@ -1555,7 +1211,7 @@ function Cart({ cart, setCart, setPage, user }) {
       <p style={S.sectionSub}>{cart.length} item{cart.length !== 1 ? "s" : ""}</p>
       {cart.length === 0 ? (
         <div style={{ textAlign: "center", padding: 60 }}>
-          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 16, opacity: 0.5 }}><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+          <div style={{ fontSize: 64, marginBottom: 16 }}>🛒</div>
           <p style={{ color: C.greyDark }}>Your cart is empty.</p>
           <button style={{ ...S.btn(), marginTop: 16 }} onClick={() => setPage("home")}>Browse Products</button>
         </div>
@@ -1564,7 +1220,7 @@ function Cart({ cart, setCart, setPage, user }) {
           {cart.map(item => (
             <div key={item.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
               <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
-                {item.image ? <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
+                {item.image ? <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>📦</div>}
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{item.name}</div>
@@ -1596,18 +1252,8 @@ function Cart({ cart, setCart, setPage, user }) {
               ))}
             </div>
             {form.delivery === "delivery" && <input style={{ ...S.input, marginBottom: 12 }} placeholder="Delivery address" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} />}
-            {/* Seller MoMo numbers */}
-            <div style={{ background: `${C.primary}10`, borderRadius: 10, padding: 12, marginBottom: 16 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>📞 Send MoMo payment to seller{sellerContacts.length > 1 ? "s" : ""}:</div>
-              {sellerContacts.length > 0 ? sellerContacts.map(s => (
-                <div key={s.id} style={{ fontSize: 13, marginBottom: 4, display: "flex", justifyContent: "space-between" }}>
-                  <span style={{ color: C.greyDark }}>{s.name}</span>
-                  <span style={{ fontWeight: 700, color: C.primary }}>{s.contact || "Contact seller directly"}</span>
-                </div>
-              )) : (
-                <div style={{ fontSize: 12, color: C.greyDark }}>Contact the seller directly for payment details.</div>
-              )}
-              <div style={{ fontSize: 11, color: C.greyDark, marginTop: 6 }}>Pay the seller after placing your order.</div>
+            <div style={{ background: `${C.primary}10`, borderRadius: 10, padding: 12, marginBottom: 16, fontSize: 13 }}>
+              📞 Payment contact: +233 54 194 0967
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button style={{ ...S.btn(), flex: 1, opacity: loading ? 0.7 : 1 }} onClick={handleOrder} disabled={loading}>{loading ? "Placing..." : "Place Order"}</button>
@@ -1621,313 +1267,6 @@ function Cart({ cart, setCart, setPage, user }) {
 }
 
 // ── TikTok-Style Reels Page ────────────────────────────────────
-
-// ── Live Selling Page ──────────────────────────────────────────
-function LivePage({ user, setPage, setCart }) {
-  const [liveStreams, setLiveStreams] = useState([]);
-  const [myStream, setMyStream] = useState(null);
-  const [viewing, setViewing] = useState(null);
-  const [showGoLive, setShowGoLive] = useState(false);
-  const [liveForm, setLiveForm] = useState({ title: "", description: "", products: [] });
-  const [myProducts, setMyProducts] = useState([]);
-  const [liveChat, setLiveChat] = useState([]);
-  const [chatMsg, setChatMsg] = useState("");
-  const [viewers, setViewers] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [streamEnded, setStreamEnded] = useState(false);
-  const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const chatEndRef = useRef(null);
-
-  useEffect(() => {
-    // Fetch active live streams
-    const q = query(collection(db, "liveStreams"), where("status", "==", "live"), orderBy("startedAt", "desc"));
-    const unsub = onSnapshot(q, snap => {
-      const streams = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setLiveStreams(streams);
-      // Check if current user has an active stream
-      const mine = streams.find(s => s.sellerId === user?.uid);
-      setMyStream(mine || null);
-    }, () => {});
-    return unsub;
-  }, [user]);
-
-  useEffect(() => {
-    if (!user) return;
-    getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid))).then(snap => {
-      setMyProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
-  }, [user]);
-
-  useEffect(() => {
-    if (!viewing) return;
-    const q = query(collection(db, "liveStreams", viewing.id, "chat"), orderBy("createdAt"));
-    const unsub = onSnapshot(q, snap => {
-      setLiveChat(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
-    });
-    // Track viewer count
-    const viewerRef = doc(db, "liveStreams", viewing.id, "viewers", user?.uid || "guest");
-    setDoc(viewerRef, { joinedAt: serverTimestamp() }, { merge: true });
-    const viewersUnsub = onSnapshot(collection(db, "liveStreams", viewing.id, "viewers"), snap => setViewers(snap.size));
-    // Check if stream ended
-    const streamUnsub = onSnapshot(doc(db, "liveStreams", viewing.id), snap => {
-      if (snap.data()?.status === "ended") setStreamEnded(true);
-    });
-    return () => { unsub(); viewersUnsub(); streamUnsub(); };
-  }, [viewing]);
-
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-    } catch (err) { alert("Camera access denied. Please allow camera to go live."); }
-  };
-
-  const goLive = async () => {
-    if (!liveForm.title) { alert("Please enter a title for your live."); return; }
-    setLoading(true);
-    const streamDoc = await addDoc(collection(db, "liveStreams"), {
-      title: liveForm.title, description: liveForm.description,
-      sellerId: user.uid, sellerName: user.displayName,
-      sellerPhoto: user.photoURL || "",
-      products: liveForm.products,
-      status: "live", viewerCount: 0,
-      startedAt: serverTimestamp(),
-    });
-    await sendNotification(user.uid, "premium", `🔴 You are now LIVE! Share your link to get viewers.`, "E-Connect");
-    setMyStream({ id: streamDoc.id, ...liveForm, sellerId: user.uid, sellerName: user.displayName, status: "live" });
-    setShowGoLive(false);
-    setLoading(false);
-    startCamera();
-  };
-
-  const endStream = async () => {
-    if (!myStream) return;
-    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
-    await setDoc(doc(db, "liveStreams", myStream.id), { status: "ended", endedAt: serverTimestamp() }, { merge: true });
-    setMyStream(null);
-  };
-
-  const sendChat = async () => {
-    if (!chatMsg.trim() || !viewing) return;
-    await addDoc(collection(db, "liveStreams", viewing.id, "chat"), {
-      text: chatMsg, userId: user?.uid, userName: user?.displayName || "Guest",
-      createdAt: serverTimestamp(),
-    });
-    setChatMsg("");
-  };
-
-  const buyFromLive = (product) => {
-    setCart(prev => {
-      const ex = prev.find(i => i.id === product.id);
-      if (ex) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i);
-      return [...prev, { ...product, qty: 1 }];
-    });
-    alert(`✅ "${product.name}" added to cart!`);
-  };
-
-  // Viewing a live stream
-  if (viewing) return (
-    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, display: "flex", flexDirection: "column" }}>
-      {streamEnded ? (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "white" }}>
-          <div style={{ width: 60, height: 60, borderRadius: "50%", background: "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="23" y1="1" x2="1" y2="23"/></svg></div>
-          <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 8 }}>Live Ended</div>
-          <div style={{ color: "rgba(255,255,255,0.6)", marginBottom: 24 }}>This live stream has ended.</div>
-          <button style={{ ...S.btn(), padding: "12px 28px" }} onClick={() => { setViewing(null); setStreamEnded(false); }}>Back to Lives</button>
-        </div>
-      ) : (
-        <>
-          {/* Live video placeholder */}
-          <div style={{ flex: 1, position: "relative", background: "#111", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.4) 0%, transparent 30%, transparent 60%, rgba(0,0,0,0.7) 100%)" }} />
-
-            {/* Placeholder visual */}
-            <div style={{ textAlign: "center", color: "white", zIndex: 1 }}>
-              <div style={{ width: 80, height: 80, borderRadius: "50%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px", fontSize: 36 }}>
-                {viewing.sellerPhoto ? <img src={viewing.sellerPhoto} style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} /> : "🎥"}
-              </div>
-              <div style={{ fontWeight: 700, fontSize: 16 }}>{viewing.sellerName}</div>
-              <div style={{ fontSize: 13, opacity: 0.7, marginTop: 4 }}>is live</div>
-            </div>
-
-            {/* Top bar */}
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "16px 16px 0", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ background: C.error, borderRadius: 6, padding: "3px 8px", fontSize: 11, fontWeight: 800, color: "white" }}>🔴 LIVE</div>
-                <div style={{ background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "4px 10px", fontSize: 12, color: "white" }}>👁️ {viewers}</div>
-              </div>
-              <button style={{ background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 18 }} onClick={() => { setViewing(null); setStreamEnded(false); }}>✕</button>
-            </div>
-
-            {/* Seller info */}
-            <div style={{ position: "absolute", bottom: 180, left: 16, right: 80, zIndex: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: "white", marginBottom: 2 }}>{viewing.sellerName}</div>
-              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.8)" }}>{viewing.title}</div>
-            </div>
-
-            {/* Products for sale */}
-            {viewing.products?.length > 0 && (
-              <div style={{ position: "absolute", bottom: 180, right: 8, display: "flex", flexDirection: "column", gap: 8, zIndex: 10 }}>
-                {viewing.products.slice(0, 3).map(p => (
-                  <div key={p.id} style={{ background: "rgba(0,0,0,0.7)", borderRadius: 10, padding: 8, width: 70, cursor: "pointer" }} onClick={() => buyFromLive(p)}>
-                    <div style={{ width: 54, height: 54, borderRadius: 8, overflow: "hidden", background: C.grey, marginBottom: 4 }}>
-                      {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
-                    </div>
-                    <div style={{ fontSize: 9, color: "white", fontWeight: 700, lineHeight: 1.2, marginBottom: 2 }}>{p.name?.slice(0, 12)}</div>
-                    <div style={{ fontSize: 10, color: C.accent, fontWeight: 800 }}>GH₵{p.price}</div>
-                    <div style={{ fontSize: 9, color: "white", background: C.primary, borderRadius: 4, padding: "2px 4px", textAlign: "center", marginTop: 2 }}>Buy</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Live Chat */}
-          <div style={{ height: 180, background: "#111", display: "flex", flexDirection: "column" }}>
-            <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
-              {liveChat.map(msg => (
-                <div key={msg.id} style={{ fontSize: 13, color: "white" }}>
-                  <span style={{ fontWeight: 700, color: C.primary }}>{msg.userName}: </span>
-                  <span style={{ color: "rgba(255,255,255,0.85)" }}>{msg.text}</span>
-                </div>
-              ))}
-              <div ref={chatEndRef} />
-            </div>
-            <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
-              <input style={{ ...S.input, flex: 1, background: "rgba(255,255,255,0.1)", color: "white", border: "none", fontSize: 13 }} placeholder="Say something..." value={chatMsg} onChange={e => setChatMsg(e.target.value)} onKeyDown={e => e.key === "Enter" && sendChat()} />
-              <button style={{ ...S.btn(), padding: "8px 16px" }} onClick={sendChat}>Send</button>
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  );
-
-  // My active live stream view
-  if (myStream) return (
-    <div style={S.page}>
-      <div style={{ ...S.card, padding: 20, background: "linear-gradient(135deg, #FF0000, #CC0000)", color: "white", marginBottom: 16, textAlign: "center" }}>
-        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>🔴 YOU ARE LIVE</div>
-        <div style={{ fontSize: 20, fontWeight: 900, marginBottom: 8 }}>{myStream.title}</div>
-        <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 16 }}>Share your link so viewers can join!</div>
-        <div style={{ background: "rgba(255,255,255,0.2)", borderRadius: 10, padding: "10px 14px", fontSize: 12, marginBottom: 12, wordBreak: "break-all" }}>
-          {window.location.origin}
-        </div>
-        <video ref={videoRef} autoPlay muted playsInline style={{ width: "100%", borderRadius: 12, marginBottom: 12, background: "#000", maxHeight: 200, objectFit: "cover" }} />
-        <button style={{ background: "white", color: C.error, border: "none", borderRadius: 10, padding: "12px 32px", fontWeight: 800, fontSize: 15, cursor: "pointer", width: "100%" }} onClick={endStream}>
-          End Live Stream
-        </button>
-      </div>
-
-      {/* Live products */}
-      <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 10 }}>Products in this live</div>
-      {myStream.products?.map(p => (
-        <div key={p.id} style={{ ...S.card, padding: 12, display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-          <div style={{ width: 48, height: 48, borderRadius: 8, overflow: "hidden", background: C.grey }}>
-            {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700 }}>{p.name}</div>
-            <div style={{ color: C.primary, fontWeight: 800 }}>GH₵{p.price}</div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-
-  return (
-    <div style={S.page}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <div style={S.sectionTitle}>🔴 Live Selling</div>
-        <button style={{ ...S.btn(), padding: "8px 16px", fontSize: 13 }} onClick={() => setShowGoLive(true)}>Go Live</button>
-      </div>
-      <p style={{ ...S.sectionSub, marginBottom: 20 }}>Watch sellers, ask questions, buy instantly</p>
-
-      {liveStreams.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 60 }}>
-          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 16, opacity: 0.5 }}><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>
-          <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>No Live Streams</div>
-          <div style={{ color: C.greyDark, fontSize: 14, marginBottom: 24 }}>Nobody is live right now. Be the first to go live!</div>
-          <button style={{ ...S.btn(), padding: "12px 28px" }} onClick={() => setShowGoLive(true)}>🎥 Start Live Selling</button>
-        </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          {liveStreams.map(stream => (
-            <div key={stream.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => setViewing(stream)}>
-              <div style={{ height: 110, background: "linear-gradient(135deg, #1a1a2e, #16213e)", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-                <div style={{ width: 50, height: 50, borderRadius: "50%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>
-                  {stream.sellerPhoto ? <img src={stream.sellerPhoto} style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} /> : "🎥"}
-                </div>
-                <div style={{ position: "absolute", top: 8, left: 8, background: C.error, borderRadius: 6, padding: "2px 6px", fontSize: 10, fontWeight: 800, color: "white" }}>🔴 LIVE</div>
-                <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 10, padding: "2px 6px", fontSize: 10, color: "white" }}>👁️ {stream.viewerCount || 0}</div>
-              </div>
-              <div style={{ padding: "10px 12px" }}>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{stream.title}</div>
-                <div style={{ fontSize: 12, color: C.greyDark }}>{stream.sellerName}</div>
-                {stream.products?.length > 0 && <div style={{ fontSize: 11, color: C.primary, marginTop: 4 }}>🛒 {stream.products.length} products for sale</div>}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Go Live Modal */}
-      {showGoLive && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 500, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-          <div style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }}>
-            <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>🎥 Go Live</div>
-            <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 20 }}>Start selling live to your followers</div>
-
-            <label style={S.label}>Live Title *</label>
-            <input style={{ ...S.input, marginBottom: 12 }} placeholder="e.g. Weekend Fashion Sale!" value={liveForm.title} onChange={e => setLiveForm({ ...liveForm, title: e.target.value })} />
-
-            <label style={S.label}>Description (optional)</label>
-            <textarea style={{ ...S.input, marginBottom: 16, height: 70, resize: "vertical" }} placeholder="What will you be selling?" value={liveForm.description} onChange={e => setLiveForm({ ...liveForm, description: e.target.value })} />
-
-            <label style={S.label}>Select Products to Sell</label>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20, maxHeight: 200, overflowY: "auto" }}>
-              {myProducts.length === 0 ? (
-                <div style={{ color: C.greyDark, fontSize: 13, padding: 10 }}>No products found. Add products first.</div>
-              ) : myProducts.map(p => {
-                const selected = liveForm.products.find(x => x.id === p.id);
-                return (
-                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 10, border: `2px solid ${selected ? C.primary : C.border}`, background: selected ? `${C.primary}08` : "white", cursor: "pointer" }}
-                    onClick={() => setLiveForm(prev => ({ ...prev, products: selected ? prev.products.filter(x => x.id !== p.id) : [...prev.products, p] }))}>
-                    <div style={{ width: 40, height: 40, borderRadius: 8, overflow: "hidden", background: C.grey }}>
-                      {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
-                      <div style={{ fontSize: 12, color: C.primary, fontWeight: 700 }}>GH₵{p.price}</div>
-                    </div>
-                    <div style={{ width: 22, height: 22, borderRadius: "50%", border: `2px solid ${selected ? C.primary : C.border}`, background: selected ? C.primary : "white", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 13 }}>
-                      {selected ? "✓" : ""}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div style={{ background: "#FFF3CD", borderRadius: 10, padding: 12, fontSize: 12, color: "#856404", marginBottom: 20 }}>
-              ⚠️ Make sure you allow camera and microphone access when prompted.
-            </div>
-
-            <div style={{ display: "flex", gap: 10 }}>
-              <button style={{ ...S.btn(), flex: 1, opacity: loading ? 0.7 : 1 }} onClick={goLive} disabled={loading}>
-                {loading ? "Starting..." : "🔴 Go Live Now"}
-              </button>
-              <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowGoLive(false)}>Cancel</button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ReelsPage({ user }) {
   const [reels, setReels] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -2022,10 +1361,10 @@ function ReelsPage({ user }) {
     setUploading(false);
   };
 
-  if (loading) return <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.offWhite, color: C.primary, fontSize: 16, fontFamily: FONT, fontWeight: 700 }}>Loading Reels...</div>;
+  if (loading) return (<div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#000", color: "white", fontSize: 16, fontFamily: FONT }}>Loading Reels...</div>);
 
   if (reels.length === 0) return (
-    <div style={{ height: "100vh", background: C.offWhite, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.text, fontFamily: FONT }}>
+    <div style={{ height: "100vh", background: "#000", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "white", fontFamily: FONT }}>
       <div style={{ fontSize: 64, marginBottom: 16 }}>🎬</div>
       <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>No Reels Yet</div>
       <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 13, marginBottom: 24 }}>Be the first to upload!</div>
@@ -2063,7 +1402,7 @@ function ReelsPage({ user }) {
 
       {/* Top */}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ height: 28, width: "auto", objectFit: "contain", filter: "brightness(0) invert(1)" }} />
+        <div style={{ fontWeight: 900, fontSize: 22, color: "white" }}>E-Connect</div>
         <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
           {reel.category && <span style={{ background: "rgba(255,255,255,0.2)", backdropFilter: "blur(4px)", borderRadius: 20, padding: "4px 12px", fontSize: 12, color: "white", fontWeight: 600 }}>{reel.category}</span>}
           <button style={{ background: "rgba(255,255,255,0.2)", border: "none", borderRadius: "50%", width: 36, height: 36, cursor: "pointer", color: "white", fontSize: 20, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowUpload(true)}>+</button>
@@ -2091,14 +1430,41 @@ function ReelsPage({ user }) {
           </div>
         ))}
 
+        {reel.userId === user?.uid && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+            <button style={{ background: "rgba(239,68,68,0.3)", border: "none", borderRadius: "50%", width: 44, height: 44, cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}
+              onClick={async () => {
+                const confirm = window.confirm("Delete this reel? This cannot be undone.");
+                if (!confirm) return;
+                await setDoc(doc(db, "reels", reel.id), { deleted: true }, { merge: true });
+                setReels(prev => prev.filter(r => r.id !== reel.id));
+                if (currentIndex >= reels.length - 1) setCurrentIndex(Math.max(0, currentIndex - 1));
+              }}>
+              🗑️
+            </button>
+            <span style={{ color: "rgba(255,255,255,0.7)", fontSize: 10, fontWeight: 700 }}>Delete</span>
+          </div>
+        )}
+
         <button style={{ background: "rgba(255,255,255,0.15)", backdropFilter: "blur(4px)", border: "none", borderRadius: "50%", width: 44, height: 44, cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}
           onClick={() => setMuted(!muted)}>{muted ? "🔇" : "🔊"}</button>
       </div>
 
       {/* Bottom Info */}
       <div style={{ position: "absolute", bottom: 90, left: 16, right: 80 }}>
-        <div style={{ color: "white", fontWeight: 700, fontSize: 15, marginBottom: 6 }}>@{reel.userName}</div>
-        <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 13, lineHeight: 1.5 }}>{reel.description}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <div style={{ width: 32, height: 32, borderRadius: "50%", overflow: "hidden", border: "2px solid rgba(255,255,255,0.6)", background: "#333", flexShrink: 0 }}>
+            {reel.userPhoto
+              ? <img src={reel.userPhoto} alt={reel.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" style={{ margin: 7 }}><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+            }
+          </div>
+          <div>
+            <div style={{ color: "white", fontWeight: 800, fontSize: 14 }}>@{reel.userName}</div>
+            {reel.category && <span style={{ background: "rgba(255,255,255,0.2)", borderRadius: 20, padding: "2px 8px", fontSize: 10, color: "white", fontWeight: 600 }}>{reel.category}</span>}
+          </div>
+        </div>
+        <div style={{ color: "rgba(255,255,255,0.9)", fontSize: 13, lineHeight: 1.5, textShadow: "0 1px 3px rgba(0,0,0,0.5)" }}>{reel.description}</div>
       </div>
 
       {/* Scroll dots */}
@@ -2173,65 +1539,22 @@ function ReelsPage({ user }) {
 }
 
 // ── Messages ───────────────────────────────────────────────────
-function Messages({ user, chatSeller, onChatStarted }) {
+function Messages({ user }) {
   const [conversations, setConversations] = useState([]);
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
   const [newMsg, setNewMsg] = useState("");
   const [newChat, setNewChat] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState("");
-  const [loadingChat, setLoadingChat] = useState(false);
 
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, "conversations"), where("participants", "array-contains", user.uid));
     const unsub = onSnapshot(q, snap => {
-      const convos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setConversations(convos);
-      // Auto-open chat with seller if coming from product page
-      if (chatSeller && !loadingChat) {
-        setLoadingChat(true);
-        const existing = convos.find(c => c.participants?.includes(chatSeller.id) && c.participants?.includes(user.uid));
-        if (existing) {
-          setSelected(existing);
-          if (chatSeller.productName && !existing.lastMessage) {
-            // Send automatic first message
-            addDoc(collection(db, "conversations", existing.id, "messages"), {
-              text: `Hi! I have a question about "${chatSeller.productName}". Is it still available?`,
-              senderId: user.uid, senderName: user.displayName, createdAt: serverTimestamp(),
-            });
-            setDoc(doc(db, "conversations", existing.id), { lastMessage: `Hi! I have a question about "${chatSeller.productName}".`, lastMessageAt: serverTimestamp() }, { merge: true });
-          }
-          onChatStarted && onChatStarted();
-        } else {
-          startSellerChat(chatSeller, convos);
-        }
-      }
+      setConversations(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
     return unsub;
-  }, [user, chatSeller]);
-
-  const startSellerChat = async (seller, existingConvos) => {
-    const existing = existingConvos?.find(c => c.participants?.includes(seller.id));
-    if (existing) { setSelected(existing); onChatStarted && onChatStarted(); return; }
-    const convoRef = await addDoc(collection(db, "conversations"), {
-      participants: [user.uid, seller.id],
-      participantNames: [user.displayName, seller.name],
-      lastMessage: seller.productName ? `Hi! About "${seller.productName}"` : "Hello!",
-      lastMessageAt: serverTimestamp(),
-      productId: seller.productId || null,
-      productName: seller.productName || null,
-    });
-    const firstMsg = seller.productName
-      ? `Hi! I have a question about "${seller.productName}". Is it still available?`
-      : "Hello!";
-    await addDoc(collection(db, "conversations", convoRef.id, "messages"), {
-      text: firstMsg, senderId: user.uid, senderName: user.displayName, createdAt: serverTimestamp(),
-    });
-    await sendNotification(seller.id, "comment", `💬 ${user.displayName} wants to ask about "${seller.productName || "your product"}"`, user.displayName);
-    setSelected({ id: convoRef.id, participants: [user.uid, seller.id], participantNames: [user.displayName, seller.name], productName: seller.productName });
-    onChatStarted && onChatStarted();
-  };
+  }, [user]);
 
   useEffect(() => {
     if (!selected) return;
@@ -2260,12 +1583,14 @@ function Messages({ user, chatSeller, onChatStarted }) {
           </div>
           {conversations.length === 0 ? (
             <div style={{ textAlign: "center", padding: 60 }}>
-              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>💬</div>
               <p style={{ color: C.greyDark }}>No messages yet. Start a conversation!</p>
             </div>
           ) : conversations.map(c => (
             <div key={c.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, marginBottom: 8, cursor: "pointer" }} onClick={() => setSelected(c)}>
-              <div style={{ ...S.avatar(48), background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+              <div style={{ width: 48, height: 48, borderRadius: "50%", background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.8" strokeLinecap="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              </div>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 700 }}>{c.participantNames?.filter(n => n !== user.displayName).join(", ") || "Chat"}</div>
                 <div style={{ color: C.greyDark, fontSize: 13 }}>{c.lastMessage || "No messages yet"}</div>
@@ -2296,169 +1621,80 @@ function Messages({ user, chatSeller, onChatStarted }) {
   );
 }
 
-// ── Profile ────────────────────────────────────────────────────
 
-// ── Seller Analytics Dashboard ─────────────────────────────────
-function SellerAnalytics({ user }) {
-  const [products, setProducts] = useState([]);
-  const [orders, setOrders] = useState([]);
-  const [views, setViews] = useState({});
-  const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState("week");
+// ── Notification Settings Component ───────────────────────────
+function NotificationSettings({ user }) {
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [permStatus, setPermStatus] = useState(() => {
+    try { return Notification.permission || "default"; } catch(e) { return "default"; }
+  });
 
   useEffect(() => {
     if (!user) return;
-    Promise.all([
-      getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid))),
-      getDocs(query(collection(db, "orders"))),
-    ]).then(([prodSnap, orderSnap]) => {
-      const prods = prodSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const allOrders = orderSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const myOrders = allOrders.filter(o => o.items?.some(i => i.sellerId === user.uid));
-      setProducts(prods);
-      setOrders(myOrders);
-      setLoading(false);
+    getDoc(doc(db, "users", user.uid)).then(d => {
+      if (d.exists()) setPushEnabled(d.data().pushEnabled || false);
     });
-    // Track product views
-    const viewsRef = collection(db, "productViews");
-    getDocs(query(viewsRef, where("sellerId", "==", user.uid))).then(snap => {
-      const v = {};
-      snap.docs.forEach(d => { const data = d.data(); v[data.productId] = (v[data.productId] || 0) + 1; });
-      setViews(v);
-    }).catch(() => {});
+    setPermStatus(Notification.permission || "default");
   }, [user]);
 
-  const now = Date.now();
-  const periodMs = period === "week" ? 7 * 86400000 : period === "month" ? 30 * 86400000 : 365 * 86400000;
-  const filteredOrders = orders.filter(o => {
-    const t = o.createdAt?.toMillis ? o.createdAt.toMillis() : new Date(o.createdAt || 0).getTime();
-    return now - t < periodMs;
-  });
-
-  const totalRevenue = filteredOrders.reduce((s, o) => {
-    const mine = o.items?.filter(i => i.sellerId === user.uid) || [];
-    return s + mine.reduce((ss, i) => ss + (i.price * i.qty), 0);
-  }, 0);
-
-  const totalOrders = filteredOrders.length;
-  const totalViews = Object.values(views).reduce((s, v) => s + v, 0);
-  const conversionRate = totalViews > 0 ? ((totalOrders / totalViews) * 100).toFixed(1) : 0;
-
-  // Best selling products
-  const productSales = {};
-  orders.forEach(o => {
-    o.items?.filter(i => i.sellerId === user.uid).forEach(item => {
-      productSales[item.id] = (productSales[item.id] || 0) + (item.qty || 1);
-    });
-  });
-  const topProducts = products.sort((a, b) => (productSales[b.id] || 0) - (productSales[a.id] || 0)).slice(0, 5);
-
-  // Revenue by day (last 7 days)
-  const dailyRevenue = Array.from({ length: 7 }, (_, i) => {
-    const day = new Date(now - (6 - i) * 86400000);
-    const label = day.toLocaleDateString("en-GB", { weekday: "short" });
-    const dayRevenue = orders.filter(o => {
-      const t = o.createdAt?.toMillis ? o.createdAt.toMillis() : 0;
-      return Math.abs(t - day.getTime()) < 43200000;
-    }).reduce((s, o) => {
-      const mine = o.items?.filter(i => i.sellerId === user.uid) || [];
-      return s + mine.reduce((ss, i) => ss + (i.price * i.qty), 0);
-    }, 0);
-    return { label, value: dayRevenue };
-  });
-
-  const maxRevenue = Math.max(...dailyRevenue.map(d => d.value), 1);
-
-  if (loading) return <div style={{ textAlign: "center", padding: 60, color: C.greyDark }}>Loading analytics...</div>;
+  const handleToggle = async () => {
+    setLoading(true);
+    try {
+      if (!pushEnabled) {
+        const result = await registerPushNotifications();
+        if (result.success) {
+          await setDoc(doc(db, "users", user.uid), { pushEnabled: true, pushSubscription: result.subscription }, { merge: true });
+          setPushEnabled(true);
+          setPermStatus("granted");
+        } else if (result.reason === "denied") {
+          setPermStatus("denied");
+          alert("Notifications are blocked. Please go to your browser settings and allow notifications for E-Connect, then try again.");
+        }
+      } else {
+        await setDoc(doc(db, "users", user.uid), { pushEnabled: false }, { merge: true });
+        setPushEnabled(false);
+      }
+    } catch (err) { console.error(err); }
+    setLoading(false);
+  };
 
   return (
-    <div style={S.page}>
-      <div style={S.sectionTitle}>📊 Analytics</div>
-      <p style={S.sectionSub}>Your store performance</p>
-
-      {/* Period Filter */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
-        {["week", "month", "year"].map(p => (
-          <button key={p} style={{ ...S.btn(period === p ? "primary" : "grey"), padding: "8px 16px", textTransform: "capitalize", flex: 1 }} onClick={() => setPeriod(p)}>{p}</button>
-        ))}
-      </div>
-
-      {/* Stats Grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 20 }}>
-        {[
-          { label: "Revenue", value: `GH₵${totalRevenue.toFixed(2)}`, icon: "💰", color: C.primary },
-          { label: "Orders", value: totalOrders, icon: "🛒", color: C.success },
-          { label: "Product Views", value: totalViews, icon: "👁️", color: "#8B5CF6" },
-          { label: "Conversion", value: `${conversionRate}%`, icon: "📈", color: C.accent },
-        ].map((s, i) => (
-          <div key={i} style={{ ...S.card, padding: 16 }}>
-            <div style={{ fontSize: 28, marginBottom: 6 }}>{s.icon}</div>
-            <div style={{ fontWeight: 900, fontSize: 22, color: s.color }}>{s.value}</div>
-            <div style={{ fontSize: 12, color: C.greyDark }}>{s.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* Revenue Chart (7 days) */}
-      <div style={{ ...S.card, padding: 16, marginBottom: 20 }}>
-        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 16 }}>Revenue (Last 7 Days)</div>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 100 }}>
-          {dailyRevenue.map((d, i) => (
-            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-              <div style={{ width: "100%", background: d.value > 0 ? C.primary : C.grey, borderRadius: "4px 4px 0 0", height: `${Math.max((d.value / maxRevenue) * 80, d.value > 0 ? 8 : 4)}px`, transition: "height 0.3s" }} />
-              <span style={{ fontSize: 9, color: C.greyDark }}>{d.label}</span>
-            </div>
-          ))}
+    <div>
+      {permStatus === "denied" && (
+        <div style={{ ...S.alert("error"), marginBottom: 12, fontSize: 12 }}>
+          Notifications are blocked in your browser. Go to browser Settings → Site Settings → Notifications → Allow E-Connect.
         </div>
-      </div>
-
-      {/* Top Products */}
-      <div style={{ ...S.card, padding: 16, marginBottom: 20 }}>
-        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 12 }}>🏆 Top Products</div>
-        {topProducts.length === 0 ? (
-          <div style={{ color: C.greyDark, fontSize: 13 }}>No products yet.</div>
-        ) : topProducts.map((p, i) => (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: i < topProducts.length - 1 ? `1px solid ${C.border}` : "none" }}>
-            <div style={{ width: 36, height: 36, borderRadius: 8, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
-              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
+      )}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        {[
+          { label: "New Messages", desc: "Get notified when someone messages you" },
+          { label: "Likes and Comments", desc: "When someone likes your product or reel" },
+          { label: "New Followers", desc: "When someone follows you" },
+          { label: "Order Updates", desc: "Updates on your orders and sales" },
+          { label: "Ad Approvals", desc: "When your ad is approved or rejected" },
+        ].map((item, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>{item.label}</div>
+              <div style={{ fontSize: 11, color: C.greyDark }}>{item.desc}</div>
             </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
-              <div style={{ fontSize: 12, color: C.greyDark }}>GH₵{p.price} · {productSales[p.id] || 0} sold · {views[p.id] || 0} views</div>
+            <div
+              style={{ width: 44, height: 24, borderRadius: 12, background: pushEnabled ? C.primary : C.greyMid, cursor: loading ? "not-allowed" : "pointer", position: "relative", transition: "background 0.2s", flexShrink: 0 }}
+              onClick={loading ? undefined : handleToggle}>
+              <div style={{ position: "absolute", top: 2, left: pushEnabled ? 22 : 2, width: 20, height: 20, borderRadius: "50%", background: "white", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
             </div>
-            <div style={{ fontWeight: 800, color: C.primary, fontSize: 14 }}>#{i + 1}</div>
           </div>
         ))}
       </div>
-
-      {/* All Products Performance */}
-      <div style={{ ...S.card, padding: 16, marginBottom: 80 }}>
-        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 12 }}>All Products</div>
-        {products.length === 0 ? (
-          <div style={{ color: C.greyDark, fontSize: 13 }}>No products listed yet.</div>
-        ) : products.map((p, i) => (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: i < products.length - 1 ? `1px solid ${C.border}` : "none" }}>
-            <div style={{ width: 40, height: 40, borderRadius: 8, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
-              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
-              <div style={{ display: "flex", gap: 10, marginTop: 2 }}>
-                <span style={{ fontSize: 11, color: C.greyDark }}>👁️ {views[p.id] || 0} views</span>
-                <span style={{ fontSize: 11, color: C.success }}>🛒 {productSales[p.id] || 0} sold</span>
-                <span style={{ fontSize: 11, color: p.stock > 0 ? C.primary : C.error }}>📦 {p.stock || 0} left</span>
-              </div>
-            </div>
-            <div style={{ fontWeight: 800, color: C.primary, fontSize: 13 }}>GH₵{((productSales[p.id] || 0) * p.price).toFixed(0)}</div>
-          </div>
-        ))}
+      <div style={{ marginTop: 14, padding: "10px 14px", background: pushEnabled ? `${C.success}15` : C.grey, borderRadius: 10, fontSize: 12, color: pushEnabled ? C.success : C.greyDark, fontWeight: 600, textAlign: "center" }}>
+        {loading ? "Updating..." : pushEnabled ? "✅ Push notifications are ON" : "🔕 Push notifications are OFF"}
       </div>
     </div>
   );
 }
 
-
-// ── Wallet Page ────────────────────────────────────────────────
+// ── Profile ────────────────────────────────────────────────────
 function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [profile, setProfile] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -2470,33 +1706,20 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [friends, setFriends] = useState([]);
   const [showStore, setShowStore] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
-  const [storeForm, setStoreForm] = useState({ businessName: "", description: "", contact: "", logoUrl: "", city: "", adType: "image", adMediaUrl: "", adTitle: "", adDescription: "", adThumbnail: "", adUploading: false, openTime: "08:00", closeTime: "18:00", shopDays: ["Mon","Tue","Wed","Thu","Fri"], shopHoursEnabled: false });
+  const [storeForm, setStoreForm] = useState({ businessName: "", description: "", contact: "", logoUrl: "", city: "", adType: "image", adMediaUrl: "", adTitle: "", adDescription: "", adThumbnail: "", adUploading: false });
   const [storeSaved, setStoreSaved] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
 
   useEffect(() => {
     if (!user) return;
-    getDoc(doc(db, "users", user.uid)).then(d => {
-      if (d.exists()) {
-        const data = d.data();
-        setProfile(data);
-        setStoreForm(prev => ({ ...prev, businessName: data.businessName || "", description: data.storeDescription || "", contact: data.storeContact || "", logoUrl: data.logoUrl || "", openTime: data.openTime || "08:00", closeTime: data.closeTime || "18:00", shopDays: data.shopDays || ["Mon","Tue","Wed","Thu","Fri"], shopHoursEnabled: data.shopHoursEnabled || false }));
-        // Check premium expiry
-        if (data.premium && data.premiumExpiry) {
-          const expiry = data.premiumExpiry.toMillis ? data.premiumExpiry.toMillis() : new Date(data.premiumExpiry).getTime();
-          if (Date.now() > expiry) {
-            // Premium expired — revoke it
-            setDoc(doc(db, "users", user.uid), { premium: false, premiumExpiry: null }, { merge: true });
-            setIsPremium(false);
-          } else {
-            setIsPremium(true);
-          }
-        } else {
-          setIsPremium(data.premium || false);
-        }
-      }
-    });
+    getDoc(doc(db, "users", user.uid)).then(d => { if (d.exists()) {
+      const data = d.data();
+      setProfile(data);
+      setIsPremium(data.premium || false);
+      if (data.photoURL) setProfilePhoto(data.photoURL);
+      setStoreForm({ businessName: data.businessName || "", description: data.storeDescription || "", contact: data.storeContact || "", logoUrl: data.logoUrl || "", city: data.city || "", adType: "image", adMediaUrl: "", adTitle: "", adDescription: "", adThumbnail: "", adUploading: false });
+    } });
     getDocs(query(collection(db, "orders"), where("userId", "==", user.uid))).then(snap => setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid))).then(snap => setMyProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users", user.uid, "followers")).then(snap => setFollowers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
@@ -2505,25 +1728,12 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
   }, [user]);
 
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [profilePhoto, setProfilePhoto] = useState("");
+  const [profilePhoto, setProfilePhoto] = useState(user?.photoURL || "");
+  const [uploadSuccess, setUploadSuccess] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [editForm, setEditForm] = useState({ name: user?.displayName || "", phone: "", bio: "" });
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
-
-  // Load photo from Firestore first (most reliable on Android)
-  useEffect(() => {
-    if (!user?.uid) return;
-    getDoc(doc(db, "users", user.uid)).then(d => {
-      if (d.exists()) {
-        const photoURL = d.data().photoURL || user?.photoURL || "";
-        setProfilePhoto(photoURL);
-        setEditForm(prev => ({ ...prev, phone: d.data().phone || "", bio: d.data().bio || "" }));
-      } else {
-        setProfilePhoto(user?.photoURL || "");
-      }
-    });
-  }, [user?.uid]);
 
   const handleLogout = async () => { await signOut(auth); setUser(null); };
 
@@ -2547,6 +1757,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
     const file = e.target.files[0];
     if (!file) return;
     setUploadingPhoto(true);
+    setUploadSuccess(false);
     try {
       const data = new FormData();
       data.append("file", file);
@@ -2554,15 +1765,15 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
       data.append("cloud_name", "dxmmsq0gq");
       const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
       const result = await res.json();
-      if (!result.secure_url) throw new Error("Upload failed");
-      const photoURL = result.secure_url;
-      // 1. Update local state immediately so it shows right away
-      setProfilePhoto(photoURL);
-      // 2. Save to Firestore (most reliable across all devices)
-      await setDoc(doc(db, "users", user.uid), { photoURL }, { merge: true });
-      // 3. Update Firebase Auth profile (may be slow on Android but Firestore is source of truth)
-      try { await updateProfile(auth.currentUser, { photoURL }); } catch (e) { console.log("Auth update slow, Firestore saved"); }
-    } catch (err) { console.error(err); alert("Photo upload failed. Please try again."); }
+      if (result.secure_url) {
+        const url = result.secure_url;
+        setProfilePhoto(url);
+        try { await updateProfile(auth.currentUser, { photoURL: url }); } catch(e) { console.error(e); }
+        await setDoc(doc(db, "users", user.uid), { photoURL: url }, { merge: true });
+        setUploadSuccess(true);
+        setTimeout(() => setUploadSuccess(false), 3000);
+      }
+    } catch (err) { console.error("Photo upload error:", err); alert("Upload failed. Please try again."); }
     setUploadingPhoto(false);
   };
 
@@ -2571,14 +1782,25 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
       <div style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})`, height: 100, borderRadius: "0 0 20px 20px", marginBottom: -40 }} />
       <div style={{ ...S.card, margin: "0 0 16px", padding: "50px 20px 20px", position: "relative" }}>
         <div style={{ position: "absolute", top: -30, left: 20, cursor: "pointer" }} onClick={() => document.getElementById("profilePhotoInput").click()}>
-          <div style={{ width: 72, height: 72, borderRadius: "50%", background: C.white, border: `3px solid ${C.white}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, boxShadow: "0 2px 8px rgba(0,0,0,0.15)", overflow: "hidden", position: "relative" }}>
-            {profilePhoto ? <img src={profilePhoto} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span>👤</span>}
-            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(0,0,0,0.4)", padding: "4px 0", textAlign: "center", fontSize: 10, color: "white", fontWeight: 700 }}>
-              {uploadingPhoto ? "..." : "Edit"}
-            </div>
+          <div style={{ width: 72, height: 72, borderRadius: "50%", background: C.grey, border: `3px solid ${uploadSuccess ? C.success : C.white}`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.15)", overflow: "hidden", position: "relative", transition: "border 0.3s" }}>
+            {uploadingPhoto ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                <div style={{ width: 24, height: 24, border: `3px solid ${C.primary}`, borderTop: "3px solid transparent", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+                <span style={{ fontSize: 9, color: C.greyDark, fontWeight: 700 }}>Uploading</span>
+              </div>
+            ) : profilePhoto ? (
+              <img src={profilePhoto} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { e.target.style.display = "none"; }} />
+            ) : (
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+            )}
+            {!uploadingPhoto && (
+              <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: uploadSuccess ? C.success : "rgba(0,0,0,0.45)", padding: "4px 0", textAlign: "center", fontSize: 10, color: "white", fontWeight: 700, transition: "background 0.3s" }}>
+                {uploadSuccess ? "✓ Saved" : "Edit"}
+              </div>
+            )}
           </div>
         </div>
-        <input id="profilePhotoInput" type="file" accept="image/*" style={{ display: "none" }} onChange={handlePhotoUpload} />
+        <input id="profilePhotoInput" type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={handlePhotoUpload} />
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -2601,19 +1823,13 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             <button style={{ ...S.btn("grey"), padding: "8px 14px", fontSize: 12, color: C.error }} onClick={handleLogout}>Logout</button>
           </div>
         </div>
-        {/* Action Buttons - 2x2 grid */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
-          <button style={{ background: `linear-gradient(135deg, ${C.accent}, #FFA500)`, border: "none", borderRadius: 12, padding: "12px 10px", fontWeight: 800, fontSize: 13, color: "#333", cursor: "pointer", textAlign: "center" }}
+        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+          <button style={{ ...S.btn(), flex: 1, background: isPremium ? `linear-gradient(135deg, ${C.accent}, #FFA500)` : `linear-gradient(135deg, ${C.accent}, #FFA500)`, color: "#333", fontWeight: 800 }}
             onClick={() => !isPremium && setShowPremium(true)}>
-            ⭐ {isPremium
-              ? `Premium · Exp ${profile?.premiumExpiry ? new Date(profile.premiumExpiry?.toMillis ? profile.premiumExpiry.toMillis() : profile.premiumExpiry).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}`
-              : "Go Premium · GH₵20/mo"}
+            {isPremium ? "⭐ Premium Active" : "⭐ Go Premium · GH₵20/mo"}
           </button>
-          <button style={{ ...S.btn("outline"), padding: "12px 10px", fontSize: 13, fontWeight: 700, borderRadius: 12 }} onClick={() => setShowStore(true)}>
+          <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowStore(true)}>
             🏪 My Store
-          </button>
-          <button style={{ ...S.btn("outline"), padding: "12px 10px", fontSize: 13, fontWeight: 700, borderRadius: 12 }} onClick={() => setPage("analytics")}>
-            📊 Analytics
           </button>
         </div>
       </div>
@@ -2622,6 +1838,11 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
         {["orders", "products", "followers", "following", "friends"].map(t => (
           <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 14px", textTransform: "capitalize", whiteSpace: "nowrap", flexShrink: 0 }} onClick={() => setTab(t)}>{t}</button>
         ))}
+      </div>
+
+      <div style={{ ...S.card, padding: 20, marginBottom: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>🔔 Notification Settings</div>
+        <NotificationSettings user={user} />
       </div>
 
       <div style={{ ...S.card, padding: 20, marginBottom: 16 }}>
@@ -2663,7 +1884,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           {myProducts.map(p => (
             <div key={p.id} style={{ ...S.card, overflow: "hidden" }}>
               <div style={{ height: 120, background: C.grey, overflow: "hidden", position: "relative" }}>
-                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4 }}><div style={{ fontSize: 28 }}>📦</div><div style={{ fontSize: 10, color: C.greyDark }}>No photo</div></div>}
                 <button style={{ position: "absolute", top: 6, right: 6, background: C.white, border: "none", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", color: C.primary, boxShadow: "0 1px 4px rgba(0,0,0,0.15)" }}
                   onClick={() => setEditingProduct(p)}>
                   Edit
@@ -2684,7 +1905,9 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           {followers.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>No followers yet.</div> :
           followers.map(f => (
             <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={S.avatar(44)}>👤</div>
+              <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.border}`, flexShrink: 0 }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              </div>
               <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
             </div>
           ))}
@@ -2696,7 +1919,9 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           {following.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Not following anyone yet.</div> :
           following.map(f => (
             <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={S.avatar(44)}>👤</div>
+              <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.border}`, flexShrink: 0 }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              </div>
               <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
             </div>
           ))}
@@ -2708,7 +1933,9 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           {friends.length === 0 ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>No friends yet. Go to Discover to add friends!</div> :
           friends.map(f => (
             <div key={f.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={S.avatar(44)}>👤</div>
+              <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `1px solid ${C.border}`, flexShrink: 0 }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              </div>
               <div style={{ fontWeight: 600 }}>{f.name || "User"}</div>
             </div>
           ))}
@@ -2756,66 +1983,14 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             <label style={S.label}>Store Description</label>
             <textarea style={{ ...S.input, marginBottom: 12, height: 80, resize: "vertical" }} placeholder="What do you sell?" value={storeForm.description} onChange={e => setStoreForm({ ...storeForm, description: e.target.value })} />
             <label style={S.label}>Contact (Phone or WhatsApp)</label>
-            <input style={{ ...S.input, marginBottom: 16 }} placeholder="+233..." value={storeForm.contact} onChange={e => setStoreForm({ ...storeForm, contact: e.target.value })} />
-
-            {/* Shop Hours */}
-            <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16, marginBottom: 4 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>🕐 Shop Hours</div>
-                  <div style={{ fontSize: 12, color: C.greyDark }}>Show open/closed status to buyers</div>
-                </div>
-                <div style={{ width: 44, height: 24, borderRadius: 12, background: storeForm.shopHoursEnabled ? C.primary : C.grey, cursor: "pointer", position: "relative", transition: "background 0.2s" }}
-                  onClick={() => setStoreForm(prev => ({ ...prev, shopHoursEnabled: !prev.shopHoursEnabled }))}>
-                  <div style={{ position: "absolute", top: 2, left: storeForm.shopHoursEnabled ? 22 : 2, width: 20, height: 20, borderRadius: "50%", background: "white", transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.3)" }} />
-                </div>
-              </div>
-              {storeForm.shopHoursEnabled && (
-                <>
-                  <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
-                    <div style={{ flex: 1 }}>
-                      <label style={S.label}>Opens at</label>
-                      <input type="time" style={{ ...S.input }} value={storeForm.openTime} onChange={e => setStoreForm({ ...storeForm, openTime: e.target.value })} />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label style={S.label}>Closes at</label>
-                      <input type="time" style={{ ...S.input }} value={storeForm.closeTime} onChange={e => setStoreForm({ ...storeForm, closeTime: e.target.value })} />
-                    </div>
-                  </div>
-                  <label style={S.label}>Open Days</label>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
-                    {["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(day => (
-                      <button key={day} style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${storeForm.shopDays?.includes(day) ? C.primary : C.border}`, background: storeForm.shopDays?.includes(day) ? `${C.primary}15` : "white", color: storeForm.shopDays?.includes(day) ? C.primary : C.greyDark, fontWeight: 700, fontSize: 12, cursor: "pointer" }}
-                        onClick={() => {
-                          const days = storeForm.shopDays || [];
-                          setStoreForm(prev => ({ ...prev, shopDays: days.includes(day) ? days.filter(d => d !== day) : [...days, day] }));
-                        }}>{day}</button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
+            <input style={{ ...S.input, marginBottom: 12 }} placeholder="+233..." value={storeForm.contact} onChange={e => setStoreForm({ ...storeForm, contact: e.target.value })} />
             <label style={S.label}>City / Location</label>
             <select style={{ ...S.input, marginBottom: 16 }} value={storeForm.city} onChange={e => setStoreForm({ ...storeForm, city: e.target.value })}>
               <option value="">Select your city</option>
               {["Cape Coast","Accra","Kumasi","Takoradi","Tamale","Sunyani","Ho","Koforidua","Wa","Bolgatanga"].map(c => <option key={c} value={c}>{c}</option>)}
             </select>
 
-            {isPremium && profile?.premiumExpiry && (() => {
-    const expiry = profile.premiumExpiry?.toMillis ? profile.premiumExpiry.toMillis() : new Date(profile.premiumExpiry).getTime();
-    const daysLeft = Math.ceil((expiry - Date.now()) / (1000 * 60 * 60 * 24));
-    if (daysLeft <= 5) return (
-      <div style={{ ...S.card, padding: 14, marginBottom: 12, background: "#FFF3CD", border: "1px solid #FFD700", display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{ fontSize: 22 }}>⚠️</span>
-        <div>
-          <div style={{ fontWeight: 700, fontSize: 13 }}>Premium expiring soon!</div>
-          <div style={{ fontSize: 12, color: C.greyDark }}>{daysLeft <= 0 ? "Your premium has expired." : `Only ${daysLeft} day${daysLeft === 1 ? "" : "s"} left.`} Re-subscribe to keep your ⭐ badge.</div>
-        </div>
-      </div>
-    );
-    return null;
-  })()}
-  {isPremium && (
+            {isPremium && (
               <div style={{ background: "#FFF8E1", border: "2px solid #FFD700", borderRadius: 12, padding: 16, marginBottom: 16 }}>
                 <div style={{ fontWeight: 700, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
@@ -2938,10 +2113,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
               <button style={{ ...S.btn(), flex: 1 }} onClick={async () => {
-                await setDoc(doc(db, "users", user.uid), { businessName: storeForm.businessName, storeDescription: storeForm.description, storeContact: storeForm.contact, logoUrl: storeForm.logoUrl, isSeller: true, city: storeForm.city || "", openTime: storeForm.openTime, closeTime: storeForm.closeTime, shopDays: storeForm.shopDays, shopHoursEnabled: storeForm.shopHoursEnabled }, { merge: true });
-                // Also update all seller's products with shop hours so cards can show status
-                const myProdsSnap = await getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid)));
-                await Promise.all(myProdsSnap.docs.map(d => setDoc(doc(db, "products", d.id), { openTime: storeForm.openTime, closeTime: storeForm.closeTime, shopDays: storeForm.shopDays, shopHoursEnabled: storeForm.shopHoursEnabled }, { merge: true })));
+                await setDoc(doc(db, "users", user.uid), { businessName: storeForm.businessName, storeDescription: storeForm.description, storeContact: storeForm.contact, logoUrl: storeForm.logoUrl, isSeller: true, city: storeForm.city || "" }, { merge: true });
                 setStoreSaved(true); setTimeout(() => { setStoreSaved(false); setShowStore(false); }, 2000);
               }}>Save Store</button>
               <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowStore(false)}>Close</button>
@@ -2979,7 +2151,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             <div style={{ display: "flex", justifyContent: "center", marginBottom: 20 }}>
               <div style={{ position: "relative", cursor: "pointer" }} onClick={() => document.getElementById("editProfilePhoto").click()}>
                 <div style={{ width: 80, height: 80, borderRadius: "50%", overflow: "hidden", background: C.grey, border: `3px solid ${C.primary}` }}>
-                  {profilePhoto ? <img src={profilePhoto} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>👤</div>}
+                  {profilePhoto ? <img src={profilePhoto} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>}
                 </div>
                 <div style={{ position: "absolute", bottom: 0, right: 0, background: C.primary, borderRadius: "50%", width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" stroke="white" strokeWidth="2" strokeLinecap="round"/></svg>
@@ -3036,7 +2208,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {[
                   { label: "MoMo Number", value: "0541940967" },
-                  { label: "Account Name", value: "Ebenezer Boateng" },
+                  { label: "Account Name", value: "E-Connect GH" },
                   { label: "Amount", value: "GH₵20.00" },
                   { label: "Reference", value: "PREMIUM-SUB" },
                 ].map(item => (
@@ -3082,13 +2254,12 @@ function Admin() {
   const [users, setUsers] = useState([]);
   const [products, setProducts] = useState([]);
   const [ads, setAds] = useState([]);
-
   const [tab, setTab] = useState("overview");
 
   useEffect(() => {
     getDocs(collection(db, "orders")).then(snap => setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users")).then(snap => setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    getDocs(collection(db, "products")).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted)));
+    getDocs(collection(db, "products")).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "ads")).then(snap => setAds(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
   }, []);
 
@@ -3099,7 +2270,7 @@ function Admin() {
       <div style={S.sectionTitle}>Admin Dashboard</div>
       <p style={S.sectionSub}>Manage E-Connect platform</p>
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        {["overview", "orders", "users", "products", "ads", ].map(t => (
+        {["overview", "orders", "users", "products", "ads"].map(t => (
           <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 16px", textTransform: "capitalize", position: "relative" }} onClick={() => setTab(t)}>
             {t}
             {t === "ads" && ads.filter(a => a.status === "pending").length > 0 && (
@@ -3107,7 +2278,6 @@ function Admin() {
                 {ads.filter(a => a.status === "pending").length}
               </span>
             )}
-
           </button>
         ))}
       </div>
@@ -3138,14 +2308,7 @@ function Admin() {
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <button style={{ ...S.btn(u.premium ? "grey" : "primary"), padding: "6px 12px", fontSize: 11 }}
                 onClick={async () => {
-                  const newPremium = !u.premium;
-                  const expiry = newPremium ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) : null;
-                  await setDoc(doc(db, "users", u.id), { premium: newPremium, premiumExpiry: expiry }, { merge: true });
-                  if (newPremium) {
-                    await sendNotification(u.id, "premium", "🌟 Your Premium subscription is now active! It expires in 30 days.", "E-Connect");
-                  } else {
-                    await sendNotification(u.id, "premium", "Your Premium subscription has been removed.", "E-Connect");
-                  }
+                  await setDoc(doc(db, "users", u.id), { premium: !u.premium }, { merge: true });
                   setUsers(prev => prev.map(usr => usr.id === u.id ? { ...usr, premium: !usr.premium } : usr));
                 }}>
                 {u.premium ? "Remove Premium" : "⭐ Premium"}
@@ -3237,8 +2400,8 @@ function Discover({ setPage, setSelectedProduct, user }) {
   const [friends, setFriends] = useState({});
 
   useEffect(() => {
-    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted)));
-    getDocs(collection(db, "users")).then(snap => setSellers(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.isSeller && s.businessName)));
+    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(collection(db, "users")).then(snap => setSellers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     if (user) {
       getDocs(collection(db, "users", user.uid, "following")).then(snap => {
         const f = {}; snap.docs.forEach(d => f[d.id] = true); setFollowing(f);
@@ -3310,7 +2473,7 @@ function Discover({ setPage, setSelectedProduct, user }) {
                 {filteredProducts.filter(p => p.premium).map(p => (
                   <div key={"prem-" + p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", border: `2px solid #FFD700` }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
                     <div style={{ height: 120, background: C.grey, overflow: "hidden", position: "relative" }}>
-                      {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+                      {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 36 }}>📦</div>}
                       <div style={{ position: "absolute", top: 6, right: 6, background: "#FFD700", borderRadius: "50%", width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
                       </div>
@@ -3332,7 +2495,7 @@ function Discover({ setPage, setSelectedProduct, user }) {
           {filteredProducts.map(p => (
             <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
               <div style={{ height: 140, background: C.grey, overflow: "hidden" }}>
-                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 40 }}>📦</div>}
               </div>
               <div style={{ padding: 12 }}>
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
@@ -3404,9 +2567,7 @@ export default function App() {
   const [page, setPage] = useState("home");
   const [cart, setCart] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [chatSeller, setChatSeller] = useState(null);
-  const [currentUserPhoto, setCurrentUserPhoto] = useState("");
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifPrompt, setShowNotifPrompt] = useState(false);
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("econnect-theme");
     if (saved) return saved;
@@ -3420,14 +2581,11 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, u => {
+    const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setLoading(false);
-      if (u) {
-        getDoc(doc(db, "users", u.uid)).then(d => {
-          if (d.exists()) setCurrentUserPhoto(d.data().photoURL || u.photoURL || "");
-          else setCurrentUserPhoto(u.photoURL || "");
-        }).catch(() => setCurrentUserPhoto(u.photoURL || ""));
+      if (u && !localStorage.getItem("notif_prompt_shown")) {
+        setTimeout(() => setShowNotifPrompt(true), 1500);
       }
     });
     return unsub;
@@ -3441,48 +2599,20 @@ export default function App() {
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js"));
     }
-    // Request push notification permission
-    if ("Notification" in window && Notification.permission === "default") {
-      setTimeout(() => {
-        Notification.requestPermission().then(permission => {
-          console.log("Notification permission:", permission);
-        });
-      }, 3000);
-    }
   }, []);
 
-  const ADMIN_EMAILS = ["admin@econnect.gh", "asantegideon060@gmail.com", "selormatsubonuedie@gmail.com", "akowuahisaac686@gmail.com", "nyarkomatthew925491@gmail.com", "ebenezer.boateng009@stu.ucc.edu.gh"];
-  const isAdmin = ADMIN_EMAILS.includes(user?.email);
+  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, color: C.primary, fontSize: 20, fontWeight: 700 }}>Loading E-Connect...</div>;
+  if (!user) return <Auth setUser={setUser} />;
+
+  const isAdmin = ADMIN_EMAILS.includes(user.email);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, "notifications"), where("toUserId", "==", user.uid), where("read", "==", false));
     const unsub = onSnapshot(q, snap => setUnreadCount(snap.size));
-    // Listen for profile photo changes in Firestore
-    const userUnsub = onSnapshot(doc(db, "users", user.uid), snap => {
-      if (snap.exists() && snap.data().photoURL) setCurrentUserPhoto(snap.data().photoURL);
-    });
-    return () => { unsub(); userUnsub(); };
+    return unsub;
   }, [user]);
-
-  if (loading) return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, background: "linear-gradient(160deg, #e8faf8 0%, #ffffff 60%, #fff8ee 100%)", position: "relative", overflow: "hidden" }}>
-      {/* Background circles for depth */}
-      <div style={{ position: "absolute", top: -80, right: -80, width: 300, height: 300, borderRadius: "50%", background: `${C.primary}10` }} />
-      <div style={{ position: "absolute", bottom: -60, left: -60, width: 240, height: 240, borderRadius: "50%", background: `#F9731610` }} />
-      {/* Logo */}
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 20, zIndex: 1 }}>
-        <img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ width: 180, height: 180, objectFit: "contain", borderRadius: 32, boxShadow: "0 12px 40px rgba(0,168,150,0.2)" }} />
-        {/* Loading dots */}
-        <div style={{ display: "flex", gap: 8 }}>
-          {[0,1,2].map(i => (
-            <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: C.primary, opacity: 0.4 + i * 0.2 }} />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-  if (!user) return <Auth setUser={setUser} />;
 
   const NavIcon = ({ id, active }) => {
     const color = active ? C.primary : C.greyDark;
@@ -3503,25 +2633,52 @@ export default function App() {
     { id: "home", label: "Home" },
     { id: "discover", label: "Discover" },
     { id: "reels", label: "Reels" },
-    { id: "live", label: "Live" },
     { id: "orders", label: "Orders" },
     { id: "cart", label: "Cart", badge: cart.length },
+    { id: "location", label: "Nearby" },
   ];
 
+  if (showNotifPrompt) return (
+    <div style={{ minHeight: "100vh", background: C.offWhite, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: FONT }}>
+      <div style={{ ...S.card, padding: 32, maxWidth: 400, width: "100%", textAlign: "center" }}>
+        <div style={{ fontSize: 64, marginBottom: 16 }}>🔔</div>
+        <h2 style={{ fontWeight: 800, fontSize: 22, marginBottom: 8, color: C.text }}>Stay in the loop!</h2>
+        <p style={{ color: C.greyDark, fontSize: 14, lineHeight: 1.6, marginBottom: 24 }}>
+          E-Connect would like to send you notifications for new messages, orders, likes, follows and important updates. You can change this anytime in your Profile settings.
+        </p>
+        <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, marginBottom: 12 }}
+          onClick={async () => {
+            const result = await registerPushNotifications();
+            if (result.success && user) {
+              await setDoc(doc(db, "users", user.uid), { pushEnabled: true, pushSubscription: result.subscription }, { merge: true });
+            }
+            setShowNotifPrompt(false);
+            localStorage.setItem("notif_prompt_shown", "true");
+          }}>
+          🔔 Allow Notifications
+        </button>
+        <button style={{ ...S.btn("outline"), width: "100%", padding: 14, fontSize: 15 }}
+          onClick={() => { setShowNotifPrompt(false); localStorage.setItem("notif_prompt_shown", "true"); }}>
+          Not Now
+        </button>
+        <p style={{ color: C.greyDark, fontSize: 11, marginTop: 12 }}>You can change this anytime in Profile → Settings</p>
+      </div>
+    </div>
+  );
+
+  const ADMIN_EMAILS = ["admin@econnect.gh", "asantegideon060@gmail.com", "selormatsubonuedie@gmail.com", "akowuahisaac686@gmail.com", "nyarkomatthew925491@gmail.com", "ebenezer.boateng009@stu.ucc.edu.gh"];
   const renderPage = () => {
     switch (page) {
       case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} user={user} />;
-      case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
+      case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
       case "reels": return <ReelsPage user={user} />;
-      case "live": return <LivePage user={user} setPage={setPage} setCart={setCart} />;
       case "notifications": return <NotificationsPage user={user} />;
       case "orders": return <OrderTrackingPage user={user} />;
       case "location": return <LocationPage user={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
-      case "messages": return <Messages user={user} chatSeller={chatSeller} onChatStarted={() => setChatSeller(null)} />;
+      case "messages": return <Messages user={user} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
-      case "analytics": return <SellerAnalytics user={user} />;
       case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
     }
@@ -3530,11 +2687,12 @@ export default function App() {
   return (
     <div style={{ ...S.app, background: THEMES[theme]?.offWhite || C.offWhite, color: THEMES[theme]?.text || C.text, fontFamily: FONT }}>
       <nav style={S.nav}>
-        <div style={{ cursor: "pointer", display: "flex", alignItems: "center" }} onClick={() => setPage("home")}><img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ height: 36, width: "auto", objectFit: "contain" }} /></div>
+        <div style={S.logo} onClick={() => setPage("home")}>E-Connect</div>
         <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-          {isAdmin && <button style={{ ...S.btn("grey"), padding: "7px 12px", fontSize: 12, color: C.text }} onClick={() => setPage("admin")}>Admin</button>}
-          {/* Notifications */}
-          <button style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 6 }} onClick={() => setPage("notifications")}>
+          {isAdmin && <button style={{ ...S.btn("grey"), padding: "6px 10px", fontSize: 11, color: C.text }} onClick={() => setPage("admin")}>Admin</button>}
+
+          {/* Notifications Bell */}
+          <button style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 6, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setPage("notifications")}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={page === "notifications" ? C.primary : C.greyDark} strokeWidth="1.8" strokeLinecap="round">
               <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
               <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
@@ -3545,20 +2703,23 @@ export default function App() {
               </span>
             )}
           </button>
+
           {/* Messages */}
-          <button style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 6 }} onClick={() => setPage("messages")}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={page === "messages" ? C.primary : C.greyDark} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <button style={{ position: "relative", background: "none", border: "none", cursor: "pointer", padding: 6, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setPage("messages")}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={page === "messages" ? C.primary : C.greyDark} strokeWidth="1.8" strokeLinecap="round">
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
           </button>
-          {/* Profile with photo */}
-          <button onClick={() => setPage("profile")} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 1, padding: "2px 4px" }}>
-            <div style={{ width: 32, height: 32, borderRadius: "50%", overflow: "hidden", border: `2px solid ${page === "profile" ? C.primary : C.border}`, background: C.grey, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {currentUserPhoto
-                ? <img src={currentUserPhoto} alt="profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>}
+
+          {/* Profile */}
+          <button style={{ display: "flex", flexDirection: "column", alignItems: "center", background: "none", border: "none", cursor: "pointer", padding: "4px 6px", gap: 2 }} onClick={() => setPage("profile")}>
+            <div style={{ width: 32, height: 32, borderRadius: "50%", overflow: "hidden", background: C.grey, border: `2px solid ${page === "profile" ? C.primary : C.greyMid}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {user?.photoURL
+                ? <img src={user.photoURL} alt="Profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+              }
             </div>
-            <span style={{ fontSize: 9, fontWeight: 700, color: page === "profile" ? C.primary : C.greyDark }}>Profile</span>
+            <span style={{ fontSize: 9, fontWeight: 700, color: page === "profile" ? C.primary : C.greyDark, fontFamily: FONT }}>Profile</span>
           </button>
         </div>
       </nav>
