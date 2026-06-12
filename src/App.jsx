@@ -1281,6 +1281,7 @@ function PremiumCarousel({ products, setSelectedProduct, setPage }) {
   const [current, setCurrent] = useState(0);
   const [paused, setPaused] = useState(false);
   const timerRef = useRef(null);
+  const touchStartX = useRef(null);
 
   useEffect(() => {
     if (paused || products.length <= 1) return;
@@ -1291,42 +1292,71 @@ function PremiumCarousel({ products, setSelectedProduct, setPage }) {
   if (!products.length) return null;
   const p = products[current];
 
+  const handleTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; setPaused(true); };
+  const handleTouchEnd = (e) => {
+    if (touchStartX.current !== null) {
+      const diff = touchStartX.current - e.changedTouches[0].clientX;
+      if (Math.abs(diff) > 40) setCurrent(prev => diff > 0 ? (prev + 1) % products.length : (prev - 1 + products.length) % products.length);
+    }
+    touchStartX.current = null;
+    setPaused(false);
+  };
+
   return (
-    <div style={{ marginBottom: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <PremiumBadge size={20} />
-        <span style={{ fontWeight: 800, fontSize: 16 }}>Premium</span>
-        <span style={{ fontSize: 12, color: C.greyDark, marginLeft: 4 }}>{products.length} products</span>
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <PremiumBadge size={22} />
+        <span style={{ fontWeight: 900, fontSize: 17 }}>Premium Stores</span>
+        <span style={{ fontSize: 11, color: C.greyDark }}>{products.length} featured</span>
       </div>
-      <div style={{ ...S.card, overflow: "hidden", cursor: "pointer", border: "2.5px solid #FFD700", position: "relative" }}
+
+      {/* Large banner like MJ's Cuisine */}
+      <div style={{ borderRadius: 16, overflow: "hidden", cursor: "pointer", position: "relative", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
         onClick={() => { setSelectedProduct(p); setPage("product"); }}
-        onTouchStart={() => setPaused(true)}
-        onTouchEnd={() => setPaused(false)}>
-        <div style={{ height: 180, background: C.grey, position: "relative", overflow: "hidden" }}>
-          {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
-          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(transparent 40%, rgba(0,0,0,0.6) 100%)" }} />
-          <div style={{ position: "absolute", top: 10, left: 10, background: "#FFD700", borderRadius: 20, padding: "4px 12px", fontSize: 11, fontWeight: 800, color: "#333", display: "flex", alignItems: "center", gap: 5 }}>
-            <PremiumBadge size={12} /> Premium
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}>
+
+        {/* Big image */}
+        <div style={{ height: 220, background: C.grey, position: "relative", overflow: "hidden" }}>
+          {p.image
+            ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            : <ProductPlaceholder name={p.name} category={p.category} />}
+
+          {/* Dark gradient overlay */}
+          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.15) 0%, transparent 40%, rgba(0,0,0,0.75) 100%)" }} />
+
+          {/* Premium badge top left */}
+          <div style={{ position: "absolute", top: 12, left: 12, background: "#FFD700", borderRadius: 20, padding: "5px 14px", fontSize: 11, fontWeight: 800, color: "#333", display: "flex", alignItems: "center", gap: 5, boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }}>
+            <PremiumBadge size={13} /> Premium ⭐
           </div>
-          <div style={{ position: "absolute", bottom: 12, left: 12, right: 12 }}>
-            <div style={{ fontWeight: 800, fontSize: 17, color: "white", marginBottom: 2 }}>{p.name}</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.85)" }}>{p.seller}</span>
+
+          {/* Trending label top right */}
+          <div style={{ position: "absolute", top: 12, right: 12, background: "linear-gradient(135deg, #FF6B6B, #FF8E53)", borderRadius: 20, padding: "5px 12px", fontSize: 11, fontWeight: 800, color: "white" }}>
+            🔥 Trending
+          </div>
+
+          {/* Store + product info bottom */}
+          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "20px 16px 14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              <span style={{ color: "rgba(255,255,255,0.85)", fontSize: 13, fontWeight: 600 }}>{p.seller}</span>
               <PremiumBadge size={14} />
+            </div>
+            <div style={{ fontWeight: 900, fontSize: 20, color: "white", marginBottom: 2, textShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>{p.name}</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ color: "#FFD700", fontWeight: 900, fontSize: 20 }}>GH₵{p.price}</span>
+              <div style={{ background: C.primary, borderRadius: 20, padding: "6px 18px", color: "white", fontWeight: 700, fontSize: 13 }}>Shop Now</div>
             </div>
           </div>
         </div>
-        <div style={{ padding: "12px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ color: C.primary, fontWeight: 900, fontSize: 18 }}>GH₵{p.price}</span>
-          <span style={{ fontSize: 11, color: C.greyDark }}>{paused ? "👆 Hold to pause" : "Auto-scrolling"}</span>
-        </div>
-        {/* Dots */}
+
+        {/* Dot indicators */}
         {products.length > 1 && (
-          <div style={{ display: "flex", gap: 4, justifyContent: "center", paddingBottom: 10 }}>
+          <div style={{ background: "#111", padding: "8px 0", display: "flex", gap: 5, justifyContent: "center", alignItems: "center" }}>
             {products.map((_, i) => (
-              <div key={i} onClick={e => { e.stopPropagation(); setCurrent(i); }}
-                style={{ width: i === current ? 18 : 6, height: 6, borderRadius: 3, background: i === current ? "#FFD700" : C.grey, transition: "width 0.3s", cursor: "pointer" }} />
+              <div key={i} onClick={e => { e.stopPropagation(); setCurrent(i); setPaused(true); setTimeout(() => setPaused(false), 3000); }}
+                style={{ width: i === current ? 20 : 6, height: 6, borderRadius: 3, background: i === current ? "#FFD700" : "rgba(255,255,255,0.3)", transition: "all 0.3s", cursor: "pointer" }} />
             ))}
+            <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 10, marginLeft: 6 }}>{paused ? "⏸" : "▶"}</span>
           </div>
         )}
       </div>
@@ -1392,42 +1422,71 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
         ))}
       </div>
 
+      {/* ── TIER 1: PREMIUM (Large Banner) ── */}
       {filtered.some(p => p.sellerPremium) && (
         <PremiumCarousel products={filtered.filter(p => p.sellerPremium)} setSelectedProduct={setSelectedProduct} setPage={setPage} />
       )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <div>
-          <div style={S.sectionTitle}>Products</div>
-          <div style={{ fontSize: 13, color: C.greyDark }}>{filtered.length} products available</div>
+      {/* ── TIER 2: VERIFIED (Medium Cards horizontal scroll) ── */}
+      {filtered.some(p => p.sellerVerified && !p.sellerPremium) && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <VerifiedBadge size={18} />
+            <span style={{ fontWeight: 800, fontSize: 16 }}>Verified Stores</span>
+          </div>
+          <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8 }}>
+            {filtered.filter(p => p.sellerVerified && !p.sellerPremium).map(p => (
+              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", minWidth: 200, flexShrink: 0, border: `1.5px solid #1DA1F2` }}
+                onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+                <div style={{ height: 130, overflow: "hidden", background: C.grey, position: "relative" }}>
+                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+                  <div style={{ position: "absolute", top: 8, left: 8, background: "#1DA1F2", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "white", display: "flex", alignItems: "center", gap: 4 }}>
+                    <VerifiedBadge size={10} /> Verified
+                  </div>
+                </div>
+                <div style={{ padding: "10px 12px" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{p.name}</div>
+                  <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                    {p.seller} <VerifiedBadge size={12} />
+                  </div>
+                  <div style={{ color: C.primary, fontWeight: 800, fontSize: 15 }}>GH₵{p.price}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── TIER 3: NEW/TRENDING (Small Cards) ── */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <TrendingBadge />
+          <span style={{ fontWeight: 800, fontSize: 16 }}>Trending</span>
+          <span style={{ fontSize: 12, color: C.greyDark }}>{filtered.filter(p => !p.sellerPremium && !p.sellerVerified).length} products</span>
         </div>
         <button style={{ ...S.btn(), padding: "8px 14px", fontSize: 12 }} onClick={() => setShowAdd(true)}>+ Add Product</button>
       </div>
 
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading products...</div>
-      ) : filtered.length === 0 ? (
+      ) : filtered.filter(p => !p.sellerPremium && !p.sellerVerified).length === 0 ? (
         <div style={{ textAlign: "center", padding: 40 }}>
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
           <p style={{ color: C.greyDark }}>No products yet. Be the first to add one!</p>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
-          {filtered.map(p => (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+          {filtered.filter(p => !p.sellerPremium && !p.sellerVerified).map(p => (
             <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
-              <div style={{ height: 140, overflow: "hidden", background: C.grey }}>
+              <div style={{ height: 110, overflow: "hidden", background: C.grey, position: "relative" }}>
                 {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => e.target.style.display = "none"} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+                <div style={{ position: "absolute", top: 6, left: 6 }}><TrendingBadge /></div>
               </div>
-              <div style={{ padding: 12 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{p.name}</div>
-                <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 8, display: "flex", alignItems: "center", gap: 4 }}>
-                  {p.seller}
-                  {p.sellerPremium && <PremiumBadge size={16} />}
-                  {!p.sellerPremium && p.sellerVerified && <VerifiedBadge size={13} />}
-                  {!p.sellerPremium && !p.sellerVerified && p.isSeller && <TrendingBadge />}
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <span style={{ color: C.primary, fontWeight: 800, fontSize: 16 }}>GH₵{p.price}</span>
+              <div style={{ padding: 10 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{p.name}</div>
+                <div style={{ color: C.greyDark, fontSize: 11, marginBottom: 6 }}>{p.seller}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <span style={{ color: C.primary, fontWeight: 800, fontSize: 14 }}>GH₵{p.price}</span>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: C.greyDark, padding: 0 }}
                       onClick={async (e) => {
@@ -1443,7 +1502,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
                     </button>
                   </div>
                 </div>
-                <button style={{ ...S.btn(), width: "100%", padding: "8px" }} onClick={e => { e.stopPropagation(); addToCart(p); }}>Add to Cart</button>
+                <button style={{ ...S.btn(), width: "100%", padding: "7px", fontSize: 12 }} onClick={e => { e.stopPropagation(); addToCart(p); }}>Add to Cart</button>
               </div>
             </div>
           ))}
