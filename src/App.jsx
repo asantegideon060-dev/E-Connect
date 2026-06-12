@@ -1917,7 +1917,7 @@ function LivePage({ user, setPage, setCart }) {
       {floatingEmojis.map(e => (
         <div key={e.id} style={{ position: "absolute", bottom: 200, left: `${e.x}%`, fontSize: 32, animation: "none", zIndex: 20, pointerEvents: "none",
           transition: "all 2.5s ease-out", transform: "translateY(-120px)", opacity: 0 }}
-          ref={el => { if (el) { setTimeout(() => { el.style.transform = "translateY(-180px)"; el.style.opacity = "1"; }, 50); setTimeout(() => { el.style.opacity = "0"; }, 2000); }, 0 }}>
+          ref={el => { if (el) { setTimeout(() => { el.style.transform = "translateY(-180px)"; el.style.opacity = "1"; }, 50); setTimeout(() => { el.style.opacity = "0"; }, 2000); } }}>
           {e.emoji}
         </div>
       ))}
