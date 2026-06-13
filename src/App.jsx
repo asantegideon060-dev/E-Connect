@@ -3252,6 +3252,8 @@ function ProfileViewsPage({ user, setPage, setViewingPublicProfile }) {
 
 
 
+// ── Profile ────────────────────────────────────────────────────
+function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [profile, setProfile] = useState(null);
   const [orders, setOrders] = useState([]);
   const [tab, setTab] = useState("orders");
