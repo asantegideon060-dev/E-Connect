@@ -431,23 +431,42 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
     }
   };
 
+  const fetchWithTimeout = async (url, ms = 6000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      return res;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   const searchMusic = async (q) => {
     if (!q.trim()) return;
     setMusicSearching(true);
     setMusicError(null);
     setMusicResults([]);
-    const directUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=20`;
-    const attempts = [
-      directUrl,
-      `https://corsproxy.io/?${encodeURIComponent(directUrl)}`,
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(directUrl)}`,
-      `https://r.jina.ai/${directUrl}`,
+    const term = encodeURIComponent(q);
+    const directUrls = [
+      `https://itunes.apple.com/search?term=${term}&media=music&entity=song&limit=20&country=US`,
+      `https://itunes.apple.com/search?term=${term}&media=music&limit=20`,
     ];
+    const attempts = [];
+    for (const directUrl of directUrls) {
+      attempts.push(directUrl);
+      attempts.push(`https://corsproxy.io/?${encodeURIComponent(directUrl)}`);
+      attempts.push(`https://api.allorigins.win/raw?url=${encodeURIComponent(directUrl)}`);
+      attempts.push(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(directUrl)}`);
+      attempts.push(`https://thingproxy.freeboard.io/fetch/${directUrl}`);
+    }
     for (const url of attempts) {
       try {
-        const res = await fetch(url);
+        const res = await fetchWithTimeout(url, 6000);
         if (!res.ok) continue;
-        const data = await res.json();
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); } catch (e) { continue; }
         if (data.results && data.results.length > 0) {
           setMusicResults(data.results);
           setMusicSearching(false);
@@ -2827,9 +2846,27 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     if (diff < -60 && currentIndex > 0) setCurrentIndex(p => p - 1);
   };
 
+  const handleDeleteReel = async (reel) => {
+    if (!user || reel.userId !== user.uid) return;
+    if (!window.confirm("Delete this reel? This cannot be undone.")) return;
+    try {
+      await setDoc(doc(db, "reels", reel.id), { deleted: true, deletedAt: serverTimestamp() }, { merge: true });
+      setReels(prev => {
+        const updated = prev.filter(r => r.id !== reel.id);
+        // Adjust current index if needed so we don't go out of bounds
+        if (currentIndex >= updated.length && updated.length > 0) {
+          setCurrentIndex(updated.length - 1);
+        }
+        return updated;
+      });
+    } catch (err) {
+      console.error("Failed to delete reel:", err);
+      alert("Failed to delete reel. Please try again.");
+    }
+  };
+
   const handleLike = async (reel) => {
     if (!user) return;
-    const isLiked = liked[reel.id];
     setLiked(prev => ({ ...prev, [reel.id]: !isLiked }));
     setReels(prev => prev.map(r => r.id === reel.id ? { ...r, likes: (r.likes || 0) + (isLiked ? -1 : 1) } : r));
     // Save full user info permanently in reelLikes subcollection
@@ -3173,6 +3210,11 @@ function Messages({ user, chatSeller, onChatStarted }) {
   const recordTimerRef = useRef(null);
   const playingAudioRef = useRef(null);
   const [playingId, setPlayingId] = useState(null);
+  const [contextMenuMsg, setContextMenuMsg] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [forwardingMsg, setForwardingMsg] = useState(null);
+  const [copyToast, setCopyToast] = useState(false);
+  const longPressTimer = useRef(null);
 
   useEffect(() => {
     if (!user) return;
@@ -3261,15 +3303,67 @@ function Messages({ user, chatSeller, onChatStarted }) {
     if (!newMsg.trim() || !selected) return;
     const text = newMsg;
     setNewMsg("");
-    await addDoc(collection(db, "conversations", selected.id, "messages"), {
+    const msgData = {
       text, senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp()
-    });
+    };
+    if (replyingTo) {
+      msgData.replyTo = {
+        id: replyingTo.id,
+        text: replyingTo.type === "audio" ? "🎤 Voice message" : (replyingTo.text || ""),
+        senderName: replyingTo.senderId === user.uid ? "You" : (selected.participantNames?.find(n => n !== user.displayName) || "them"),
+      };
+      setReplyingTo(null);
+    }
+    await addDoc(collection(db, "conversations", selected.id, "messages"), msgData);
     await setDoc(doc(db, "conversations", selected.id), { lastMessage: text, lastMessageAt: serverTimestamp() }, { merge: true });
     // Notify the other participant
     const recipientId = selected.participants?.find(id => id !== user.uid);
     if (recipientId) {
       await sendNotification(recipientId, "message", `💬 ${user.displayName || "Someone"}: ${text.length > 40 ? text.slice(0, 40) + "…" : text}`, user.displayName, { fromUserId: user.uid, conversationId: selected.id });
     }
+  };
+
+  const copyMessage = (msg) => {
+    if (msg.type === "audio") return;
+    navigator.clipboard?.writeText(msg.text || "");
+    setCopyToast(true);
+    setTimeout(() => setCopyToast(false), 1500);
+    setContextMenuMsg(null);
+  };
+
+  const deleteMessage = async (msg) => {
+    if (!selected) return;
+    if (!window.confirm("Delete this message?")) return;
+    await setDoc(doc(db, "conversations", selected.id, "messages", msg.id), { deleted: true, text: "", audioUrl: null }, { merge: true });
+    setContextMenuMsg(null);
+  };
+
+  const startReply = (msg) => {
+    setReplyingTo(msg);
+    setContextMenuMsg(null);
+  };
+
+  const forwardMessage = async (targetConvo) => {
+    if (!forwardingMsg) return;
+    const msgData = {
+      senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp(),
+      forwarded: true,
+    };
+    if (forwardingMsg.type === "audio") {
+      msgData.type = "audio";
+      msgData.audioUrl = forwardingMsg.audioUrl;
+      msgData.audioDuration = forwardingMsg.audioDuration;
+    } else {
+      msgData.text = forwardingMsg.text || "";
+    }
+    await addDoc(collection(db, "conversations", targetConvo.id, "messages"), msgData);
+    await setDoc(doc(db, "conversations", targetConvo.id), { lastMessage: forwardingMsg.type === "audio" ? "🎤 Voice message (forwarded)" : forwardingMsg.text, lastMessageAt: serverTimestamp() }, { merge: true });
+    const recipientId = targetConvo.participants?.find(id => id !== user.uid);
+    if (recipientId) {
+      await sendNotification(recipientId, "message", `💬 ${user.displayName || "Someone"} forwarded a message`, user.displayName, { fromUserId: user.uid, conversationId: targetConvo.id });
+    }
+    setForwardingMsg(null);
+    setContextMenuMsg(null);
   };
 
   const startRecording = async () => {
@@ -3351,6 +3445,13 @@ function Messages({ user, chatSeller, onChatStarted }) {
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
+  const handlePressStart = (msg) => {
+    longPressTimer.current = setTimeout(() => setContextMenuMsg(msg), 450);
+  };
+  const handlePressEnd = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  };
+
   return (
     <div style={S.page}>
       <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
@@ -3390,23 +3491,59 @@ function Messages({ user, chatSeller, onChatStarted }) {
           <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
             {messages.map(m => (
               <div key={m.id} style={{ display: "flex", justifyContent: m.senderId === user.uid ? "flex-end" : "flex-start" }}>
-                {m.type === "audio" ? (
-                  <div style={{ background: m.senderId === user.uid ? C.primary : C.grey, color: m.senderId === user.uid ? "white" : C.text, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", display: "flex", alignItems: "center", gap: 10, minWidth: 160 }}>
-                    <button style={{ background: "rgba(255,255,255,0.25)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "inherit", fontSize: 14, flexShrink: 0 }}
-                      onClick={() => toggleAudioPlayback(m)}>
-                      {playingId === m.id ? "⏸" : "▶"}
-                    </button>
-                    <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.3)", borderRadius: 2, position: "relative" }}>
-                      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: playingId === m.id ? "100%" : "0%", background: "currentColor", borderRadius: 2, transition: playingId === m.id ? `width ${m.audioDuration || 1}s linear` : "none" }} />
+                {m.deleted ? (
+                  <div style={{ background: C.grey, color: C.greyDark, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", fontSize: 12, fontStyle: "italic" }}>🚫 This message was deleted</div>
+                ) : m.type === "audio" ? (
+                  <div style={{ background: m.senderId === user.uid ? C.primary : C.grey, color: m.senderId === user.uid ? "white" : C.text, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", userSelect: "none", cursor: "pointer" }}
+                    onMouseDown={() => handlePressStart(m)} onMouseUp={handlePressEnd} onMouseLeave={handlePressEnd}
+                    onTouchStart={() => handlePressStart(m)} onTouchEnd={handlePressEnd}>
+                    {m.forwarded && <div style={{ fontSize: 10, opacity: 0.7, marginBottom: 4, fontStyle: "italic" }}>↪ Forwarded</div>}
+                    {m.replyTo && (
+                      <div style={{ background: "rgba(255,255,255,0.15)", borderLeft: "3px solid currentColor", borderRadius: 6, padding: "4px 8px", marginBottom: 6, fontSize: 11, opacity: 0.85 }}>
+                        <div style={{ fontWeight: 700 }}>{m.replyTo.senderName}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.replyTo.text}</div>
+                      </div>
+                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 160 }}>
+                      <button style={{ background: "rgba(255,255,255,0.25)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "inherit", fontSize: 14, flexShrink: 0 }}
+                        onClick={(e) => { e.stopPropagation(); toggleAudioPlayback(m); }}>
+                        {playingId === m.id ? "⏸" : "▶"}
+                      </button>
+                      <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.3)", borderRadius: 2, position: "relative" }}>
+                        <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: playingId === m.id ? "100%" : "0%", background: "currentColor", borderRadius: 2, transition: playingId === m.id ? `width ${m.audioDuration || 1}s linear` : "none" }} />
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 600, flexShrink: 0 }}>🎤 {formatDuration(m.audioDuration || 0)}</span>
                     </div>
-                    <span style={{ fontSize: 11, fontWeight: 600, flexShrink: 0 }}>🎤 {formatDuration(m.audioDuration || 0)}</span>
                   </div>
                 ) : (
-                  <div style={{ background: m.senderId === user.uid ? C.primary : C.grey, color: m.senderId === user.uid ? "white" : C.text, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", fontSize: 13 }}>{m.text}</div>
+                  <div style={{ background: m.senderId === user.uid ? C.primary : C.grey, color: m.senderId === user.uid ? "white" : C.text, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", fontSize: 13, userSelect: "none", cursor: "pointer" }}
+                    onMouseDown={() => handlePressStart(m)} onMouseUp={handlePressEnd} onMouseLeave={handlePressEnd}
+                    onTouchStart={() => handlePressStart(m)} onTouchEnd={handlePressEnd}>
+                    {m.forwarded && <div style={{ fontSize: 10, opacity: 0.7, marginBottom: 4, fontStyle: "italic" }}>↪ Forwarded</div>}
+                    {m.replyTo && (
+                      <div style={{ background: "rgba(255,255,255,0.15)", borderLeft: "3px solid currentColor", borderRadius: 6, padding: "4px 8px", marginBottom: 6, fontSize: 11, opacity: 0.85 }}>
+                        <div style={{ fontWeight: 700 }}>{m.replyTo.senderName}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.replyTo.text}</div>
+                      </div>
+                    )}
+                    {m.text}
+                  </div>
                 )}
               </div>
             ))}
           </div>
+
+          {/* Reply preview bar */}
+          {replyingTo && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.grey, borderRadius: 10, padding: "8px 12px", marginBottom: 8 }}>
+              <div style={{ flex: 1, borderLeft: `3px solid ${C.primary}`, paddingLeft: 8, minWidth: 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.primary }}>Replying to {replyingTo.senderId === user.uid ? "yourself" : selected.participantNames?.find(n => n !== user.displayName)}</div>
+                <div style={{ fontSize: 12, color: C.greyDark, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{replyingTo.type === "audio" ? "🎤 Voice message" : replyingTo.text}</div>
+              </div>
+              <button style={{ background: "none", border: "none", fontSize: 16, color: C.greyDark, cursor: "pointer" }} onClick={() => setReplyingTo(null)}>✕</button>
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             {isRecording ? (
               <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: C.grey, borderRadius: 24, padding: "8px 14px" }}>
@@ -3430,11 +3567,82 @@ function Messages({ user, chatSeller, onChatStarted }) {
           </div>
         </div>
       )}
+
+      {/* Copy toast */}
+      {copyToast && (
+        <div style={{ position: "fixed", bottom: 90, left: "50%", transform: "translateX(-50%)", background: "rgba(20,20,20,0.9)", color: "white", borderRadius: 20, padding: "8px 18px", fontSize: 13, fontWeight: 600, zIndex: 500 }}>
+          ✓ Copied to clipboard
+        </div>
+      )}
+
+      {/* Message context menu (Reply / Forward / Copy / Delete) */}
+      {contextMenuMsg && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+          onClick={() => setContextMenuMsg(null)}>
+          <div style={{ background: C.white, borderRadius: "16px 16px 0 0", width: "100%", maxWidth: 480, paddingBottom: 20 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}>
+              <div style={{ width: 36, height: 4, borderRadius: 2, background: C.greyMid }} />
+            </div>
+            {!contextMenuMsg.deleted && (
+              <div style={{ padding: "0 14px 10px", color: C.greyDark, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {contextMenuMsg.type === "audio" ? "🎤 Voice message" : contextMenuMsg.text}
+              </div>
+            )}
+            {!contextMenuMsg.deleted && (
+              <>
+                <button style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "14px 18px", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", gap: 12, cursor: "pointer", borderTop: `1px solid ${C.border}` }}
+                  onClick={() => startReply(contextMenuMsg)}>
+                  ↩️ Reply
+                </button>
+                <button style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "14px 18px", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", gap: 12, cursor: "pointer", borderTop: `1px solid ${C.border}` }}
+                  onClick={() => { setForwardingMsg(contextMenuMsg); setContextMenuMsg(null); }}>
+                  ↪️ Forward
+                </button>
+                {contextMenuMsg.type !== "audio" && (
+                  <button style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "14px 18px", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", gap: 12, cursor: "pointer", borderTop: `1px solid ${C.border}` }}
+                    onClick={() => copyMessage(contextMenuMsg)}>
+                    📋 Copy
+                  </button>
+                )}
+              </>
+            )}
+            {contextMenuMsg.senderId === user.uid && !contextMenuMsg.deleted && (
+              <button style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "14px 18px", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", gap: 12, cursor: "pointer", borderTop: `1px solid ${C.border}`, color: "#EF4444" }}
+                onClick={() => deleteMessage(contextMenuMsg)}>
+                🗑️ Delete
+              </button>
+            )}
+            <button style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "14px 18px", fontSize: 15, fontWeight: 600, cursor: "pointer", borderTop: `1px solid ${C.border}`, color: C.greyDark }}
+              onClick={() => setContextMenuMsg(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Forward picker modal */}
+      {forwardingMsg && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+          onClick={() => setForwardingMsg(null)}>
+          <div style={{ background: C.white, borderRadius: "16px 16px 0 0", width: "100%", maxWidth: 480, maxHeight: "70vh", overflowY: "auto", paddingBottom: 20 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}>
+              <div style={{ width: 36, height: 4, borderRadius: 2, background: C.greyMid }} />
+            </div>
+            <div style={{ padding: "0 18px 14px", fontWeight: 800, fontSize: 16 }}>Forward to...</div>
+            {conversations.length === 0 ? (
+              <div style={{ padding: "0 18px 18px", color: C.greyDark, fontSize: 13 }}>No conversations to forward to.</div>
+            ) : conversations.map(c => (
+              <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 18px", cursor: "pointer" }} onClick={() => forwardMessage(c)}>
+                <div style={{ ...S.avatar(40), background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{c.participantNames?.filter(n => n !== user.displayName).join(", ") || "Chat"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
-// ── Profile ────────────────────────────────────────────────────
 
 // ── Public Profile Page ─────────────────────────────────────────
 function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct }) {
