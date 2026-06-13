@@ -1754,7 +1754,9 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
       <button style={{ ...S.btn("grey"), marginBottom: 16, color: C.text }} onClick={() => setPage("home")}>← Back</button>
       <div style={S.card}>
         <div style={{ height: 260, overflow: "hidden", borderRadius: "14px 14px 0 0", background: C.grey }}>
-          {product.image ? <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
+          {product.images && product.images.length > 1
+            ? <ProductImageCarousel images={product.images} height={260} />
+            : product.image ? <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
         </div>
         <div style={{ padding: 20 }}>
           <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 4 }}>{product.category}</div>
@@ -2491,8 +2493,11 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     const isF = following[reel.userId];
     setFollowing(prev => ({ ...prev, [reel.userId]: !isF }));
     if (!isF) {
-      await setDoc(doc(db, "users", user.uid, "following", reel.userId), { name: reel.userName, followedAt: serverTimestamp() });
+      await setDoc(doc(db, "users", user.uid, "following", reel.userId), { name: reel.userName, followedAt: serverTimestamp(), unfollowed: false });
       await setDoc(doc(db, "users", reel.userId, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
+      await sendNotification(reel.userId, "follow", `${user.displayName || "Someone"} started following you`, user.displayName);
+    } else {
+      await setDoc(doc(db, "users", user.uid, "following", reel.userId), { unfollowed: true }, { merge: true });
     }
   };
 
@@ -2506,6 +2511,18 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     const snap = await getDocs(query(collection(db, "reels", reelId, "comments"), orderBy("createdAt")));
     setComments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
   };
+
+  // Load existing follow state for current user on mount
+  useEffect(() => {
+    if (!user || reels.length === 0) return;
+    const uniqueUserIds = [...new Set(reels.map(r => r.userId).filter(id => id && id !== user.uid))];
+    uniqueUserIds.forEach(async uid => {
+      const followSnap = await getDoc(doc(db, "users", user.uid, "following", uid)).catch(() => null);
+      if (followSnap?.exists() && !followSnap.data().unfollowed) {
+        setFollowing(prev => ({ ...prev, [uid]: true }));
+      }
+    });
+  }, [reels.length, user?.uid]);
 
   // Load existing likes for current user on mount
   useEffect(() => {
@@ -2679,7 +2696,10 @@ function ReelsPage({ user, setPage, setViewingUser }) {
 
       {/* Comments Panel */}
       {showComments && (
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(15,15,15,0.97)", borderRadius: "20px 20px 0 0", maxHeight: "55vh", zIndex: 20, display: "flex", flexDirection: "column" }}>
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(15,15,15,0.97)", borderRadius: "20px 20px 0 0", height: "65vh", maxHeight: "65vh", zIndex: 20, display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", justifyContent: "center", padding: "8px 0 0" }}>
+            <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.25)" }} />
+          </div>
           <div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ color: "white", fontWeight: 700, fontSize: 15 }}>Comments · {reel.comments || 0}</span>
             <button style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 18, cursor: "pointer" }} onClick={() => setShowComments(false)}>✕</button>
