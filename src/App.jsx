@@ -1268,7 +1268,7 @@ function NotificationsPage({ user }) {
   const getIcon = (type) => {
     const icons = {
       like: "❤️", follow: "👤", order: "🛒", comment: "💬",
-      ad_approved: "⭐", ad_rejected: "❌", premium: "⭐", review: "⭐",
+      ad_approved: "⭐", ad_rejected: "❌", premium: "⭐", review: "⭐", nudge: "👋",
     };
     return icons[type] || "🔔";
   };
@@ -1407,7 +1407,7 @@ async function sendNotification(toUserId, type, message, fromUserName) {
       read: false, createdAt: serverTimestamp(),
     });
     if ("Notification" in window && Notification.permission === "granted" && "serviceWorker" in navigator) {
-      const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", ad_approved: "⭐", premium: "⭐", review: "⭐" };
+      const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", ad_approved: "⭐", premium: "⭐", review: "⭐", nudge: "👋" };
       const icon = icons[type] || "🔔";
       navigator.serviceWorker.ready.then(reg => {
         reg.showNotification("E-Connect " + icon, {
@@ -2919,6 +2919,15 @@ function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct }
     });
     if (currentUser) {
       getDoc(doc(db, "users", currentUser.uid, "following", profileUser.uid)).then(d => setIsFollowing(d.exists()));
+      // Record this profile view (only if viewing someone else's profile)
+      if (currentUser.uid !== profileUser.uid) {
+        setDoc(doc(db, "users", profileUser.uid, "profileViews", currentUser.uid), {
+          uid: currentUser.uid,
+          name: currentUser.displayName || "User",
+          photoURL: currentUser.photoURL || "",
+          viewedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
     }
   }, [profileUser?.uid]);
 
@@ -3142,8 +3151,107 @@ function SellerAnalytics({ user }) {
 }
 
 
-// ── Wallet Page ────────────────────────────────────────────────
-function Profile({ user, setPage, setUser, theme, setTheme }) {
+// ── Profile Views Page ──────────────────────────────────────────
+function ProfileViewsPage({ user, setPage, setViewingPublicProfile }) {
+  const [views, setViews] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [following, setFollowing] = useState({});
+  const [nudged, setNudged] = useState({});
+
+  useEffect(() => {
+    if (!user) return;
+    const load = async () => {
+      setLoading(true);
+      const snap = await getDocs(query(collection(db, "users", user.uid, "profileViews"), orderBy("viewedAt", "desc")));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setViews(list);
+      // Check following status for each viewer
+      const followMap = {};
+      await Promise.all(list.map(async v => {
+        const fDoc = await getDoc(doc(db, "users", user.uid, "following", v.uid)).catch(() => null);
+        followMap[v.uid] = fDoc?.exists() && !fDoc.data().unfollowed;
+      }));
+      setFollowing(followMap);
+      setLoading(false);
+    };
+    load();
+  }, [user]);
+
+  const toggleFollow = async (viewer) => {
+    if (!user) return;
+    const isF = following[viewer.uid];
+    setFollowing(prev => ({ ...prev, [viewer.uid]: !isF }));
+    if (!isF) {
+      await setDoc(doc(db, "users", user.uid, "following", viewer.uid), { name: viewer.name, followedAt: serverTimestamp(), unfollowed: false });
+      await setDoc(doc(db, "users", viewer.uid, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
+      await sendNotification(viewer.uid, "follow", `${user.displayName || "Someone"} started following you`, user.displayName);
+    } else {
+      await setDoc(doc(db, "users", user.uid, "following", viewer.uid), { unfollowed: true }, { merge: true });
+    }
+  };
+
+  const nudge = async (viewer) => {
+    setNudged(prev => ({ ...prev, [viewer.uid]: true }));
+    await sendNotification(viewer.uid, "nudge", `👋 ${user.displayName || "Someone"} nudged you — check out their profile!`, user.displayName);
+  };
+
+  const getTimeAgo = (ts) => {
+    if (!ts) return "";
+    const now = Date.now();
+    const time = ts.toMillis ? ts.toMillis() : new Date(ts).getTime();
+    const diff = Math.floor((now - time) / 60000);
+    if (diff < 60) return `${diff}m ago`;
+    if (diff < 1440) return `${Math.floor(diff / 60)}h ago`;
+    return `${Math.floor(diff / 1440)}d ago`;
+  };
+
+  return (
+    <div style={S.page}>
+      <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage("profile")}>
+        ← Back
+      </button>
+      <div style={S.sectionTitle}>Profile Views</div>
+      <p style={S.sectionSub}>{views.length} {views.length === 1 ? "person" : "people"} viewed your profile</p>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading...</div>
+      ) : views.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 60 }}>
+          <div style={{ fontSize: 56, marginBottom: 12 }}>👁️</div>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>No profile views yet</div>
+          <div style={{ color: C.greyDark, fontSize: 13 }}>When someone views your profile, they'll show up here.</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 80 }}>
+          {views.map(v => (
+            <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer" }}
+              onClick={() => setViewingPublicProfile && setViewingPublicProfile({ uid: v.uid, displayName: v.name, photoURL: v.photoURL })}>
+              <div style={{ width: 50, height: 50, borderRadius: "50%", overflow: "hidden", background: C.grey, flexShrink: 0, border: `2px solid ${C.border}` }}>
+                {v.photoURL ? <img src={v.photoURL} alt={v.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name}</div>
+                {v.viewedAt && <div style={{ fontSize: 12, color: C.greyDark }}>Viewed {getTimeAgo(v.viewedAt)}</div>}
+              </div>
+              {following[v.uid] ? (
+                <button style={{ ...S.btn("grey"), padding: "8px 18px", fontSize: 13, fontWeight: 700, borderRadius: 20 }}
+                  onClick={(e) => { e.stopPropagation(); toggleFollow(v); }}>Following</button>
+              ) : nudged[v.uid] ? (
+                <button style={{ ...S.btn("grey"), padding: "8px 18px", fontSize: 13, fontWeight: 700, borderRadius: 20 }} disabled>👋 Nudged</button>
+              ) : (
+                <button style={{ ...S.btn(), padding: "8px 18px", fontSize: 13, fontWeight: 700, borderRadius: 20 }}
+                  onClick={(e) => { e.stopPropagation(); toggleFollow(v); }}>Follow</button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
   const [profile, setProfile] = useState(null);
   const [orders, setOrders] = useState([]);
   const [tab, setTab] = useState("orders");
@@ -3158,6 +3266,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [storeSaved, setStoreSaved] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [profileViewsCount, setProfileViewsCount] = useState(0);
 
   useEffect(() => {
     if (!user) return;
@@ -3186,6 +3295,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
     getDocs(collection(db, "users", user.uid, "followers")).then(snap => setFollowers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users", user.uid, "following")).then(snap => setFollowing(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users", user.uid, "friends")).then(snap => setFriends(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(collection(db, "users", user.uid, "profileViews")).then(snap => setProfileViewsCount(snap.size));
   }, [user]);
 
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -3273,8 +3383,8 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             </div>
             <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8 }}>{user?.email}</div>
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              {[{ num: myProducts.length, label: "Products" }, { num: orders.length, label: "Orders" }, { num: followers.length, label: "Followers" }, { num: following.length, label: "Following" }, { num: friends.length, label: "Friends" }].map(s => (
-                <div key={s.label} style={{ textAlign: "center" }}>
+              {[{ num: myProducts.length, label: "Products" }, { num: orders.length, label: "Orders" }, { num: followers.length, label: "Followers" }, { num: following.length, label: "Following" }, { num: friends.length, label: "Friends" }, { num: profileViewsCount, label: "Profile Views", action: () => setPage("profileViews") }].map(s => (
+                <div key={s.label} style={{ textAlign: "center", cursor: s.action ? "pointer" : "default" }} onClick={s.action}>
                   <div style={{ fontWeight: 800, color: C.primary }}>{s.num}</div>
                   <div style={{ fontSize: 11, color: C.greyDark }}>{s.label}</div>
                 </div>
@@ -4207,6 +4317,7 @@ export default function App() {
       case "location": return <LocationPage user={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "messages": return <Messages user={user} chatSeller={chatSeller} onChatStarted={() => setChatSeller(null)} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
+      case "profileViews": return <ProfileViewsPage user={user} setPage={setPage} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
       case "analytics": return <SellerAnalytics user={user} />;
       case "publicProfile": return <PublicProfile profileUser={viewingPublicProfile} currentUser={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
