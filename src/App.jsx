@@ -1557,7 +1557,7 @@ function PremiumCarousel({ products, setSelectedProduct, setPage }) {
 
 
 // ── Home Page ──────────────────────────────────────────────────
-function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
+function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPublicProfile }) {
   const [products, setProducts] = useState([]);
   const [activeCategory, setActiveCategory] = useState("All");
   const [search, setSearch] = useState("");
@@ -4176,7 +4176,7 @@ export default function App() {
 
   const renderPage = () => {
     switch (page) {
-      case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
+      case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
       case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} user={user} />;
       case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
@@ -4189,8 +4189,8 @@ export default function App() {
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
       case "analytics": return <SellerAnalytics user={user} />;
       case "publicProfile": return <PublicProfile profileUser={viewingPublicProfile} currentUser={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
-      case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
-      default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
+      case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
+      default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
     }
   };
 
