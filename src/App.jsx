@@ -157,30 +157,89 @@ function Auth({ setUser }) {
 const CLOUDINARY_CLOUD = "dxmmsq0gq";
 const CLOUDINARY_PRESET = "Econnect";
 
+// ── Product Image Carousel ─────────────────────────────────────
+function ProductImageCarousel({ images, height = 200, onClick }) {
+  const [idx, setIdx] = useState(0);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (!images || images.length <= 1) return;
+    timerRef.current = setInterval(() => setIdx(prev => (prev + 1) % images.length), 3000);
+    return () => clearInterval(timerRef.current);
+  }, [images?.length]);
+
+  if (!images || images.length === 0) return null;
+
+  return (
+    <div style={{ position: "relative", height, overflow: "hidden", borderRadius: 0, cursor: onClick ? "pointer" : "default" }} onClick={onClick}>
+      <img src={images[idx]} alt="product" style={{ width: "100%", height: "100%", objectFit: "cover", transition: "opacity 0.4s" }} />
+      {images.length > 1 && (
+        <>
+          {/* Dot indicators */}
+          <div style={{ position: "absolute", bottom: 8, left: 0, right: 0, display: "flex", justifyContent: "center", gap: 5 }}>
+            {images.map((_, i) => (
+              <div key={i} onClick={e => { e.stopPropagation(); setIdx(i); clearInterval(timerRef.current); }}
+                style={{ width: i === idx ? 16 : 6, height: 6, borderRadius: 3, background: i === idx ? "white" : "rgba(255,255,255,0.5)", transition: "width 0.3s", cursor: "pointer" }} />
+            ))}
+          </div>
+          {/* Left/Right tap areas */}
+          <div style={{ position: "absolute", top: 0, left: 0, width: "30%", height: "100%", zIndex: 2 }}
+            onClick={e => { e.stopPropagation(); setIdx(prev => (prev - 1 + images.length) % images.length); }} />
+          <div style={{ position: "absolute", top: 0, right: 0, width: "30%", height: "100%", zIndex: 2 }}
+            onClick={e => { e.stopPropagation(); setIdx(prev => (prev + 1) % images.length); }} />
+          {/* Image counter */}
+          <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.5)", borderRadius: 10, padding: "2px 8px", fontSize: 10, color: "white", fontWeight: 700 }}>
+            {idx + 1}/{images.length}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Add Product Modal ──────────────────────────────────────────
 function AddProductModal({ user, onClose, onAdded }) {
   const [form, setForm] = useState({ name: "", price: "", category: "Fashion", description: "", stock: "" });
-  const [imageUrl, setImageUrl] = useState("");
-  const [imagePreview, setImagePreview] = useState("");
+  const [images, setImages] = useState([]); // array of URLs
+  const [previews, setPreviews] = useState([]); // array of preview URLs
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [carouselIdx, setCarouselIdx] = useState(0);
 
   const handleImageUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    if (images.length + files.length > 6) { setError("Maximum 6 images allowed."); return; }
     setUploading(true);
+    setError("");
     try {
-      const data = new FormData();
-      data.append("file", file);
-      data.append("upload_preset", CLOUDINARY_PRESET);
-      data.append("cloud_name", CLOUDINARY_CLOUD);
-      const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method: "POST", body: data });
-      const result = await res.json();
-      setImageUrl(result.secure_url);
-      setImagePreview(result.secure_url);
+      const uploaded = [];
+      const prevs = [];
+      for (let i = 0; i < files.length; i++) {
+        setUploadProgress(Math.round(((i) / files.length) * 100));
+        const data = new FormData();
+        data.append("file", files[i]);
+        data.append("upload_preset", CLOUDINARY_PRESET);
+        data.append("cloud_name", CLOUDINARY_CLOUD);
+        const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method: "POST", body: data });
+        const result = await res.json();
+        uploaded.push(result.secure_url);
+        prevs.push(result.secure_url);
+      }
+      setImages(prev => [...prev, ...uploaded]);
+      setPreviews(prev => [...prev, ...prevs]);
+      setUploadProgress(100);
     } catch (err) { setError("Image upload failed. Please try again."); }
     setUploading(false);
+    setUploadProgress(0);
+  };
+
+  const removeImage = (idx) => {
+    setImages(prev => prev.filter((_, i) => i !== idx));
+    setPreviews(prev => prev.filter((_, i) => i !== idx));
+    if (carouselIdx >= images.length - 1) setCarouselIdx(Math.max(0, images.length - 2));
   };
 
   const handle = async () => {
@@ -191,7 +250,10 @@ function AddProductModal({ user, onClose, onAdded }) {
       const userData = userDoc.exists() ? userDoc.data() : {};
       await addDoc(collection(db, "products"), {
         name: form.name, price: Number(form.price), category: form.category,
-        description: form.description, image: imageUrl, stock: Number(form.stock) || 0,
+        description: form.description,
+        image: images[0] || "", // primary image
+        images: images, // all images
+        stock: Number(form.stock) || 0,
         seller: user.displayName || "Unknown", sellerId: user.uid,
         sellerVerified: userData.verified || false,
         sellerPremium: userData.premium || false,
@@ -210,19 +272,50 @@ function AddProductModal({ user, onClose, onAdded }) {
         <h3 style={{ fontWeight: 800, fontSize: 20, marginBottom: 16 }}>Add New Product</h3>
         {error && <div style={S.alert("error")}>{error}</div>}
 
-        <label style={S.label}>Product Image</label>
-        <div style={{ border: `2px dashed ${C.border}`, borderRadius: 12, padding: 16, textAlign: "center", marginBottom: 12, cursor: "pointer" }}
-          onClick={() => document.getElementById("imgInput").click()}>
-          {imagePreview ? (
-            <img src={imagePreview} alt="Preview" style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: 8 }} />
-          ) : (
-            <div>
-              <div style={{ fontSize: 36, marginBottom: 8 }}>📸</div>
-              <div style={{ fontSize: 13, color: C.greyDark }}>{uploading ? "Uploading..." : "Tap to upload product image"}</div>
+        <label style={S.label}>Product Images (up to 6)</label>
+
+        {/* Image preview carousel */}
+        {previews.length > 0 && (
+          <div style={{ marginBottom: 10, borderRadius: 12, overflow: "hidden", position: "relative", height: 180 }}>
+            <ProductImageCarousel images={previews} height={180} />
+          </div>
+        )}
+
+        {/* Thumbnail row with remove */}
+        {previews.length > 0 && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+            {previews.map((url, i) => (
+              <div key={i} style={{ position: "relative", width: 56, height: 56 }}>
+                <img src={url} style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 8, border: `2px solid ${i === 0 ? C.primary : C.border}` }} />
+                {i === 0 && <div style={{ position: "absolute", bottom: -2, left: 0, right: 0, background: C.primary, color: "white", fontSize: 8, fontWeight: 700, textAlign: "center", borderRadius: "0 0 6px 6px" }}>MAIN</div>}
+                <button style={{ position: "absolute", top: -4, right: -4, background: C.error, border: "none", borderRadius: "50%", width: 18, height: 18, color: "white", fontSize: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}
+                  onClick={() => removeImage(i)}>✕</button>
+              </div>
+            ))}
+            {previews.length < 6 && (
+              <div style={{ width: 56, height: 56, border: `2px dashed ${C.border}`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 22, color: C.greyDark }}
+                onClick={() => document.getElementById("imgInput").click()}>+</div>
+            )}
+          </div>
+        )}
+
+        {/* Upload button */}
+        {previews.length === 0 && (
+          <div style={{ border: `2px dashed ${C.border}`, borderRadius: 12, padding: 20, textAlign: "center", marginBottom: 12, cursor: "pointer" }}
+            onClick={() => document.getElementById("imgInput").click()}>
+            <div style={{ fontSize: 36, marginBottom: 8 }}>📸</div>
+            <div style={{ fontSize: 13, color: C.greyDark, fontWeight: 600 }}>
+              {uploading ? `Uploading... ${uploadProgress}%` : "Tap to upload photos (max 6)"}
             </div>
-          )}
-        </div>
-        <input id="imgInput" type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageUpload} />
+            <div style={{ fontSize: 11, color: C.greyDark, marginTop: 4 }}>Select multiple photos at once</div>
+          </div>
+        )}
+        {previews.length > 0 && uploading && (
+          <div style={{ marginBottom: 10, background: C.grey, borderRadius: 6, height: 6, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${uploadProgress}%`, background: C.primary, transition: "width 0.3s" }} />
+          </div>
+        )}
+        <input id="imgInput" type="file" accept="image/*" multiple style={{ display: "none" }} onChange={handleImageUpload} />
 
         <label style={S.label}>Product Name *</label>
         <input style={{ ...S.input, marginBottom: 12 }} placeholder="e.g. Ankara Dress" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
@@ -238,7 +331,7 @@ function AddProductModal({ user, onClose, onAdded }) {
         <input style={{ ...S.input, marginBottom: 16 }} type="number" placeholder="e.g. 10" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })} />
         <div style={{ display: "flex", gap: 10 }}>
           <button style={{ ...S.btn(), flex: 1, opacity: (loading || uploading) ? 0.7 : 1 }} onClick={handle} disabled={loading || uploading}>
-            {loading ? "Adding..." : uploading ? "Uploading image..." : "Add Product"}
+            {loading ? "Adding..." : uploading ? `Uploading ${uploadProgress}%...` : "Add Product"}
           </button>
           <button style={{ ...S.btn("outline"), flex: 1 }} onClick={onClose}>Cancel</button>
         </div>
@@ -249,7 +342,7 @@ function AddProductModal({ user, onClose, onAdded }) {
 
 
 // ── Stories Feature ────────────────────────────────────────────
-function StoriesBar({ user }) {
+function StoriesBar({ user, setPage, setViewingPublicProfile }) {
   const [stories, setStories] = useState([]);
   const [viewingStory, setViewingStory] = useState(null);
   const [viewingIndex, setViewingIndex] = useState(0);
@@ -260,6 +353,11 @@ function StoriesBar({ user }) {
   const [previewUrl, setPreviewUrl] = useState("");
   const [songUrl, setSongUrl] = useState("");
   const [songName, setSongName] = useState("");
+  const [showMusicSearch, setShowMusicSearch] = useState(false);
+  const [musicQuery, setMusicQuery] = useState("");
+  const [musicResults, setMusicResults] = useState([]);
+  const [musicSearching, setMusicSearching] = useState(false);
+  const [selectedMusicPreview, setSelectedMusicPreview] = useState(null);
   const [progress, setProgress] = useState(0);
   const progressRef = useRef(null);
   const audioRef = useRef(null);
@@ -330,6 +428,27 @@ function StoriesBar({ user }) {
       audio.play().catch(() => {});
       audioRef.current = audio;
     }
+  };
+
+  const searchMusic = async (q) => {
+    if (!q.trim()) return;
+    setMusicSearching(true);
+    try {
+      // Use iTunes Search API - free, no key needed, millions of songs
+      const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=20`);
+      const data = await res.json();
+      setMusicResults(data.results || []);
+    } catch (err) { console.error(err); }
+    setMusicSearching(false);
+  };
+
+  const selectMusicTrack = (track) => {
+    setSongUrl(track.previewUrl || "");
+    setSongName(`${track.trackName} - ${track.artistName}`);
+    setSelectedMusicPreview(track.previewUrl);
+    setShowMusicSearch(false);
+    setMusicResults([]);
+    setMusicQuery("");
   };
 
   const handleFileSelect = (e) => {
@@ -473,10 +592,24 @@ function StoriesBar({ user }) {
             )}
             <div style={{ marginBottom: 14 }}>
               <label style={S.label}>🎵 Add a song (optional)</label>
-              <input id="songInput" type="file" accept="audio/*" style={{ display: "none" }} onChange={handleSongSelect} />
-              <button style={{ ...S.btn("outline"), width: "100%", padding: "10px" }} onClick={() => document.getElementById("songInput").click()}>
-                {songName ? `🎵 ${songName}` : "Choose a song from your device"}
-              </button>
+              {songName ? (
+                <div style={{ background: `${C.primary}10`, border: `1px solid ${C.primary}30`, borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 20 }}>🎵</span>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: C.primary }}>{songName}</span>
+                  <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: C.greyDark }} onClick={() => { setSongUrl(""); setSongName(""); setSelectedMusicPreview(null); }}>✕</button>
+                </div>
+              ) : null}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={{ ...S.btn("outline"), flex: 1, padding: "10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                  onClick={() => setShowMusicSearch(true)}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="2" strokeLinecap="round"><circle cx="9" cy="9" r="5"/><line x1="14.5" y1="14.5" x2="19" y2="19"/></svg>
+                  Search Songs
+                </button>
+                <input id="songInput" type="file" accept="audio/*" style={{ display: "none" }} onChange={handleSongSelect} />
+                <button style={{ ...S.btn("outline"), flex: 1, padding: "10px" }} onClick={() => document.getElementById("songInput").click()}>
+                  📁 My Music
+                </button>
+              </div>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button style={{ ...S.btn(), flex: 1, opacity: uploading ? 0.7 : 1 }} onClick={handleUpload} disabled={uploading}>
@@ -484,6 +617,58 @@ function StoriesBar({ user }) {
               </button>
               <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => { setShowUploadModal(false); setPreviewUrl(""); setSelectedFile(null); setSongUrl(""); setSongName(""); }}>Cancel</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Music Search Modal */}
+      {showMusicSearch && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 700, display: "flex", flexDirection: "column", fontFamily: FONT }}>
+          <div style={{ padding: "16px 16px 0", display: "flex", alignItems: "center", gap: 12 }}>
+            <button style={{ background: "none", border: "none", color: "white", fontSize: 24, cursor: "pointer" }} onClick={() => { setShowMusicSearch(false); setMusicResults([]); setMusicQuery(""); }}>←</button>
+            <div style={{ fontWeight: 800, fontSize: 18, color: "white" }}>🎵 Search Music</div>
+          </div>
+          <div style={{ padding: "12px 16px" }}>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                style={{ flex: 1, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 24, padding: "12px 18px", color: "white", fontSize: 15, outline: "none" }}
+                placeholder="Search songs or artists..."
+                value={musicQuery}
+                onChange={e => setMusicQuery(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && searchMusic(musicQuery)}
+                autoFocus
+              />
+              <button style={{ ...S.btn(), padding: "12px 18px", borderRadius: 24 }} onClick={() => searchMusic(musicQuery)}>
+                Search
+              </button>
+            </div>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: "0 16px" }}>
+            {musicSearching && <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.5)" }}>Searching...</div>}
+            {!musicSearching && musicResults.length === 0 && musicQuery && (
+              <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.5)" }}>No results found</div>
+            )}
+            {!musicSearching && musicResults.length === 0 && !musicQuery && (
+              <div style={{ textAlign: "center", padding: 40 }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>🎵</div>
+                <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Search for any song or artist</div>
+              </div>
+            )}
+            {musicResults.map((track, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.06)", cursor: "pointer" }}
+                onClick={() => selectMusicTrack(track)}>
+                <div style={{ width: 52, height: 52, borderRadius: 8, overflow: "hidden", background: "#333", flexShrink: 0 }}>
+                  {track.artworkUrl60 ? <img src={track.artworkUrl60} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🎵</div>}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, color: "white", fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.trackName}</div>
+                  <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 2 }}>{track.artistName} · {Math.floor((track.trackTimeMillis || 0) / 60000)}:{String(Math.floor(((track.trackTimeMillis || 0) % 60000) / 1000)).padStart(2, "0")}</div>
+                </div>
+                <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: "50%", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -512,9 +697,15 @@ function StoriesBar({ user }) {
                   ? <img src={viewingStory.imageUrl} alt={viewingStory.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   : <div style={{ height: "100%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>👤</div>}
               </div>
-              <div>
+              <div style={{ cursor: "pointer" }} onClick={() => {
+                closeStory();
+                if (viewingStory.userId && viewingStory.userId !== user?.uid) {
+                  setViewingPublicProfile && setViewingPublicProfile({ uid: viewingStory.userId, displayName: viewingStory.userName, photoURL: viewingStory.userPhoto });
+                  setPage && setPage("publicProfile");
+                }
+              }}>
                 <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{viewingStory.userName}</div>
-                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>24hrs</div>
+                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>Tap to view profile</div>
               </div>
             </div>
             <button style={{ background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={closeStory}>✕</button>
@@ -1403,7 +1594,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
         <input style={{ ...S.input, paddingLeft: 38 }} placeholder="Search products..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
-      <StoriesBar user={user} />
+      <StoriesBar user={user} setPage={setPage} setViewingPublicProfile={setViewingPublicProfile} />
 
       <ApprovedAdsBanner />
 
@@ -2415,8 +2606,14 @@ function ReelsPage({ user, setPage, setViewingUser }) {
           <div style={{ width: 48, height: 48, borderRadius: "50%", overflow: "hidden", border: "2px solid white", background: "#333" }}>
             {reel.userPhoto ? <img src={reel.userPhoto} alt={reel.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 20 }}>👤</div>}
           </div>
-          <button style={{ position: "absolute", bottom: -10, left: "50%", transform: "translateX(-50%)", background: following[reel.userId] ? "white" : C.primary, border: "none", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", fontSize: 13, color: following[reel.userId] ? C.primary : "white", fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center" }}
-            onClick={() => handleFollow(reel)}>{following[reel.userId] ? "✓" : "+"}</button>
+          {!following[reel.userId] && reel.userId !== user?.uid && (
+            <button style={{ position: "absolute", bottom: -10, left: "50%", transform: "translateX(-50%)", background: C.primary, border: "2px solid white", borderRadius: "50%", width: 24, height: 24, cursor: "pointer", fontSize: 15, color: "white", fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.4)" }}
+              onClick={() => handleFollow(reel)}>+</button>
+          )}
+          {following[reel.userId] && (
+            <button style={{ position: "absolute", bottom: -10, left: "50%", transform: "translateX(-50%)", background: "#22c55e", border: "2px solid white", borderRadius: "50%", width: 24, height: 24, cursor: "pointer", fontSize: 13, color: "white", fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center" }}
+              onClick={() => handleFollow(reel)}>✓</button>
+          )}
         </div>
 
         {[
@@ -2488,22 +2685,44 @@ function ReelsPage({ user, setPage, setViewingUser }) {
             <button style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 18, cursor: "pointer" }} onClick={() => setShowComments(false)}>✕</button>
           </div>
           <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
-            {comments.length === 0 ? <div style={{ color: "rgba(255,255,255,0.4)", textAlign: "center", padding: 20, fontSize: 13 }}>No comments yet</div> :
-            comments.map(c => (
-              <div key={c.id} style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-                <div style={{ width: 32, height: 32, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
-                  {c.userPhoto ? <img src={c.userPhoto} alt={c.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}>👤</div>}
+            {comments.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "30px 20px" }}>
+                <div style={{ fontSize: 36, marginBottom: 8 }}>💬</div>
+                <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 14, fontWeight: 600 }}>No comments yet</div>
+                <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, marginTop: 4 }}>Be the first to comment!</div>
+              </div>
+            ) : comments.map(c => (
+              <div key={c.id} style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 38, height: 38, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0, border: "1.5px solid rgba(255,255,255,0.15)" }}>
+                  {c.userPhoto ? <img src={c.userPhoto} alt={c.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "white" }}>👤</div>}
                 </div>
-                <div>
-                  <div style={{ color: "white", fontWeight: 700, fontSize: 12, marginBottom: 2 }}>{c.userName}</div>
-                  <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 13 }}>{c.text}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                    <span style={{ color: "white", fontWeight: 800, fontSize: 13 }}>{c.userName}</span>
+                    <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 10 }}>
+                      {c.createdAt?.toDate ? c.createdAt.toDate().toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}
+                    </span>
+                  </div>
+                  <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 14, lineHeight: 1.4 }}>{c.text}</div>
                 </div>
               </div>
             ))}
           </div>
-          <div style={{ padding: "10px 14px", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 10 }}>
-            <input style={{ ...S.input, flex: 1, background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.1)" }} placeholder="Add a comment..." value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === "Enter" && postComment(reel.id)} />
-            <button style={{ ...S.btn(), padding: "10px 16px", fontSize: 12 }} onClick={() => postComment(reel.id)}>Post</button>
+          <div style={{ padding: "12px 14px", borderTop: "1px solid rgba(255,255,255,0.1)", display: "flex", gap: 10, alignItems: "center", background: "#111" }}>
+            <div style={{ width: 34, height: 34, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
+              {user?.photoURL ? <img src={user.photoURL} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "white" }}>👤</div>}
+            </div>
+            <input
+              style={{ flex: 1, background: "rgba(255,255,255,0.1)", color: "white", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 24, padding: "10px 16px", fontSize: 14, outline: "none" }}
+              placeholder="Add a comment..."
+              value={newComment}
+              onChange={e => setNewComment(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && postComment(reel.id)}
+            />
+            <button style={{ background: C.primary, border: "none", borderRadius: "50%", width: 38, height: 38, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+              onClick={() => postComment(reel.id)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
           </div>
         </div>
       )}
