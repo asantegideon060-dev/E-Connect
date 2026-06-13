@@ -40,19 +40,32 @@ const CATEGORIES = ["All", "Fashion", "Electronics", "Beauty", "Food", "Sports",
 
 
 // ── Verified Badge SVG ─────────────────────────────────────────
+// ── Badge System ──────────────────────────────────────────────
+// Blue Tick: Admin verified, trusted long-term user (MEDIUM size)
 const VerifiedBadge = ({ size = 16 }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
+  <svg width={size} height={size} viewBox="0 0 24 24" style={{ flexShrink: 0, verticalAlign: "middle" }}>
     <circle cx="12" cy="12" r="10" fill="#1DA1F2"/>
     <path d="M9 12l2 2 4-4" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
   </svg>
 );
 
-// ── Premium Star SVG ───────────────────────────────────────────
-const PremiumStar = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="#FFD700" style={{ marginLeft: 4, verticalAlign: "middle" }}>
-    <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
+// Gold Star: Premium subscriber (LARGE size - most prominent)
+const PremiumBadge = ({ size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" style={{ flexShrink: 0, verticalAlign: "middle" }}>
+    <circle cx="12" cy="12" r="11" fill="#FFD700"/>
+    <path d="M12 4L14.09 9.26L20 10.27L16 14.14L17.09 20.02L12 17.27L6.91 20.02L8 14.14L4 10.27L9.91 9.26L12 4Z" fill="#333"/>
   </svg>
 );
+
+// Trending badge: New store, no special status (SMALL)
+const TrendingBadge = () => (
+  <span style={{ background: "linear-gradient(135deg, #FF6B6B, #FF8E53)", color: "white", fontSize: 8, fontWeight: 800, padding: "2px 5px", borderRadius: 6, verticalAlign: "middle", letterSpacing: 0.3 }}>
+    🔥 NEW
+  </span>
+);
+
+// Legacy PremiumStar kept for backward compat
+const PremiumStar = () => <PremiumBadge size={14} />;
 
 const S = {
   app: { fontFamily: FONT, background: C.offWhite, minHeight: "100vh", color: C.text, paddingBottom: 80 },
@@ -77,19 +90,9 @@ const S = {
 // ── Auth Page ──────────────────────────────────────────────────
 function Auth({ setUser }) {
   const [isLogin, setIsLogin] = useState(true);
-  const [form, setForm] = useState({ name: "", email: "", password: "", phone: "", referralCode: "" });
+  const [form, setForm] = useState({ name: "", email: "", password: "", phone: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [refBonus, setRefBonus] = useState("");
-
-  // Auto-fill referral code from URL
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const ref = params.get("ref");
-    if (ref) { setForm(f => ({ ...f, referralCode: ref })); setIsLogin(false); setRefBonus("🎉 You were invited! Sign up to get GH₵5 off your first order."); }
-  }, []);
-
-  const generateRefCode = (uid) => uid.slice(0, 8).toUpperCase();
 
   const handle = async () => {
     setError(""); setLoading(true);
@@ -102,43 +105,10 @@ function Auth({ setUser }) {
         const res = await createUserWithEmailAndPassword(auth, form.email, form.password);
         await updateProfile(res.user, { displayName: form.name });
         const adminEmails = ["admin@econnect.gh", "asantegideon060@gmail.com", "selormatsubonuedie@gmail.com", "akowuahisaac686@gmail.com", "nyarkomatthew925491@gmail.com", "ebenezer.boateng009@stu.ucc.edu.gh"];
-        const refCode = generateRefCode(res.user.uid);
-        let referredBy = null;
-
-        // Process referral code if provided
-        if (form.referralCode) {
-          const refSnap = await getDocs(query(collection(db, "users"), where("referralCode", "==", form.referralCode.toUpperCase())));
-          if (!refSnap.empty) {
-            const referrer = refSnap.docs[0];
-            referredBy = referrer.id;
-            // Give referrer GH₵5 reward
-            const currentReward = referrer.data().referralReward || 0;
-            const currentCount = referrer.data().referralCount || 0;
-            await setDoc(doc(db, "users", referrer.id), {
-              referralReward: currentReward + 5,
-              referralCount: currentCount + 1,
-            }, { merge: true });
-            // Credit wallet with referral reward
-            const walletSnap = await getDoc(doc(db, "wallets", referrer.id));
-            const currentWalletBal = walletSnap.exists() ? (walletSnap.data().balance || 0) : 0;
-            await setDoc(doc(db, "wallets", referrer.id), { balance: currentWalletBal + 5, userId: referrer.id }, { merge: true });
-            await addDoc(collection(db, "walletTransactions"), {
-              userId: referrer.id, type: "reward", amount: 5,
-              description: "Referral reward — friend signed up!",
-              createdAt: serverTimestamp(),
-            });
-            await sendNotification(referrer.id, "follow", `🎉 Someone signed up using your referral link! You earned GH₵5 reward. Total: GH₵${currentReward + 5}`, "E-Connect");
-          }
-        }
-
         await setDoc(doc(db, "users", res.user.uid), {
           name: form.name, email: form.email, phone: form.phone,
           role: adminEmails.includes(form.email) ? "admin" : "user",
           followers: 0, following: 0, createdAt: serverTimestamp(),
-          referralCode: refCode,
-          referredBy: referredBy,
-          referralReward: form.referralCode ? 5 : 0, // new user gets GH₵5 if they used a code
-          referralCount: 0,
         });
         setUser(res.user);
       }
@@ -177,13 +147,6 @@ function Auth({ setUser }) {
         <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>
           {loading ? "Please wait..." : isLogin ? "Login" : "Create Account"}
         </button>
-        {!isLogin && (
-          <div style={{ marginTop: 8, marginBottom: 4 }}>
-            <label style={S.label}>Referral Code (optional)</label>
-            <input style={{ ...S.input, marginBottom: 4 }} placeholder="Enter referral code" value={form.referralCode} onChange={e => setForm({ ...form, referralCode: e.target.value.toUpperCase() })} />
-          </div>
-        )}
-        {refBonus && <div style={{ ...S.alert("success"), marginTop: 8, fontSize: 13 }}>{refBonus}</div>}
         <p style={{ color: C.greyDark, fontSize: 12, textAlign: "center", marginTop: 16 }}>Register with your email to get started</p>
       </div>
     </div>
@@ -194,30 +157,89 @@ function Auth({ setUser }) {
 const CLOUDINARY_CLOUD = "dxmmsq0gq";
 const CLOUDINARY_PRESET = "Econnect";
 
+// ── Product Image Carousel ─────────────────────────────────────
+function ProductImageCarousel({ images, height = 200, onClick }) {
+  const [idx, setIdx] = useState(0);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (!images || images.length <= 1) return;
+    timerRef.current = setInterval(() => setIdx(prev => (prev + 1) % images.length), 3000);
+    return () => clearInterval(timerRef.current);
+  }, [images?.length]);
+
+  if (!images || images.length === 0) return null;
+
+  return (
+    <div style={{ position: "relative", height, overflow: "hidden", borderRadius: 0, cursor: onClick ? "pointer" : "default" }} onClick={onClick}>
+      <img src={images[idx]} alt="product" style={{ width: "100%", height: "100%", objectFit: "cover", transition: "opacity 0.4s" }} />
+      {images.length > 1 && (
+        <>
+          {/* Dot indicators */}
+          <div style={{ position: "absolute", bottom: 8, left: 0, right: 0, display: "flex", justifyContent: "center", gap: 5 }}>
+            {images.map((_, i) => (
+              <div key={i} onClick={e => { e.stopPropagation(); setIdx(i); clearInterval(timerRef.current); }}
+                style={{ width: i === idx ? 16 : 6, height: 6, borderRadius: 3, background: i === idx ? "white" : "rgba(255,255,255,0.5)", transition: "width 0.3s", cursor: "pointer" }} />
+            ))}
+          </div>
+          {/* Left/Right tap areas */}
+          <div style={{ position: "absolute", top: 0, left: 0, width: "30%", height: "100%", zIndex: 2 }}
+            onClick={e => { e.stopPropagation(); setIdx(prev => (prev - 1 + images.length) % images.length); }} />
+          <div style={{ position: "absolute", top: 0, right: 0, width: "30%", height: "100%", zIndex: 2 }}
+            onClick={e => { e.stopPropagation(); setIdx(prev => (prev + 1) % images.length); }} />
+          {/* Image counter */}
+          <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.5)", borderRadius: 10, padding: "2px 8px", fontSize: 10, color: "white", fontWeight: 700 }}>
+            {idx + 1}/{images.length}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Add Product Modal ──────────────────────────────────────────
 function AddProductModal({ user, onClose, onAdded }) {
   const [form, setForm] = useState({ name: "", price: "", category: "Fashion", description: "", stock: "" });
-  const [imageUrl, setImageUrl] = useState("");
-  const [imagePreview, setImagePreview] = useState("");
+  const [images, setImages] = useState([]); // array of URLs
+  const [previews, setPreviews] = useState([]); // array of preview URLs
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [carouselIdx, setCarouselIdx] = useState(0);
 
   const handleImageUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    if (images.length + files.length > 6) { setError("Maximum 6 images allowed."); return; }
     setUploading(true);
+    setError("");
     try {
-      const data = new FormData();
-      data.append("file", file);
-      data.append("upload_preset", CLOUDINARY_PRESET);
-      data.append("cloud_name", CLOUDINARY_CLOUD);
-      const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method: "POST", body: data });
-      const result = await res.json();
-      setImageUrl(result.secure_url);
-      setImagePreview(result.secure_url);
+      const uploaded = [];
+      const prevs = [];
+      for (let i = 0; i < files.length; i++) {
+        setUploadProgress(Math.round(((i) / files.length) * 100));
+        const data = new FormData();
+        data.append("file", files[i]);
+        data.append("upload_preset", CLOUDINARY_PRESET);
+        data.append("cloud_name", CLOUDINARY_CLOUD);
+        const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method: "POST", body: data });
+        const result = await res.json();
+        uploaded.push(result.secure_url);
+        prevs.push(result.secure_url);
+      }
+      setImages(prev => [...prev, ...uploaded]);
+      setPreviews(prev => [...prev, ...prevs]);
+      setUploadProgress(100);
     } catch (err) { setError("Image upload failed. Please try again."); }
     setUploading(false);
+    setUploadProgress(0);
+  };
+
+  const removeImage = (idx) => {
+    setImages(prev => prev.filter((_, i) => i !== idx));
+    setPreviews(prev => prev.filter((_, i) => i !== idx));
+    if (carouselIdx >= images.length - 1) setCarouselIdx(Math.max(0, images.length - 2));
   };
 
   const handle = async () => {
@@ -228,10 +250,14 @@ function AddProductModal({ user, onClose, onAdded }) {
       const userData = userDoc.exists() ? userDoc.data() : {};
       await addDoc(collection(db, "products"), {
         name: form.name, price: Number(form.price), category: form.category,
-        description: form.description, image: imageUrl, stock: Number(form.stock) || 0,
+        description: form.description,
+        image: images[0] || "", // primary image
+        images: images, // all images
+        stock: Number(form.stock) || 0,
         seller: user.displayName || "Unknown", sellerId: user.uid,
         sellerVerified: userData.verified || false,
         sellerPremium: userData.premium || false,
+        isSeller: userData.isSeller || false,
         likes: 0, rating: 0, reviews: 0, premium: userData.premium || false,
         createdAt: serverTimestamp()
       });
@@ -246,19 +272,50 @@ function AddProductModal({ user, onClose, onAdded }) {
         <h3 style={{ fontWeight: 800, fontSize: 20, marginBottom: 16 }}>Add New Product</h3>
         {error && <div style={S.alert("error")}>{error}</div>}
 
-        <label style={S.label}>Product Image</label>
-        <div style={{ border: `2px dashed ${C.border}`, borderRadius: 12, padding: 16, textAlign: "center", marginBottom: 12, cursor: "pointer" }}
-          onClick={() => document.getElementById("imgInput").click()}>
-          {imagePreview ? (
-            <img src={imagePreview} alt="Preview" style={{ width: "100%", height: 160, objectFit: "cover", borderRadius: 8 }} />
-          ) : (
-            <div>
-              <div style={{ fontSize: 36, marginBottom: 8 }}>📸</div>
-              <div style={{ fontSize: 13, color: C.greyDark }}>{uploading ? "Uploading..." : "Tap to upload product image"}</div>
+        <label style={S.label}>Product Images (up to 6)</label>
+
+        {/* Image preview carousel */}
+        {previews.length > 0 && (
+          <div style={{ marginBottom: 10, borderRadius: 12, overflow: "hidden", position: "relative", height: 180 }}>
+            <ProductImageCarousel images={previews} height={180} />
+          </div>
+        )}
+
+        {/* Thumbnail row with remove */}
+        {previews.length > 0 && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+            {previews.map((url, i) => (
+              <div key={i} style={{ position: "relative", width: 56, height: 56 }}>
+                <img src={url} style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 8, border: `2px solid ${i === 0 ? C.primary : C.border}` }} />
+                {i === 0 && <div style={{ position: "absolute", bottom: -2, left: 0, right: 0, background: C.primary, color: "white", fontSize: 8, fontWeight: 700, textAlign: "center", borderRadius: "0 0 6px 6px" }}>MAIN</div>}
+                <button style={{ position: "absolute", top: -4, right: -4, background: C.error, border: "none", borderRadius: "50%", width: 18, height: 18, color: "white", fontSize: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}
+                  onClick={() => removeImage(i)}>✕</button>
+              </div>
+            ))}
+            {previews.length < 6 && (
+              <div style={{ width: 56, height: 56, border: `2px dashed ${C.border}`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", fontSize: 22, color: C.greyDark }}
+                onClick={() => document.getElementById("imgInput").click()}>+</div>
+            )}
+          </div>
+        )}
+
+        {/* Upload button */}
+        {previews.length === 0 && (
+          <div style={{ border: `2px dashed ${C.border}`, borderRadius: 12, padding: 20, textAlign: "center", marginBottom: 12, cursor: "pointer" }}
+            onClick={() => document.getElementById("imgInput").click()}>
+            <div style={{ fontSize: 36, marginBottom: 8 }}>📸</div>
+            <div style={{ fontSize: 13, color: C.greyDark, fontWeight: 600 }}>
+              {uploading ? `Uploading... ${uploadProgress}%` : "Tap to upload photos (max 6)"}
             </div>
-          )}
-        </div>
-        <input id="imgInput" type="file" accept="image/*" style={{ display: "none" }} onChange={handleImageUpload} />
+            <div style={{ fontSize: 11, color: C.greyDark, marginTop: 4 }}>Select multiple photos at once</div>
+          </div>
+        )}
+        {previews.length > 0 && uploading && (
+          <div style={{ marginBottom: 10, background: C.grey, borderRadius: 6, height: 6, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${uploadProgress}%`, background: C.primary, transition: "width 0.3s" }} />
+          </div>
+        )}
+        <input id="imgInput" type="file" accept="image/*" multiple style={{ display: "none" }} onChange={handleImageUpload} />
 
         <label style={S.label}>Product Name *</label>
         <input style={{ ...S.input, marginBottom: 12 }} placeholder="e.g. Ankara Dress" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
@@ -274,7 +331,7 @@ function AddProductModal({ user, onClose, onAdded }) {
         <input style={{ ...S.input, marginBottom: 16 }} type="number" placeholder="e.g. 10" value={form.stock} onChange={e => setForm({ ...form, stock: e.target.value })} />
         <div style={{ display: "flex", gap: 10 }}>
           <button style={{ ...S.btn(), flex: 1, opacity: (loading || uploading) ? 0.7 : 1 }} onClick={handle} disabled={loading || uploading}>
-            {loading ? "Adding..." : uploading ? "Uploading image..." : "Add Product"}
+            {loading ? "Adding..." : uploading ? `Uploading ${uploadProgress}%...` : "Add Product"}
           </button>
           <button style={{ ...S.btn("outline"), flex: 1 }} onClick={onClose}>Cancel</button>
         </div>
@@ -285,7 +342,7 @@ function AddProductModal({ user, onClose, onAdded }) {
 
 
 // ── Stories Feature ────────────────────────────────────────────
-function StoriesBar({ user }) {
+function StoriesBar({ user, setPage, setViewingPublicProfile }) {
   const [stories, setStories] = useState([]);
   const [viewingStory, setViewingStory] = useState(null);
   const [viewingIndex, setViewingIndex] = useState(0);
@@ -296,6 +353,11 @@ function StoriesBar({ user }) {
   const [previewUrl, setPreviewUrl] = useState("");
   const [songUrl, setSongUrl] = useState("");
   const [songName, setSongName] = useState("");
+  const [showMusicSearch, setShowMusicSearch] = useState(false);
+  const [musicQuery, setMusicQuery] = useState("");
+  const [musicResults, setMusicResults] = useState([]);
+  const [musicSearching, setMusicSearching] = useState(false);
+  const [selectedMusicPreview, setSelectedMusicPreview] = useState(null);
   const [progress, setProgress] = useState(0);
   const progressRef = useRef(null);
   const audioRef = useRef(null);
@@ -366,6 +428,27 @@ function StoriesBar({ user }) {
       audio.play().catch(() => {});
       audioRef.current = audio;
     }
+  };
+
+  const searchMusic = async (q) => {
+    if (!q.trim()) return;
+    setMusicSearching(true);
+    try {
+      // Use iTunes Search API - free, no key needed, millions of songs
+      const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=20`);
+      const data = await res.json();
+      setMusicResults(data.results || []);
+    } catch (err) { console.error(err); }
+    setMusicSearching(false);
+  };
+
+  const selectMusicTrack = (track) => {
+    setSongUrl(track.previewUrl || "");
+    setSongName(`${track.trackName} - ${track.artistName}`);
+    setSelectedMusicPreview(track.previewUrl);
+    setShowMusicSearch(false);
+    setMusicResults([]);
+    setMusicQuery("");
   };
 
   const handleFileSelect = (e) => {
@@ -509,10 +592,24 @@ function StoriesBar({ user }) {
             )}
             <div style={{ marginBottom: 14 }}>
               <label style={S.label}>🎵 Add a song (optional)</label>
-              <input id="songInput" type="file" accept="audio/*" style={{ display: "none" }} onChange={handleSongSelect} />
-              <button style={{ ...S.btn("outline"), width: "100%", padding: "10px" }} onClick={() => document.getElementById("songInput").click()}>
-                {songName ? `🎵 ${songName}` : "Choose a song from your device"}
-              </button>
+              {songName ? (
+                <div style={{ background: `${C.primary}10`, border: `1px solid ${C.primary}30`, borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                  <span style={{ fontSize: 20 }}>🎵</span>
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: C.primary }}>{songName}</span>
+                  <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: C.greyDark }} onClick={() => { setSongUrl(""); setSongName(""); setSelectedMusicPreview(null); }}>✕</button>
+                </div>
+              ) : null}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button style={{ ...S.btn("outline"), flex: 1, padding: "10px", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+                  onClick={() => setShowMusicSearch(true)}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="2" strokeLinecap="round"><circle cx="9" cy="9" r="5"/><line x1="14.5" y1="14.5" x2="19" y2="19"/></svg>
+                  Search Songs
+                </button>
+                <input id="songInput" type="file" accept="audio/*" style={{ display: "none" }} onChange={handleSongSelect} />
+                <button style={{ ...S.btn("outline"), flex: 1, padding: "10px" }} onClick={() => document.getElementById("songInput").click()}>
+                  📁 My Music
+                </button>
+              </div>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button style={{ ...S.btn(), flex: 1, opacity: uploading ? 0.7 : 1 }} onClick={handleUpload} disabled={uploading}>
@@ -520,6 +617,58 @@ function StoriesBar({ user }) {
               </button>
               <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => { setShowUploadModal(false); setPreviewUrl(""); setSelectedFile(null); setSongUrl(""); setSongName(""); }}>Cancel</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Music Search Modal */}
+      {showMusicSearch && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.95)", zIndex: 700, display: "flex", flexDirection: "column", fontFamily: FONT }}>
+          <div style={{ padding: "16px 16px 0", display: "flex", alignItems: "center", gap: 12 }}>
+            <button style={{ background: "none", border: "none", color: "white", fontSize: 24, cursor: "pointer" }} onClick={() => { setShowMusicSearch(false); setMusicResults([]); setMusicQuery(""); }}>←</button>
+            <div style={{ fontWeight: 800, fontSize: 18, color: "white" }}>🎵 Search Music</div>
+          </div>
+          <div style={{ padding: "12px 16px" }}>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                style={{ flex: 1, background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 24, padding: "12px 18px", color: "white", fontSize: 15, outline: "none" }}
+                placeholder="Search songs or artists..."
+                value={musicQuery}
+                onChange={e => setMusicQuery(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && searchMusic(musicQuery)}
+                autoFocus
+              />
+              <button style={{ ...S.btn(), padding: "12px 18px", borderRadius: 24 }} onClick={() => searchMusic(musicQuery)}>
+                Search
+              </button>
+            </div>
+          </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: "0 16px" }}>
+            {musicSearching && <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.5)" }}>Searching...</div>}
+            {!musicSearching && musicResults.length === 0 && musicQuery && (
+              <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.5)" }}>No results found</div>
+            )}
+            {!musicSearching && musicResults.length === 0 && !musicQuery && (
+              <div style={{ textAlign: "center", padding: 40 }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>🎵</div>
+                <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Search for any song or artist</div>
+              </div>
+            )}
+            {musicResults.map((track, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.06)", cursor: "pointer" }}
+                onClick={() => selectMusicTrack(track)}>
+                <div style={{ width: 52, height: 52, borderRadius: 8, overflow: "hidden", background: "#333", flexShrink: 0 }}>
+                  {track.artworkUrl60 ? <img src={track.artworkUrl60} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🎵</div>}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, color: "white", fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.trackName}</div>
+                  <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 2 }}>{track.artistName} · {Math.floor((track.trackTimeMillis || 0) / 60000)}:{String(Math.floor(((track.trackTimeMillis || 0) % 60000) / 1000)).padStart(2, "0")}</div>
+                </div>
+                <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: "50%", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -548,9 +697,15 @@ function StoriesBar({ user }) {
                   ? <img src={viewingStory.imageUrl} alt={viewingStory.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   : <div style={{ height: "100%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>👤</div>}
               </div>
-              <div>
+              <div style={{ cursor: "pointer" }} onClick={() => {
+                closeStory();
+                if (viewingStory.userId && viewingStory.userId !== user?.uid) {
+                  setViewingPublicProfile && setViewingPublicProfile({ uid: viewingStory.userId, displayName: viewingStory.userName, photoURL: viewingStory.userPhoto });
+                  setPage && setPage("publicProfile");
+                }
+              }}>
                 <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{viewingStory.userName}</div>
-                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>24hrs</div>
+                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>Tap to view profile</div>
               </div>
             </div>
             <button style={{ background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={closeStory}>✕</button>
@@ -719,7 +874,7 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
 
   useEffect(() => {
     getDocs(collection(db, "users")).then(snap => setSellers(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.isSeller && s.city)));
-    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted && p.sellerCity)));
+    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted)));
   }, []);
 
   const detectLocation = () => {
@@ -806,7 +961,9 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
                 <div style={{ flex: 1 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <span style={{ fontWeight: 700, fontSize: 15 }}>{s.businessName || s.name}</span>
-                    {s.verified && <VerifiedBadge size={14} />}
+                    {s.premium && <PremiumBadge size={18} />}
+                    {!s.premium && s.verified && <VerifiedBadge size={14} />}
+                    {!s.premium && !s.verified && s.isSeller && <TrendingBadge />}
                     {s.premium && <svg width="12" height="12" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>}
                   </div>
                   <div style={{ fontSize: 12, color: C.greyDark, marginTop: 2 }}>📍 {s.city}</div>
@@ -839,7 +996,10 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
                 <div style={{ padding: 10 }}>
                   <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
                   <div style={{ fontSize: 11, color: C.greyDark, display: "flex", alignItems: "center", gap: 3 }}>
-                    {p.seller} {p.sellerVerified && <VerifiedBadge size={11} />}
+                    {p.seller}
+                    {p.sellerPremium && <PremiumBadge size={15} />}
+                    {!p.sellerPremium && p.sellerVerified && <VerifiedBadge size={12} />}
+                    {!p.sellerPremium && !p.sellerVerified && p.isSeller && <TrendingBadge />}
                   </div>
                   <div style={{ fontSize: 11, color: C.greyDark }}>📍 {p.sellerCity}</div>
                   <div style={{ color: C.primary, fontWeight: 800, marginTop: 4 }}>GH₵{p.price}</div>
@@ -1108,7 +1268,7 @@ function NotificationsPage({ user }) {
   const getIcon = (type) => {
     const icons = {
       like: "❤️", follow: "👤", order: "🛒", comment: "💬",
-      ad_approved: "⭐", ad_rejected: "❌", premium: "⭐", review: "⭐",
+      ad_approved: "⭐", ad_rejected: "❌", premium: "⭐", review: "⭐", nudge: "👋",
     };
     return icons[type] || "🔔";
   };
@@ -1247,7 +1407,7 @@ async function sendNotification(toUserId, type, message, fromUserName) {
       read: false, createdAt: serverTimestamp(),
     });
     if ("Notification" in window && Notification.permission === "granted" && "serviceWorker" in navigator) {
-      const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", ad_approved: "⭐", premium: "⭐", review: "⭐" };
+      const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", ad_approved: "⭐", premium: "⭐", review: "⭐", nudge: "👋" };
       const icon = icons[type] || "🔔";
       navigator.serviceWorker.ready.then(reg => {
         reg.showNotification("E-Connect " + icon, {
@@ -1307,8 +1467,97 @@ function ApprovedAdsBanner() {
   );
 }
 
+// ── Premium Carousel ─────────────────────────────────────────
+function PremiumCarousel({ products, setSelectedProduct, setPage }) {
+  const [current, setCurrent] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const timerRef = useRef(null);
+  const touchStartX = useRef(null);
+
+  useEffect(() => {
+    if (paused || products.length <= 1) return;
+    timerRef.current = setInterval(() => setCurrent(prev => (prev + 1) % products.length), 2000);
+    return () => clearInterval(timerRef.current);
+  }, [paused, products.length]);
+
+  if (!products.length) return null;
+  const p = products[current];
+
+  const handleTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; setPaused(true); };
+  const handleTouchEnd = (e) => {
+    if (touchStartX.current !== null) {
+      const diff = touchStartX.current - e.changedTouches[0].clientX;
+      if (Math.abs(diff) > 40) setCurrent(prev => diff > 0 ? (prev + 1) % products.length : (prev - 1 + products.length) % products.length);
+    }
+    touchStartX.current = null;
+    setPaused(false);
+  };
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <PremiumBadge size={22} />
+        <span style={{ fontWeight: 900, fontSize: 17 }}>Premium Stores</span>
+        <span style={{ fontSize: 11, color: C.greyDark }}>{products.length} featured</span>
+      </div>
+
+      {/* Large banner like MJ's Cuisine */}
+      <div style={{ borderRadius: 16, overflow: "hidden", cursor: "pointer", position: "relative", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
+        onClick={() => { setSelectedProduct(p); setPage("product"); }}
+        onTouchStart={handleTouchStart}
+        onTouchEnd={handleTouchEnd}>
+
+        {/* Big image */}
+        <div style={{ height: 220, background: C.grey, position: "relative", overflow: "hidden" }}>
+          {p.image
+            ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            : <ProductPlaceholder name={p.name} category={p.category} />}
+
+          {/* Dark gradient overlay */}
+          <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.15) 0%, transparent 40%, rgba(0,0,0,0.75) 100%)" }} />
+
+          {/* Premium badge top left */}
+          <div style={{ position: "absolute", top: 12, left: 12, background: "#FFD700", borderRadius: 20, padding: "5px 14px", fontSize: 11, fontWeight: 800, color: "#333", display: "flex", alignItems: "center", gap: 5, boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }}>
+            <PremiumBadge size={13} /> Premium ⭐
+          </div>
+
+          {/* Trending label top right */}
+          <div style={{ position: "absolute", top: 12, right: 12, background: "linear-gradient(135deg, #FF6B6B, #FF8E53)", borderRadius: 20, padding: "5px 12px", fontSize: 11, fontWeight: 800, color: "white" }}>
+            🔥 Trending
+          </div>
+
+          {/* Store + product info bottom */}
+          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "20px 16px 14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              <span style={{ color: "rgba(255,255,255,0.85)", fontSize: 13, fontWeight: 600 }}>{p.seller}</span>
+              <PremiumBadge size={14} />
+            </div>
+            <div style={{ fontWeight: 900, fontSize: 20, color: "white", marginBottom: 2, textShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>{p.name}</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ color: "#FFD700", fontWeight: 900, fontSize: 20 }}>GH₵{p.price}</span>
+              <div style={{ background: C.primary, borderRadius: 20, padding: "6px 18px", color: "white", fontWeight: 700, fontSize: 13 }}>Shop Now</div>
+            </div>
+          </div>
+        </div>
+
+        {/* Dot indicators */}
+        {products.length > 1 && (
+          <div style={{ background: "#111", padding: "8px 0", display: "flex", gap: 5, justifyContent: "center", alignItems: "center" }}>
+            {products.map((_, i) => (
+              <div key={i} onClick={e => { e.stopPropagation(); setCurrent(i); setPaused(true); setTimeout(() => setPaused(false), 3000); }}
+                style={{ width: i === current ? 20 : 6, height: 6, borderRadius: 3, background: i === current ? "#FFD700" : "rgba(255,255,255,0.3)", transition: "all 0.3s", cursor: "pointer" }} />
+            ))}
+            <span style={{ color: "rgba(255,255,255,0.5)", fontSize: 10, marginLeft: 6 }}>{paused ? "⏸" : "▶"}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
 // ── Home Page ──────────────────────────────────────────────────
-function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
+function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPublicProfile }) {
   const [products, setProducts] = useState([]);
   const [activeCategory, setActiveCategory] = useState("All");
   const [search, setSearch] = useState("");
@@ -1345,7 +1594,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
         <input style={{ ...S.input, paddingLeft: 38 }} placeholder="Search products..." value={search} onChange={e => setSearch(e.target.value)} />
       </div>
 
-      <StoriesBar user={user} />
+      <StoriesBar user={user} setPage={setPage} setViewingPublicProfile={setViewingPublicProfile} />
 
       <ApprovedAdsBanner />
 
@@ -1364,26 +1613,34 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
         ))}
       </div>
 
-      {filtered.some(p => p.premium) && (
-        <div style={{ marginBottom: 20 }}>
+      {/* ── TIER 1: PREMIUM (Large Banner) ── */}
+      {filtered.some(p => p.sellerPremium) && (
+        <PremiumCarousel products={filtered.filter(p => p.sellerPremium)} setSelectedProduct={setSelectedProduct} setPage={setPage} />
+      )}
+
+      {/* ── TIER 2: VERIFIED (Medium Cards horizontal scroll) ── */}
+      {filtered.some(p => p.sellerVerified && !p.sellerPremium) && (
+        <div style={{ marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
-            <span style={{ fontWeight: 800, fontSize: 15 }}>Premium Stores</span>
+            <VerifiedBadge size={18} />
+            <span style={{ fontWeight: 800, fontSize: 16 }}>Verified Stores</span>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
-            {filtered.filter(p => p.premium).slice(0, 4).map(p => (
-              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", border: `2px solid #FFD700` }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
-                <div style={{ height: 140, overflow: "hidden", background: C.grey, position: "relative" }}>
+          <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8 }}>
+            {filtered.filter(p => p.sellerVerified && !p.sellerPremium).map(p => (
+              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", minWidth: 200, flexShrink: 0, border: `1.5px solid #1DA1F2` }}
+                onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+                <div style={{ height: 130, overflow: "hidden", background: C.grey, position: "relative" }}>
                   {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
-                  <div style={{ position: "absolute", top: 8, right: 8, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
-                    Premium
+                  <div style={{ position: "absolute", top: 8, left: 8, background: "#1DA1F2", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "white", display: "flex", alignItems: "center", gap: 4 }}>
+                    <VerifiedBadge size={10} /> Verified
                   </div>
                 </div>
-                <div style={{ padding: 12 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
-                  <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 4 }}>{p.seller}</div>
-                  <div style={{ color: C.primary, fontWeight: 800, fontSize: 16 }}>GH₵{p.price}</div>
+                <div style={{ padding: "10px 12px" }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{p.name}</div>
+                  <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                    {p.seller} <VerifiedBadge size={12} />
+                  </div>
+                  <div style={{ color: C.primary, fontWeight: 800, fontSize: 15 }}>GH₵{p.price}</div>
                 </div>
               </div>
             ))}
@@ -1391,36 +1648,36 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
         </div>
       )}
 
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <div>
-          <div style={S.sectionTitle}>Products</div>
-          <div style={{ fontSize: 13, color: C.greyDark }}>{filtered.length} products available</div>
+      {/* ── TIER 3: NEW/TRENDING (Small Cards) ── */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <TrendingBadge />
+          <span style={{ fontWeight: 800, fontSize: 16 }}>Trending</span>
+          <span style={{ fontSize: 12, color: C.greyDark }}>{filtered.filter(p => !p.sellerPremium && !p.sellerVerified).length} products</span>
         </div>
         <button style={{ ...S.btn(), padding: "8px 14px", fontSize: 12 }} onClick={() => setShowAdd(true)}>+ Add Product</button>
       </div>
 
       {loading ? (
         <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading products...</div>
-      ) : filtered.length === 0 ? (
+      ) : filtered.filter(p => !p.sellerPremium && !p.sellerVerified).length === 0 ? (
         <div style={{ textAlign: "center", padding: 40 }}>
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
           <p style={{ color: C.greyDark }}>No products yet. Be the first to add one!</p>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
-          {filtered.map(p => (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+          {filtered.filter(p => !p.sellerPremium && !p.sellerVerified).map(p => (
             <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
-              <div style={{ height: 140, overflow: "hidden", background: C.grey }}>
+              <div style={{ height: 110, overflow: "hidden", background: C.grey, position: "relative" }}>
                 {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => e.target.style.display = "none"} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+                <div style={{ position: "absolute", top: 6, left: 6 }}><TrendingBadge /></div>
               </div>
-              <div style={{ padding: 12 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{p.name}</div>
-                <div style={{ color: C.greyDark, fontSize: 12, marginBottom: 8, display: "flex", alignItems: "center", gap: 4 }}>
-                  {p.seller}
-                  {p.sellerVerified && <VerifiedBadge size={12} />}
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                  <span style={{ color: C.primary, fontWeight: 800, fontSize: 16 }}>GH₵{p.price}</span>
+              <div style={{ padding: 10 }}>
+                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{p.name}</div>
+                <div style={{ color: C.greyDark, fontSize: 11, marginBottom: 6 }}>{p.seller}</div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <span style={{ color: C.primary, fontWeight: 800, fontSize: 14 }}>GH₵{p.price}</span>
                   <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: C.greyDark, padding: 0 }}
                       onClick={async (e) => {
@@ -1436,7 +1693,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct }) {
                     </button>
                   </div>
                 </div>
-                <button style={{ ...S.btn(), width: "100%", padding: "8px" }} onClick={e => { e.stopPropagation(); addToCart(p); }}>Add to Cart</button>
+                <button style={{ ...S.btn(), width: "100%", padding: "7px", fontSize: 12 }} onClick={e => { e.stopPropagation(); addToCart(p); }}>Add to Cart</button>
               </div>
             </div>
           ))}
@@ -1497,12 +1754,19 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
       <button style={{ ...S.btn("grey"), marginBottom: 16, color: C.text }} onClick={() => setPage("home")}>← Back</button>
       <div style={S.card}>
         <div style={{ height: 260, overflow: "hidden", borderRadius: "14px 14px 0 0", background: C.grey }}>
-          {product.image ? <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
+          {product.images && product.images.length > 1
+            ? <ProductImageCarousel images={product.images} height={260} />
+            : product.image ? <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
         </div>
         <div style={{ padding: 20 }}>
           <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 4 }}>{product.category}</div>
           <h2 style={{ fontWeight: 800, fontSize: 22, margin: "0 0 4px" }}>{product.name}</h2>
-          <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8 }}>By {product.seller}</div>
+          <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+            By {product.seller}
+            {product.sellerPremium && <PremiumBadge size={18} />}
+            {!product.sellerPremium && product.sellerVerified && <VerifiedBadge size={15} />}
+            {!product.sellerPremium && !product.sellerVerified && product.isSeller && <TrendingBadge />}
+          </div>
           {productWithSeller.sellerData && (() => {
             const status = getShopStatus(product.sellerData);
             if (!status.label) return null;
@@ -1563,32 +1827,26 @@ function Cart({ cart, setCart, setPage, user }) {
 
   const total = cart.reduce((s, i) => s + i.price * i.qty, 0);
 
-  const [walletBalance, setWalletBalance] = useState(0);
-  const [payWithWallet, setPayWithWallet] = useState(false);
-  const [walletError, setWalletError] = useState("");
+  const [sellerContacts, setSellerContacts] = useState([]);
 
   useEffect(() => {
-    if (!user) return;
-    getDoc(doc(db, "wallets", user.uid)).then(d => { if (d.exists()) setWalletBalance(d.data().balance || 0); });
-  }, [user]);
+    // Load seller MoMo numbers for items in cart
+    if (!cart.length) return;
+    const sellerIds = [...new Set(cart.map(i => i.sellerId).filter(Boolean))];
+    Promise.all(sellerIds.map(id => getDoc(doc(db, "users", id)))).then(docs => {
+      setSellerContacts(docs.filter(d => d.exists()).map(d => ({
+        id: d.id, name: d.data().businessName || d.data().name, contact: d.data().storeContact || d.data().phone || ""
+      })));
+    });
+  }, [cart]);
 
   const handleOrder = async () => {
     if (!form.name || !form.phone) return;
-    setWalletError(""); setLoading(true);
-    if (payWithWallet) {
-      if (walletBalance < total) { setWalletError(`Insufficient wallet balance. You have GH₵${walletBalance.toFixed(2)} but need GH₵${total}.`); setLoading(false); return; }
-      // Deduct from wallet
-      await setDoc(doc(db, "wallets", user.uid), { balance: walletBalance - total }, { merge: true });
-      await addDoc(collection(db, "walletTransactions"), {
-        userId: user.uid, type: "payment", amount: total,
-        description: `Order payment (${cart.length} item${cart.length > 1 ? "s" : ""})`,
-        createdAt: serverTimestamp(),
-      });
-    }
+    setLoading(true);
     await addDoc(collection(db, "orders"), {
       items: cart, total, customerName: form.name, customerPhone: form.phone,
       address: form.address, delivery: form.delivery, userId: user?.uid || "guest",
-      status: "pending", paymentMethod: payWithWallet ? "wallet" : "momo",
+      status: "pending", paymentMethod: "momo",
       createdAt: serverTimestamp()
     });
     setDone(true); setCart([]);
@@ -1652,8 +1910,18 @@ function Cart({ cart, setCart, setPage, user }) {
               ))}
             </div>
             {form.delivery === "delivery" && <input style={{ ...S.input, marginBottom: 12 }} placeholder="Delivery address" value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} />}
-            <div style={{ background: `${C.primary}10`, borderRadius: 10, padding: 12, marginBottom: 16, fontSize: 13 }}>
-              📞 Payment contact: +233 54 194 0967
+            {/* Seller MoMo numbers */}
+            <div style={{ background: `${C.primary}10`, borderRadius: 10, padding: 12, marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8 }}>📞 Send MoMo payment to seller{sellerContacts.length > 1 ? "s" : ""}:</div>
+              {sellerContacts.length > 0 ? sellerContacts.map(s => (
+                <div key={s.id} style={{ fontSize: 13, marginBottom: 4, display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: C.greyDark }}>{s.name}</span>
+                  <span style={{ fontWeight: 700, color: C.primary }}>{s.contact || "Contact seller directly"}</span>
+                </div>
+              )) : (
+                <div style={{ fontSize: 12, color: C.greyDark }}>Contact the seller directly for payment details.</div>
+              )}
+              <div style={{ fontSize: 11, color: C.greyDark, marginTop: 6 }}>Pay the seller after placing your order.</div>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button style={{ ...S.btn(), flex: 1, opacity: loading ? 0.7 : 1 }} onClick={handleOrder} disabled={loading}>{loading ? "Placing..." : "Place Order"}</button>
@@ -1681,17 +1949,21 @@ function LivePage({ user, setPage, setCart }) {
   const [viewers, setViewers] = useState(0);
   const [loading, setLoading] = useState(false);
   const [streamEnded, setStreamEnded] = useState(false);
+  const [facingMode, setFacingMode] = useState("user");
+  const [muted, setMuted] = useState(false);
+  const [showProducts, setShowProducts] = useState(false);
+  const [floatingEmojis, setFloatingEmojis] = useState([]);
+  const [isSharing, setIsSharing] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const chatEndRef = useRef(null);
+  const emojiId = useRef(0);
 
   useEffect(() => {
-    // Fetch active live streams
     const q = query(collection(db, "liveStreams"), where("status", "==", "live"), orderBy("startedAt", "desc"));
     const unsub = onSnapshot(q, snap => {
       const streams = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setLiveStreams(streams);
-      // Check if current user has an active stream
       const mine = streams.find(s => s.sellerId === user?.uid);
       setMyStream(mine || null);
     }, () => {});
@@ -1712,27 +1984,50 @@ function LivePage({ user, setPage, setCart }) {
       setLiveChat(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     });
-    // Track viewer count
-    const viewerRef = doc(db, "liveStreams", viewing.id, "viewers", user?.uid || "guest");
+    const viewerRef = doc(db, "liveStreams", viewing.id, "viewers", user?.uid || "guest_" + Date.now());
     setDoc(viewerRef, { joinedAt: serverTimestamp() }, { merge: true });
     const viewersUnsub = onSnapshot(collection(db, "liveStreams", viewing.id, "viewers"), snap => setViewers(snap.size));
-    // Check if stream ended
     const streamUnsub = onSnapshot(doc(db, "liveStreams", viewing.id), snap => {
       if (snap.data()?.status === "ended") setStreamEnded(true);
     });
     return () => { unsub(); viewersUnsub(); streamUnsub(); };
   }, [viewing]);
 
-  const startCamera = async () => {
+  const startCamera = async (facing = "user") => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing }, audio: true });
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
     } catch (err) { alert("Camera access denied. Please allow camera to go live."); }
   };
 
+  const switchCamera = async () => {
+    const newFacing = facingMode === "user" ? "environment" : "user";
+    setFacingMode(newFacing);
+    await startCamera(newFacing);
+  };
+
+  const toggleMute = () => {
+    if (streamRef.current) {
+      const audioTrack = streamRef.current.getAudioTracks()[0];
+      if (audioTrack) { audioTrack.enabled = !audioTrack.enabled; setMuted(!audioTrack.enabled); }
+    }
+  };
+
+  const addFloatingEmoji = (emoji) => {
+    const id = emojiId.current++;
+    setFloatingEmojis(prev => [...prev, { id, emoji, x: Math.random() * 60 + 20 }]);
+    setTimeout(() => setFloatingEmojis(prev => prev.filter(e => e.id !== id)), 2500);
+  };
+
+  const handleScreenTap = (e) => {
+    const emojis = ["❤️", "🔥", "👏", "😍", "💯", "🎉", "👑", "✨"];
+    addFloatingEmoji(emojis[Math.floor(Math.random() * emojis.length)]);
+  };
+
   const goLive = async () => {
-    if (!liveForm.title) { alert("Please enter a title for your live."); return; }
+    if (!liveForm.title) { alert("Please enter a title."); return; }
     setLoading(true);
     const streamDoc = await addDoc(collection(db, "liveStreams"), {
       title: liveForm.title, description: liveForm.description,
@@ -1742,11 +2037,17 @@ function LivePage({ user, setPage, setCart }) {
       status: "live", viewerCount: 0,
       startedAt: serverTimestamp(),
     });
-    await sendNotification(user.uid, "premium", `🔴 You are now LIVE! Share your link to get viewers.`, "E-Connect");
+    // Notify all followers
+    try {
+      const followersSnap = await getDocs(collection(db, "users", user.uid, "followers"));
+      await Promise.all(followersSnap.docs.map(d =>
+        sendNotification(d.id, "premium", `🔴 ${user.displayName} is now LIVE! "${liveForm.title}" — Join now!`, user.displayName)
+      ));
+    } catch (e) {}
     setMyStream({ id: streamDoc.id, ...liveForm, sellerId: user.uid, sellerName: user.displayName, status: "live" });
     setShowGoLive(false);
     setLoading(false);
-    startCamera();
+    startCamera(facingMode);
   };
 
   const endStream = async () => {
@@ -1758,11 +2059,22 @@ function LivePage({ user, setPage, setCart }) {
 
   const sendChat = async () => {
     if (!chatMsg.trim() || !viewing) return;
+    const msg = chatMsg; setChatMsg("");
     await addDoc(collection(db, "liveStreams", viewing.id, "chat"), {
-      text: chatMsg, userId: user?.uid, userName: user?.displayName || "Guest",
+      text: msg, userId: user?.uid, userName: user?.displayName || "Guest",
+      userPhoto: user?.photoURL || "",
+      type: "message",
       createdAt: serverTimestamp(),
     });
-    setChatMsg("");
+  };
+
+  const sendLiveEmoji = async (emoji) => {
+    addFloatingEmoji(emoji);
+    if (!viewing) return;
+    await addDoc(collection(db, "liveStreams", viewing.id, "chat"), {
+      text: emoji, userId: user?.uid, userName: user?.displayName || "Guest",
+      type: "emoji", createdAt: serverTimestamp(),
+    });
   };
 
   const buyFromLive = (product) => {
@@ -1771,168 +2083,294 @@ function LivePage({ user, setPage, setCart }) {
       if (ex) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i);
       return [...prev, { ...product, qty: 1 }];
     });
-    alert(`✅ "${product.name}" added to cart!`);
+    addFloatingEmoji("🛒");
   };
 
-  // Viewing a live stream
+  const shareLive = async () => {
+    const url = `${window.location.origin}`;
+    if (navigator.share) {
+      await navigator.share({ title: `${user?.displayName} is LIVE!`, text: `Join ${user?.displayName} live on E-Connect: "${myStream?.title}"`, url });
+    } else {
+      navigator.clipboard.writeText(url);
+      alert("Link copied! Share it with your followers.");
+    }
+  };
+
+  // ── VIEWER: Full Screen TikTok/IG Style Live ──────────────────
   if (viewing) return (
-    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, display: "flex", flexDirection: "column" }}>
+    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, display: "flex", flexDirection: "column", fontFamily: FONT, overflow: "hidden" }}
+      onClick={handleScreenTap}>
+
+      {/* Background video area */}
+      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, #0f0c29, #302b63, #24243e)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ opacity: 0.15, fontSize: 80 }}>🎥</div>
+      </div>
+
+      {/* Floating emojis */}
+      {floatingEmojis.map(e => (
+        <div key={e.id} style={{ position: "absolute", bottom: 200, left: `${e.x}%`, fontSize: 32, animation: "none", zIndex: 20, pointerEvents: "none",
+          transition: "all 2.5s ease-out", transform: "translateY(-120px)", opacity: 0 }}
+          ref={el => { if (el) { setTimeout(() => { el.style.transform = "translateY(-180px)"; el.style.opacity = "1"; }, 50); setTimeout(() => { el.style.opacity = "0"; }, 2000); } }}>
+          {e.emoji}
+        </div>
+      ))}
+
+      {/* Gradient overlays */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 140, background: "linear-gradient(180deg, rgba(0,0,0,0.8) 0%, transparent 100%)", zIndex: 2 }} />
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 320, background: "linear-gradient(0deg, rgba(0,0,0,0.9) 0%, transparent 100%)", zIndex: 2 }} />
+
       {streamEnded ? (
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "white" }}>
-          <div style={{ width: 60, height: 60, borderRadius: "50%", background: "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8" strokeLinecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="23" y1="1" x2="1" y2="23"/></svg></div>
-          <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 8 }}>Live Ended</div>
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 10 }}>
+          <div style={{ width: 70, height: 70, borderRadius: "50%", background: "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.8"><circle cx="9" cy="7" r="4"/><path d="M3 21v-2a4 4 0 0 1 4-4h4"/><line x1="17" y1="11" x2="17" y2="17"/><line x1="14" y1="14" x2="20" y2="14"/></svg>
+          </div>
+          <div style={{ fontWeight: 800, fontSize: 20, color: "white", marginBottom: 8 }}>Live Ended</div>
           <div style={{ color: "rgba(255,255,255,0.6)", marginBottom: 24 }}>This live stream has ended.</div>
           <button style={{ ...S.btn(), padding: "12px 28px" }} onClick={() => { setViewing(null); setStreamEnded(false); }}>Back to Lives</button>
         </div>
-      ) : (
-        <>
-          {/* Live video placeholder */}
-          <div style={{ flex: 1, position: "relative", background: "#111", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.4) 0%, transparent 30%, transparent 60%, rgba(0,0,0,0.7) 100%)" }} />
-
-            {/* Placeholder visual */}
-            <div style={{ textAlign: "center", color: "white", zIndex: 1 }}>
-              <div style={{ width: 80, height: 80, borderRadius: "50%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px", fontSize: 36 }}>
-                {viewing.sellerPhoto ? <img src={viewing.sellerPhoto} style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} /> : "🎥"}
-              </div>
-              <div style={{ fontWeight: 700, fontSize: 16 }}>{viewing.sellerName}</div>
-              <div style={{ fontSize: 13, opacity: 0.7, marginTop: 4 }}>is live</div>
+      ) : (<>
+        {/* TOP BAR */}
+        <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "48px 16px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 42, height: 42, borderRadius: "50%", overflow: "hidden", border: "2px solid white", background: "#333" }}>
+              {viewing.sellerPhoto ? <img src={viewing.sellerPhoto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white" }}>👤</div>}
             </div>
-
-            {/* Top bar */}
-            <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "16px 16px 0", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ background: C.error, borderRadius: 6, padding: "3px 8px", fontSize: 11, fontWeight: 800, color: "white" }}>🔴 LIVE</div>
-                <div style={{ background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "4px 10px", fontSize: 12, color: "white" }}>👁️ {viewers}</div>
-              </div>
-              <button style={{ background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 18 }} onClick={() => { setViewing(null); setStreamEnded(false); }}>✕</button>
+            <div>
+              <div style={{ color: "white", fontWeight: 800, fontSize: 15 }}>{viewing.sellerName}</div>
+              <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 12 }}>{viewing.title}</div>
             </div>
-
-            {/* Seller info */}
-            <div style={{ position: "absolute", bottom: 180, left: 16, right: 80, zIndex: 10 }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: "white", marginBottom: 2 }}>{viewing.sellerName}</div>
-              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.8)" }}>{viewing.title}</div>
-            </div>
-
-            {/* Products for sale */}
-            {viewing.products?.length > 0 && (
-              <div style={{ position: "absolute", bottom: 180, right: 8, display: "flex", flexDirection: "column", gap: 8, zIndex: 10 }}>
-                {viewing.products.slice(0, 3).map(p => (
-                  <div key={p.id} style={{ background: "rgba(0,0,0,0.7)", borderRadius: 10, padding: 8, width: 70, cursor: "pointer" }} onClick={() => buyFromLive(p)}>
-                    <div style={{ width: 54, height: 54, borderRadius: 8, overflow: "hidden", background: C.grey, marginBottom: 4 }}>
-                      {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
-                    </div>
-                    <div style={{ fontSize: 9, color: "white", fontWeight: 700, lineHeight: 1.2, marginBottom: 2 }}>{p.name?.slice(0, 12)}</div>
-                    <div style={{ fontSize: 10, color: C.accent, fontWeight: 800 }}>GH₵{p.price}</div>
-                    <div style={{ fontSize: 9, color: "white", background: C.primary, borderRadius: 4, padding: "2px 4px", textAlign: "center", marginTop: 2 }}>Buy</div>
-                  </div>
-                ))}
-              </div>
-            )}
+            <div style={{ background: C.error, borderRadius: 6, padding: "3px 8px", fontSize: 11, fontWeight: 800, color: "white", marginLeft: 4 }}>🔴 LIVE</div>
           </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "5px 10px", fontSize: 12, color: "white", display: "flex", alignItems: "center", gap: 4 }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              {viewers}
+            </div>
+            <button style={{ background: "rgba(255,255,255,0.15)", border: "none", color: "white", borderRadius: "50%", width: 34, height: 34, cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}
+              onClick={e => { e.stopPropagation(); setViewing(null); setStreamEnded(false); }}>✕</button>
+          </div>
+        </div>
 
-          {/* Live Chat */}
-          <div style={{ height: 180, background: "#111", display: "flex", flexDirection: "column" }}>
-            <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4 }}>
-              {liveChat.map(msg => (
-                <div key={msg.id} style={{ fontSize: 13, color: "white" }}>
-                  <span style={{ fontWeight: 700, color: C.primary }}>{msg.userName}: </span>
-                  <span style={{ color: "rgba(255,255,255,0.85)" }}>{msg.text}</span>
+        {/* PRODUCTS SIDE */}
+        {viewing.products?.length > 0 && (
+          <div style={{ position: "absolute", right: 10, top: "30%", zIndex: 10 }} onClick={e => e.stopPropagation()}>
+            <button style={{ background: "rgba(0,0,0,0.6)", border: "none", borderRadius: 20, padding: "6px 10px", color: "white", fontSize: 11, fontWeight: 700, cursor: "pointer", marginBottom: 8, width: "100%", backdropFilter: "blur(8px)" }}
+              onClick={() => setShowProducts(!showProducts)}>
+              🛒 {viewing.products.length}
+            </button>
+            {showProducts && viewing.products.slice(0, 4).map(p => (
+              <div key={p.id} style={{ background: "rgba(0,0,0,0.75)", borderRadius: 12, padding: 8, width: 78, cursor: "pointer", marginBottom: 8, backdropFilter: "blur(10px)" }}
+                onClick={() => buyFromLive(p)}>
+                <div style={{ width: 62, height: 62, borderRadius: 8, overflow: "hidden", background: "#333", marginBottom: 4 }}>
+                  {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
                 </div>
-              ))}
-              <div ref={chatEndRef} />
-            </div>
-            <div style={{ display: "flex", gap: 8, padding: "8px 12px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
-              <input style={{ ...S.input, flex: 1, background: "rgba(255,255,255,0.1)", color: "white", border: "none", fontSize: 13 }} placeholder="Say something..." value={chatMsg} onChange={e => setChatMsg(e.target.value)} onKeyDown={e => e.key === "Enter" && sendChat()} />
-              <button style={{ ...S.btn(), padding: "8px 16px" }} onClick={sendChat}>Send</button>
-            </div>
+                <div style={{ fontSize: 9, color: "white", fontWeight: 700, lineHeight: 1.2, marginBottom: 2 }}>{p.name?.slice(0, 12)}</div>
+                <div style={{ fontSize: 10, color: C.accent, fontWeight: 800 }}>GH₵{p.price}</div>
+                <div style={{ fontSize: 9, background: C.primary, color: "white", borderRadius: 4, padding: "2px 0", textAlign: "center", marginTop: 3 }}>+ Cart</div>
+              </div>
+            ))}
           </div>
-        </>
-      )}
+        )}
+
+        {/* FLOATING CHAT */}
+        <div style={{ position: "absolute", bottom: 130, left: 12, right: viewing.products?.length > 0 ? 100 : 12, zIndex: 10, maxHeight: 220, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}
+          onClick={e => e.stopPropagation()}>
+          {liveChat.filter(m => m.type !== "emoji").slice(-12).map(msg => (
+            <div key={msg.id} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <div style={{ width: 28, height: 28, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
+                {msg.userPhoto ? <img src={msg.userPhoto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "white" }}>👤</div>}
+              </div>
+              <div style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", borderRadius: "0 12px 12px 12px", padding: "6px 12px", maxWidth: "85%" }}>
+                <span style={{ fontWeight: 700, color: C.primary, fontSize: 12 }}>{msg.userName} </span>
+                <span style={{ color: "white", fontSize: 13 }}>{msg.text}</span>
+              </div>
+            </div>
+          ))}
+          <div ref={chatEndRef} />
+        </div>
+
+        {/* EMOJI ROW + CHAT INPUT */}
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 10, padding: "8px 12px 24px" }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: "flex", gap: 10, marginBottom: 8, justifyContent: "center" }}>
+            {["❤️","🔥","😍","👏","💯","🎉","👑","✨"].map(em => (
+              <button key={em} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: "50%", width: 36, height: 36, cursor: "pointer", fontSize: 18, backdropFilter: "blur(8px)" }}
+                onClick={() => sendLiveEmoji(em)}>{em}</button>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={{ width: 34, height: 34, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
+              {user?.photoURL ? <img src={user.photoURL} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 14 }}>👤</div>}
+            </div>
+            <input style={{ flex: 1, background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.25)", borderRadius: 24, padding: "10px 16px", color: "white", fontSize: 14, outline: "none", backdropFilter: "blur(8px)" }}
+              placeholder="Say something..."
+              value={chatMsg}
+              onChange={e => setChatMsg(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && sendChat()}
+            />
+            <button style={{ background: C.primary, border: "none", borderRadius: "50%", width: 38, height: 38, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+              onClick={sendChat}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
+        </div>
+      </>)}
     </div>
   );
 
-  // My active live stream view
+  // ── SELLER: Live Broadcast View ────────────────────────────────
   if (myStream) return (
-    <div style={S.page}>
-      <div style={{ ...S.card, padding: 20, background: "linear-gradient(135deg, #FF0000, #CC0000)", color: "white", marginBottom: 16, textAlign: "center" }}>
-        <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 4 }}>🔴 YOU ARE LIVE</div>
-        <div style={{ fontSize: 20, fontWeight: 900, marginBottom: 8 }}>{myStream.title}</div>
-        <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 16 }}>Share your link so viewers can join!</div>
-        <div style={{ background: "rgba(255,255,255,0.2)", borderRadius: 10, padding: "10px 14px", fontSize: 12, marginBottom: 12, wordBreak: "break-all" }}>
-          {window.location.origin}
-        </div>
-        <video ref={videoRef} autoPlay muted playsInline style={{ width: "100%", borderRadius: 12, marginBottom: 12, background: "#000", maxHeight: 200, objectFit: "cover" }} />
-        <button style={{ background: "white", color: C.error, border: "none", borderRadius: 10, padding: "12px 32px", fontWeight: 800, fontSize: 15, cursor: "pointer", width: "100%" }} onClick={endStream}>
-          End Live Stream
-        </button>
-      </div>
+    <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, fontFamily: FONT, overflow: "hidden" }}
+      onClick={handleScreenTap}>
 
-      {/* Live products */}
-      <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 10 }}>Products in this live</div>
-      {myStream.products?.map(p => (
-        <div key={p.id} style={{ ...S.card, padding: 12, display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-          <div style={{ width: 48, height: 48, borderRadius: 8, overflow: "hidden", background: C.grey }}>
-            {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700 }}>{p.name}</div>
-            <div style={{ color: C.primary, fontWeight: 800 }}>GH₵{p.price}</div>
-          </div>
+      {/* Camera preview */}
+      <video ref={videoRef} autoPlay muted playsInline style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+
+      {/* Gradient overlays */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 160, background: "linear-gradient(180deg, rgba(0,0,0,0.85) 0%, transparent 100%)" }} />
+      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 280, background: "linear-gradient(0deg, rgba(0,0,0,0.9) 0%, transparent 100%)" }} />
+
+      {/* Floating emojis */}
+      {floatingEmojis.map(e => (
+        <div key={e.id} style={{ position: "absolute", bottom: 200, left: `${e.x}%`, fontSize: 32, zIndex: 20, pointerEvents: "none", transition: "all 2.5s ease-out" }}
+          ref={el => { if (el) { setTimeout(() => { el.style.transform = "translateY(-160px)"; el.style.opacity = "0"; }, 100); } }}>
+          {e.emoji}
         </div>
       ))}
+
+      {/* TOP CONTROLS */}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "50px 16px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ background: C.error, borderRadius: 8, padding: "5px 10px", fontSize: 12, fontWeight: 800, color: "white" }}>🔴 LIVE</div>
+          <div style={{ background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "5px 10px", fontSize: 12, color: "white", display: "flex", alignItems: "center", gap: 4 }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="white"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            {viewers}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {/* Mute */}
+          <button style={{ background: muted ? "rgba(255,0,0,0.5)" : "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 40, height: 40, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            onClick={e => { e.stopPropagation(); toggleMute(); }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round">
+              {muted ? <><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></> : <><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></>}
+            </svg>
+          </button>
+          {/* Flip camera */}
+          <button style={{ background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 40, height: 40, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            onClick={e => { e.stopPropagation(); switchCamera(); }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          </button>
+          {/* Share */}
+          <button style={{ background: "rgba(0,0,0,0.5)", border: "none", borderRadius: "50%", width: 40, height: 40, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+            onClick={e => { e.stopPropagation(); shareLive(); }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          </button>
+          {/* End */}
+          <button style={{ background: C.error, border: "none", borderRadius: 20, padding: "0 16px", height: 40, color: "white", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
+            onClick={e => { e.stopPropagation(); endStream(); }}>End</button>
+        </div>
+      </div>
+
+      {/* Live title */}
+      <div style={{ position: "absolute", top: 110, left: 16, zIndex: 10 }}>
+        <div style={{ color: "white", fontWeight: 800, fontSize: 16 }}>{myStream.title}</div>
+      </div>
+
+      {/* Products on right */}
+      {myStream.products?.length > 0 && (
+        <div style={{ position: "absolute", right: 10, top: "35%", transform: "translateY(-50%)", zIndex: 10 }} onClick={e => e.stopPropagation()}>
+          {myStream.products.slice(0, 3).map(p => (
+            <div key={p.id} style={{ background: "rgba(0,0,0,0.7)", borderRadius: 12, padding: 8, width: 72, marginBottom: 8, backdropFilter: "blur(8px)" }}>
+              <div style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", background: "#333", marginBottom: 4 }}>
+                {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+              </div>
+              <div style={{ fontSize: 9, color: "white", fontWeight: 700 }}>{p.name?.slice(0, 10)}</div>
+              <div style={{ fontSize: 10, color: C.accent, fontWeight: 800 }}>GH₵{p.price}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* CHAT - scrollable by finger */}
+      <div style={{ position: "absolute", bottom: 70, left: 12, right: myStream.products?.length > 0 ? 95 : 12, zIndex: 10, maxHeight: 180, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}
+        onClick={e => e.stopPropagation()}>
+        {liveChat.filter(m => m.type !== "emoji").slice(-15).map(msg => (
+          <div key={msg.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ width: 26, height: 26, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
+              {msg.userPhoto ? <img src={msg.userPhoto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "white" }}>👤</div>}
+            </div>
+            <div style={{ background: "rgba(0,0,0,0.5)", backdropFilter: "blur(6px)", borderRadius: "0 10px 10px 10px", padding: "5px 10px" }}>
+              <span style={{ fontWeight: 700, color: C.primary, fontSize: 11 }}>{msg.userName}: </span>
+              <span style={{ color: "white", fontSize: 12 }}>{msg.text}</span>
+            </div>
+          </div>
+        ))}
+        <div ref={chatEndRef} />
+      </div>
+
+      {/* BOTTOM - hint */}
+      <div style={{ position: "absolute", bottom: 16, left: 0, right: 0, zIndex: 10, display: "flex", justifyContent: "center" }} onClick={e => e.stopPropagation()}>
+        <div style={{ background: "rgba(0,0,0,0.4)", borderRadius: 20, padding: "6px 16px", display: "flex", gap: 16, alignItems: "center" }}>
+          <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>👆 Tap screen to send emojis</span>
+          <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>📜 Scroll chat above</span>
+        </div>
+      </div>
     </div>
   );
 
+  // ── LIVE STREAMS LIST ──────────────────────────────────────────
   return (
     <div style={S.page}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <div style={S.sectionTitle}>🔴 Live Selling</div>
-        <button style={{ ...S.btn(), padding: "8px 16px", fontSize: 13 }} onClick={() => setShowGoLive(true)}>Go Live</button>
+        <div style={S.sectionTitle}>🔴 Live</div>
+        <button style={{ ...S.btn(), padding: "8px 16px", fontSize: 13 }} onClick={() => setShowGoLive(true)}>+ Go Live</button>
       </div>
-      <p style={{ ...S.sectionSub, marginBottom: 20 }}>Watch sellers, ask questions, buy instantly</p>
+      <p style={{ ...S.sectionSub, marginBottom: 20 }}>Watch sellers live · Buy directly · Ask questions</p>
 
       {liveStreams.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 60 }}>
-          <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 16, opacity: 0.5 }}><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>
+        <div style={{ textAlign: "center", padding: "60px 20px" }}>
+          <div style={{ width: 80, height: 80, borderRadius: "50%", background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.5" strokeLinecap="round"><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>
+          </div>
           <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>No Live Streams</div>
-          <div style={{ color: C.greyDark, fontSize: 14, marginBottom: 24 }}>Nobody is live right now. Be the first to go live!</div>
+          <div style={{ color: C.greyDark, fontSize: 14, marginBottom: 24 }}>Nobody is live right now. Be the first!</div>
           <button style={{ ...S.btn(), padding: "12px 28px" }} onClick={() => setShowGoLive(true)}>🎥 Start Live Selling</button>
         </div>
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 80 }}>
           {liveStreams.map(stream => (
             <div key={stream.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => setViewing(stream)}>
-              <div style={{ height: 110, background: "linear-gradient(135deg, #1a1a2e, #16213e)", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
-                <div style={{ width: 50, height: 50, borderRadius: "50%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>
-                  {stream.sellerPhoto ? <img src={stream.sellerPhoto} style={{ width: "100%", height: "100%", borderRadius: "50%", objectFit: "cover" }} /> : "🎥"}
+              <div style={{ height: 130, background: "linear-gradient(135deg, #1a1a2e, #16213e)", display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}>
+                <div style={{ width: 54, height: 54, borderRadius: "50%", border: "3px solid white", overflow: "hidden", background: "#333" }}>
+                  {stream.sellerPhoto ? <img src={stream.sellerPhoto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 24 }}>🎥</div>}
                 </div>
-                <div style={{ position: "absolute", top: 8, left: 8, background: C.error, borderRadius: 6, padding: "2px 6px", fontSize: 10, fontWeight: 800, color: "white" }}>🔴 LIVE</div>
-                <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 10, padding: "2px 6px", fontSize: 10, color: "white" }}>👁️ {stream.viewerCount || 0}</div>
+                <div style={{ position: "absolute", top: 8, left: 8, background: C.error, borderRadius: 6, padding: "2px 7px", fontSize: 10, fontWeight: 800, color: "white" }}>🔴 LIVE</div>
+                <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.6)", borderRadius: 10, padding: "2px 7px", fontSize: 10, color: "white", display: "flex", alignItems: "center", gap: 3 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="white"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  {stream.viewerCount || 0}
+                </div>
+                <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(0deg, rgba(0,0,0,0.7) 0%, transparent 100%)", padding: "20px 10px 8px" }}>
+                  <div style={{ color: "white", fontWeight: 700, fontSize: 12 }}>{stream.sellerName}</div>
+                </div>
               </div>
               <div style={{ padding: "10px 12px" }}>
                 <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{stream.title}</div>
-                <div style={{ fontSize: 12, color: C.greyDark }}>{stream.sellerName}</div>
-                {stream.products?.length > 0 && <div style={{ fontSize: 11, color: C.primary, marginTop: 4 }}>🛒 {stream.products.length} products for sale</div>}
+                {stream.products?.length > 0 && <div style={{ fontSize: 11, color: C.primary }}>🛒 {stream.products.length} item{stream.products.length > 1 ? "s" : ""} for sale</div>}
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Go Live Modal */}
+      {/* GO LIVE MODAL */}
       {showGoLive && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 500, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-          <div style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }}>
+          <div style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: 24, width: "100%", maxWidth: 480, maxHeight: "88vh", overflowY: "auto" }}>
             <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>🎥 Go Live</div>
-            <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 20 }}>Start selling live to your followers</div>
-
+            <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 20 }}>Your followers will be notified when you go live</div>
             <label style={S.label}>Live Title *</label>
             <input style={{ ...S.input, marginBottom: 12 }} placeholder="e.g. Weekend Fashion Sale!" value={liveForm.title} onChange={e => setLiveForm({ ...liveForm, title: e.target.value })} />
-
             <label style={S.label}>Description (optional)</label>
             <textarea style={{ ...S.input, marginBottom: 16, height: 70, resize: "vertical" }} placeholder="What will you be selling?" value={liveForm.description} onChange={e => setLiveForm({ ...liveForm, description: e.target.value })} />
-
             <label style={S.label}>Select Products to Sell</label>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20, maxHeight: 200, overflowY: "auto" }}>
               {myProducts.length === 0 ? (
@@ -1943,7 +2381,7 @@ function LivePage({ user, setPage, setCart }) {
                   <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", borderRadius: 10, border: `2px solid ${selected ? C.primary : C.border}`, background: selected ? `${C.primary}08` : "white", cursor: "pointer" }}
                     onClick={() => setLiveForm(prev => ({ ...prev, products: selected ? prev.products.filter(x => x.id !== p.id) : [...prev.products, p] }))}>
                     <div style={{ width: 40, height: 40, borderRadius: 8, overflow: "hidden", background: C.grey }}>
-                      {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
+                      {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
                     </div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
@@ -1956,11 +2394,9 @@ function LivePage({ user, setPage, setCart }) {
                 );
               })}
             </div>
-
-            <div style={{ background: "#FFF3CD", borderRadius: 10, padding: 12, fontSize: 12, color: "#856404", marginBottom: 20 }}>
-              ⚠️ Make sure you allow camera and microphone access when prompted.
+            <div style={{ background: "#e8f9f7", borderRadius: 10, padding: 12, fontSize: 12, color: C.primary, fontWeight: 600, marginBottom: 20 }}>
+              📢 All your followers will get a notification when you go live!
             </div>
-
             <div style={{ display: "flex", gap: 10 }}>
               <button style={{ ...S.btn(), flex: 1, opacity: loading ? 0.7 : 1 }} onClick={goLive} disabled={loading}>
                 {loading ? "Starting..." : "🔴 Go Live Now"}
@@ -1974,7 +2410,8 @@ function LivePage({ user, setPage, setCart }) {
   );
 }
 
-function ReelsPage({ user }) {
+
+function ReelsPage({ user, setPage, setViewingUser }) {
   const [reels, setReels] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [showUpload, setShowUpload] = useState(false);
@@ -2017,11 +2454,38 @@ function ReelsPage({ user }) {
   };
 
   const handleLike = async (reel) => {
+    if (!user) return;
     const isLiked = liked[reel.id];
     setLiked(prev => ({ ...prev, [reel.id]: !isLiked }));
     setReels(prev => prev.map(r => r.id === reel.id ? { ...r, likes: (r.likes || 0) + (isLiked ? -1 : 1) } : r));
-    await setDoc(doc(db, "reelLikes", reel.id + "_" + (user?.uid || "g")), { liked: !isLiked, createdAt: serverTimestamp() }, { merge: true });
-    if (!isLiked && reel.userId && reel.userId !== user?.uid) await sendNotification(reel.userId, "like", `${user?.displayName || "Someone"} liked your reel`, user?.displayName);
+    // Save full user info permanently in reelLikes subcollection
+    const likeRef = doc(db, "reels", reel.id, "likes", user.uid);
+    if (isLiked) {
+      await setDoc(likeRef, { liked: false, removedAt: serverTimestamp() }, { merge: true });
+    } else {
+      await setDoc(likeRef, {
+        liked: true,
+        userId: user.uid,
+        userName: user.displayName || "User",
+        userPhoto: user.photoURL || "",
+        likedAt: serverTimestamp(),
+      });
+    }
+    await setDoc(doc(db, "reels", reel.id), { likes: (reel.likes || 0) + (isLiked ? -1 : 1) }, { merge: true });
+    if (!isLiked && reel.userId && reel.userId !== user?.uid) {
+      await sendNotification(reel.userId, "like", `❤️ ${user.displayName || "Someone"} liked your reel`, user.displayName);
+    }
+  };
+
+  const [showLikes, setShowLikes] = useState(false);
+  const [reelLikes, setReelLikes] = useState([]);
+  const [likesReelId, setLikesReelId] = useState(null);
+
+  const loadLikes = async (reelId) => {
+    setLikesReelId(reelId);
+    const snap = await getDocs(query(collection(db, "reels", reelId, "likes"), where("liked", "==", true)));
+    setReelLikes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    setShowLikes(true);
   };
 
   const handleFollow = async (reel) => {
@@ -2029,8 +2493,11 @@ function ReelsPage({ user }) {
     const isF = following[reel.userId];
     setFollowing(prev => ({ ...prev, [reel.userId]: !isF }));
     if (!isF) {
-      await setDoc(doc(db, "users", user.uid, "following", reel.userId), { name: reel.userName, followedAt: serverTimestamp() });
+      await setDoc(doc(db, "users", user.uid, "following", reel.userId), { name: reel.userName, followedAt: serverTimestamp(), unfollowed: false });
       await setDoc(doc(db, "users", reel.userId, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
+      await sendNotification(reel.userId, "follow", `${user.displayName || "Someone"} started following you`, user.displayName);
+    } else {
+      await setDoc(doc(db, "users", user.uid, "following", reel.userId), { unfollowed: true }, { merge: true });
     }
   };
 
@@ -2045,13 +2512,47 @@ function ReelsPage({ user }) {
     setComments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
   };
 
+  // Load existing follow state for current user on mount
+  useEffect(() => {
+    if (!user || reels.length === 0) return;
+    const uniqueUserIds = [...new Set(reels.map(r => r.userId).filter(id => id && id !== user.uid))];
+    uniqueUserIds.forEach(async uid => {
+      const followSnap = await getDoc(doc(db, "users", user.uid, "following", uid)).catch(() => null);
+      if (followSnap?.exists() && !followSnap.data().unfollowed) {
+        setFollowing(prev => ({ ...prev, [uid]: true }));
+      }
+    });
+  }, [reels.length, user?.uid]);
+
+  // Load existing likes for current user on mount
+  useEffect(() => {
+    if (!user || reels.length === 0) return;
+    reels.forEach(async reel => {
+      const likeSnap = await getDoc(doc(db, "reels", reel.id, "likes", user.uid)).catch(() => null);
+      if (likeSnap?.exists() && likeSnap.data().liked) {
+        setLiked(prev => ({ ...prev, [reel.id]: true }));
+      }
+    });
+  }, [reels.length, user?.uid]);
+
   const postComment = async (reelId) => {
-    if (!newComment.trim()) return;
-    await addDoc(collection(db, "reels", reelId, "comments"), { text: newComment, userName: user?.displayName || "User", userPhoto: user?.photoURL || "", createdAt: serverTimestamp() });
-    setNewComment(""); loadComments(reelId);
+    if (!newComment.trim() || !user) return;
+    const commentText = newComment.trim();
+    setNewComment("");
+    await addDoc(collection(db, "reels", reelId, "comments"), {
+      text: commentText,
+      userId: user.uid,
+      userName: user.displayName || "User",
+      userPhoto: user.photoURL || "",
+      createdAt: serverTimestamp(),
+    });
+    loadComments(reelId);
     setReels(prev => prev.map(r => r.id === reelId ? { ...r, comments: (r.comments || 0) + 1 } : r));
+    await setDoc(doc(db, "reels", reelId), { comments: (reels.find(r => r.id === reelId)?.comments || 0) + 1 }, { merge: true });
     const reelData = reels.find(r => r.id === reelId);
-    if (reelData?.userId && reelData.userId !== user?.uid) await sendNotification(reelData.userId, "comment", `${user?.displayName || "Someone"} commented on your reel: "${newComment.slice(0, 30)}..."`, user?.displayName);
+    if (reelData?.userId && reelData.userId !== user.uid) {
+      await sendNotification(reelData.userId, "comment", `💬 ${user.displayName || "Someone"} commented on your reel: "${commentText.slice(0, 40)}"`, user.displayName);
+    }
   };
 
   const handleVideoUpload = async (e) => {
@@ -2068,10 +2569,10 @@ function ReelsPage({ user }) {
     setUploading(false);
   };
 
-  if (loading) return <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#000", color: "white", fontSize: 16, fontFamily: FONT }}>Loading Reels...</div>;
+  if (loading) return <div style={{ height: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.offWhite, color: C.primary, fontSize: 16, fontFamily: FONT, fontWeight: 700 }}>Loading Reels...</div>;
 
   if (reels.length === 0) return (
-    <div style={{ height: "100vh", background: "#000", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "white", fontFamily: FONT }}>
+    <div style={{ height: "100vh", background: C.offWhite, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: C.text, fontFamily: FONT }}>
       <div style={{ fontSize: 64, marginBottom: 16 }}>🎬</div>
       <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>No Reels Yet</div>
       <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 13, marginBottom: 24 }}>Be the first to upload!</div>
@@ -2122,20 +2623,40 @@ function ReelsPage({ user }) {
           <div style={{ width: 48, height: 48, borderRadius: "50%", overflow: "hidden", border: "2px solid white", background: "#333" }}>
             {reel.userPhoto ? <img src={reel.userPhoto} alt={reel.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 20 }}>👤</div>}
           </div>
-          <button style={{ position: "absolute", bottom: -10, left: "50%", transform: "translateX(-50%)", background: following[reel.userId] ? "white" : C.primary, border: "none", borderRadius: "50%", width: 22, height: 22, cursor: "pointer", fontSize: 13, color: following[reel.userId] ? C.primary : "white", fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center" }}
-            onClick={() => handleFollow(reel)}>{following[reel.userId] ? "✓" : "+"}</button>
+          {!following[reel.userId] && reel.userId !== user?.uid && (
+            <button style={{ position: "absolute", bottom: -10, left: "50%", transform: "translateX(-50%)", background: C.primary, border: "2px solid white", borderRadius: "50%", width: 24, height: 24, cursor: "pointer", fontSize: 15, color: "white", fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.4)" }}
+              onClick={() => handleFollow(reel)}>+</button>
+          )}
+          {following[reel.userId] && (
+            <button style={{ position: "absolute", bottom: -10, left: "50%", transform: "translateX(-50%)", background: "#22c55e", border: "2px solid white", borderRadius: "50%", width: 24, height: 24, cursor: "pointer", fontSize: 13, color: "white", fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center" }}
+              onClick={() => handleFollow(reel)}>✓</button>
+          )}
         </div>
 
         {[
-          { icon: liked[reel.id] ? "❤️" : "🤍", count: reel.likes || 0, action: () => handleLike(reel) },
+          { icon: liked[reel.id] ? "❤️" : "🤍", count: reel.likes || 0, action: () => handleLike(reel), longPressAction: reel.userId === user?.uid ? () => loadLikes(reel.id) : null },
           { icon: "💬", count: reel.comments || 0, action: () => { setShowComments(true); loadComments(reel.id); } },
           { icon: "↗️", count: reel.shares || 0, action: () => handleShare(reel) },
         ].map((btn, i) => (
           <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
             <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 30, filter: "drop-shadow(0 1px 3px rgba(0,0,0,0.5))" }} onClick={btn.action}>{btn.icon}</button>
-            <span style={{ color: "white", fontSize: 12, fontWeight: 700 }}>{btn.count}</span>
+            <span style={{ color: "white", fontSize: 12, fontWeight: 700, textDecoration: btn.longPressAction ? "underline" : "none" }}
+              onClick={e => { e.stopPropagation(); if (btn.longPressAction) btn.longPressAction(); }}>
+              {btn.count}{btn.longPressAction ? " 👁" : ""}
+            </span>
           </div>
         ))}
+
+        {/* Delete button - only for reel owner */}
+        {reel.userId === user?.uid && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+            <button style={{ background: "rgba(255,0,0,0.3)", border: "none", borderRadius: "50%", width: 44, height: 44, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}
+              onClick={() => handleDeleteReel(reel)}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+            </button>
+            <span style={{ color: "white", fontSize: 10, fontWeight: 700 }}>Delete</span>
+          </div>
+        )}
 
         <button style={{ background: "rgba(255,255,255,0.15)", backdropFilter: "blur(4px)", border: "none", borderRadius: "50%", width: 44, height: 44, cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}
           onClick={() => setMuted(!muted)}>{muted ? "🔇" : "🔊"}</button>
@@ -2143,8 +2664,19 @@ function ReelsPage({ user }) {
 
       {/* Bottom Info */}
       <div style={{ position: "absolute", bottom: 90, left: 16, right: 80 }}>
-        <div style={{ color: "white", fontWeight: 700, fontSize: 15, marginBottom: 6 }}>@{reel.userName}</div>
-        <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 13, lineHeight: 1.5 }}>{reel.description}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, cursor: "pointer" }}
+          onClick={() => setViewingUser && setViewingUser({ uid: reel.userId, displayName: reel.userName, photoURL: reel.userPhoto })}>
+          <div style={{ width: 36, height: 36, borderRadius: "50%", overflow: "hidden", border: "2px solid white", background: "#333", flexShrink: 0 }}>
+            {reel.userPhoto
+              ? <img src={reel.userPhoto} alt={reel.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 16 }}>👤</div>}
+          </div>
+          <div>
+            <div style={{ color: "white", fontWeight: 800, fontSize: 15 }}>@{reel.userName}</div>
+            <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>{reel.createdAt?.toDate ? reel.createdAt.toDate().toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}</div>
+          </div>
+        </div>
+        <div style={{ color: "rgba(255,255,255,0.9)", fontSize: 13, lineHeight: 1.5 }}>{reel.description}</div>
       </div>
 
       {/* Scroll dots */}
@@ -2164,28 +2696,53 @@ function ReelsPage({ user }) {
 
       {/* Comments Panel */}
       {showComments && (
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(15,15,15,0.97)", borderRadius: "20px 20px 0 0", maxHeight: "55vh", zIndex: 20, display: "flex", flexDirection: "column" }}>
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(15,15,15,0.97)", borderRadius: "20px 20px 0 0", height: "65vh", maxHeight: "65vh", zIndex: 20, display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", justifyContent: "center", padding: "8px 0 0" }}>
+            <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.25)" }} />
+          </div>
           <div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ color: "white", fontWeight: 700, fontSize: 15 }}>Comments · {reel.comments || 0}</span>
             <button style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 18, cursor: "pointer" }} onClick={() => setShowComments(false)}>✕</button>
           </div>
           <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
-            {comments.length === 0 ? <div style={{ color: "rgba(255,255,255,0.4)", textAlign: "center", padding: 20, fontSize: 13 }}>No comments yet</div> :
-            comments.map(c => (
-              <div key={c.id} style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-                <div style={{ width: 32, height: 32, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
-                  {c.userPhoto ? <img src={c.userPhoto} alt={c.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}>👤</div>}
+            {comments.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "30px 20px" }}>
+                <div style={{ fontSize: 36, marginBottom: 8 }}>💬</div>
+                <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 14, fontWeight: 600 }}>No comments yet</div>
+                <div style={{ color: "rgba(255,255,255,0.3)", fontSize: 12, marginTop: 4 }}>Be the first to comment!</div>
+              </div>
+            ) : comments.map(c => (
+              <div key={c.id} style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+                <div style={{ width: 38, height: 38, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0, border: "1.5px solid rgba(255,255,255,0.15)" }}>
+                  {c.userPhoto ? <img src={c.userPhoto} alt={c.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "white" }}>👤</div>}
                 </div>
-                <div>
-                  <div style={{ color: "white", fontWeight: 700, fontSize: 12, marginBottom: 2 }}>{c.userName}</div>
-                  <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 13 }}>{c.text}</div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                    <span style={{ color: "white", fontWeight: 800, fontSize: 13 }}>{c.userName}</span>
+                    <span style={{ color: "rgba(255,255,255,0.35)", fontSize: 10 }}>
+                      {c.createdAt?.toDate ? c.createdAt.toDate().toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}
+                    </span>
+                  </div>
+                  <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 14, lineHeight: 1.4 }}>{c.text}</div>
                 </div>
               </div>
             ))}
           </div>
-          <div style={{ padding: "10px 14px", borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", gap: 10 }}>
-            <input style={{ ...S.input, flex: 1, background: "rgba(255,255,255,0.08)", color: "white", border: "1px solid rgba(255,255,255,0.1)" }} placeholder="Add a comment..." value={newComment} onChange={e => setNewComment(e.target.value)} onKeyDown={e => e.key === "Enter" && postComment(reel.id)} />
-            <button style={{ ...S.btn(), padding: "10px 16px", fontSize: 12 }} onClick={() => postComment(reel.id)}>Post</button>
+          <div style={{ padding: "12px 14px", borderTop: "1px solid rgba(255,255,255,0.1)", display: "flex", gap: 10, alignItems: "center", background: "#111" }}>
+            <div style={{ width: 34, height: 34, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
+              {user?.photoURL ? <img src={user.photoURL} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "white" }}>👤</div>}
+            </div>
+            <input
+              style={{ flex: 1, background: "rgba(255,255,255,0.1)", color: "white", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 24, padding: "10px 16px", fontSize: 14, outline: "none" }}
+              placeholder="Add a comment..."
+              value={newComment}
+              onChange={e => setNewComment(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && postComment(reel.id)}
+            />
+            <button style={{ background: C.primary, border: "none", borderRadius: "50%", width: 38, height: 38, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}
+              onClick={() => postComment(reel.id)}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
           </div>
         </div>
       )}
@@ -2219,57 +2776,6 @@ function ReelsPage({ user }) {
 }
 
 // ── Messages ───────────────────────────────────────────────────
-// ── Voice Message Player ────────────────────────────────────────
-function VoicePlayer({ url, isMine }) {
-  const [playing, setPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const audioRef = useRef(null);
-
-  useEffect(() => {
-    const audio = new Audio(url);
-    audioRef.current = audio;
-    audio.onloadedmetadata = () => setDuration(audio.duration || 0);
-    audio.ontimeupdate = () => {
-      setProgress(audio.duration ? (audio.currentTime / audio.duration) * 100 : 0);
-    };
-    audio.onended = () => { setPlaying(false); setProgress(0); };
-    return () => { audio.pause(); };
-  }, [url]);
-
-  const toggle = () => {
-    if (!audioRef.current) return;
-    if (playing) { audioRef.current.pause(); setPlaying(false); }
-    else { audioRef.current.play().catch(() => {}); setPlaying(true); }
-  };
-
-  const fmtTime = (s) => {
-    if (!s || isNaN(s)) return "0:00";
-    return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
-  };
-
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 180 }}>
-      <button onClick={toggle} style={{ width: 36, height: 36, borderRadius: "50%", background: isMine ? "rgba(255,255,255,0.25)" : `${C.primary}20`, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        {playing
-          ? <svg width="14" height="14" viewBox="0 0 24 24" fill={isMine ? "white" : C.primary}><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-          : <svg width="14" height="14" viewBox="0 0 24 24" fill={isMine ? "white" : C.primary}><polygon points="5,3 19,12 5,21"/></svg>
-        }
-      </button>
-      <div style={{ flex: 1 }}>
-        {/* Waveform bar */}
-        <div style={{ height: 4, background: isMine ? "rgba(255,255,255,0.3)" : `${C.primary}25`, borderRadius: 2, overflow: "hidden", marginBottom: 4 }}>
-          <div style={{ height: "100%", width: `${progress}%`, background: isMine ? "white" : C.primary, borderRadius: 2, transition: "width 0.1s" }} />
-        </div>
-        <div style={{ fontSize: 10, color: isMine ? "rgba(255,255,255,0.7)" : C.greyDark }}>
-          {playing ? fmtTime(audioRef.current?.currentTime) : fmtTime(duration)}
-        </div>
-      </div>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={isMine ? "rgba(255,255,255,0.7)" : C.greyDark} strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-    </div>
-  );
-}
-
 function Messages({ user, chatSeller, onChatStarted }) {
   const [conversations, setConversations] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -2278,15 +2784,6 @@ function Messages({ user, chatSeller, onChatStarted }) {
   const [newChat, setNewChat] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState("");
   const [loadingChat, setLoadingChat] = useState(false);
-  const messagesEndRef = useRef(null);
-
-  // Voice recording state
-  const [recording, setRecording] = useState(false);
-  const [recordingTime, setRecordingTime] = useState(0);
-  const [uploadingVoice, setUploadingVoice] = useState(false);
-  const mediaRecorderRef = useRef(null);
-  const chunksRef = useRef([]);
-  const timerRef = useRef(null);
 
   useEffect(() => {
     if (!user) return;
@@ -2294,12 +2791,14 @@ function Messages({ user, chatSeller, onChatStarted }) {
     const unsub = onSnapshot(q, snap => {
       const convos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setConversations(convos);
+      // Auto-open chat with seller if coming from product page
       if (chatSeller && !loadingChat) {
         setLoadingChat(true);
         const existing = convos.find(c => c.participants?.includes(chatSeller.id) && c.participants?.includes(user.uid));
         if (existing) {
           setSelected(existing);
           if (chatSeller.productName && !existing.lastMessage) {
+            // Send automatic first message
             addDoc(collection(db, "conversations", existing.id, "messages"), {
               text: `Hi! I have a question about "${chatSeller.productName}". Is it still available?`,
               senderId: user.uid, senderName: user.displayName, createdAt: serverTimestamp(),
@@ -2342,109 +2841,17 @@ function Messages({ user, chatSeller, onChatStarted }) {
     const q = query(collection(db, "conversations", selected.id, "messages"), orderBy("createdAt"));
     const unsub = onSnapshot(q, snap => {
       setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
     });
     return unsub;
   }, [selected]);
 
   const sendMessage = async () => {
     if (!newMsg.trim() || !selected) return;
-    const text = newMsg.trim();
-    setNewMsg("");
     await addDoc(collection(db, "conversations", selected.id, "messages"), {
-      text, senderId: user.uid, senderName: user.displayName || "User",
-      createdAt: serverTimestamp(), deleted: false,
+      text: newMsg, senderId: user.uid, senderName: user.displayName, createdAt: serverTimestamp()
     });
-    await setDoc(doc(db, "conversations", selected.id), {
-      lastMessage: text, lastMessageAt: serverTimestamp(),
-      lastSenderId: user.uid,
-      unreadFor: selected.participants?.filter(p => p !== user.uid) || [],
-    }, { merge: true });
-    const otherId = selected.participants?.find(p => p !== user.uid);
-    if (otherId) await sendNotification(otherId, "message", `💬 ${user.displayName || "Someone"}: ${text.slice(0, 60)}`, user.displayName);
+    setNewMsg("");
   };
-
-  const deleteMessage = async (msgId) => {
-    await setDoc(doc(db, "conversations", selected.id, "messages", msgId), { deleted: true }, { merge: true });
-  };
-
-  // ── Voice recording ──────────────────────────────────────────
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mr = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4" });
-      chunksRef.current = [];
-      mr.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
-      mr.start(100);
-      mediaRecorderRef.current = mr;
-      setRecording(true);
-      setRecordingTime(0);
-      timerRef.current = setInterval(() => setRecordingTime(t => t + 1), 1000);
-    } catch (err) {
-      alert("Microphone access denied. Please allow microphone access to send voice messages.");
-    }
-  };
-
-  const stopAndSend = async () => {
-    if (!mediaRecorderRef.current) return;
-    clearInterval(timerRef.current);
-    setRecording(false);
-    setUploadingVoice(true);
-
-    mediaRecorderRef.current.stop();
-    mediaRecorderRef.current.stream?.getTracks().forEach(t => t.stop());
-
-    await new Promise(resolve => { mediaRecorderRef.current.onstop = resolve; });
-
-    try {
-      const mimeType = chunksRef.current[0]?.type || "audio/webm";
-      const ext = mimeType.includes("mp4") ? "mp4" : "webm";
-      const blob = new Blob(chunksRef.current, { type: mimeType });
-      const formData = new FormData();
-      formData.append("file", blob, `voice_${Date.now()}.${ext}`);
-      formData.append("upload_preset", "Econnect");
-      formData.append("cloud_name", "dxmmsq0gq");
-      formData.append("resource_type", "video"); // Cloudinary uses "video" for audio
-
-      const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/video/upload", { method: "POST", body: formData });
-      const result = await res.json();
-
-      if (result.secure_url) {
-        const duration = Math.round(recordingTime);
-        await addDoc(collection(db, "conversations", selected.id, "messages"), {
-          type: "voice", voiceUrl: result.secure_url, duration,
-          senderId: user.uid, senderName: user.displayName || "User",
-          createdAt: serverTimestamp(), deleted: false,
-        });
-        await setDoc(doc(db, "conversations", selected.id), {
-          lastMessage: `🎤 Voice message (${duration}s)`,
-          lastMessageAt: serverTimestamp(),
-          lastSenderId: user.uid,
-          unreadFor: selected.participants?.filter(p => p !== user.uid) || [],
-        }, { merge: true });
-        const otherId = selected.participants?.find(p => p !== user.uid);
-        if (otherId) await sendNotification(otherId, "message", `🎤 ${user.displayName || "Someone"} sent a voice message`, user.displayName);
-      } else {
-        alert("Voice upload failed. Please try again.");
-      }
-    } catch (err) {
-      console.error("Voice upload error:", err);
-      alert("Voice upload failed. Please try again.");
-    }
-    setUploadingVoice(false);
-    setRecordingTime(0);
-  };
-
-  const cancelRecording = () => {
-    clearInterval(timerRef.current);
-    mediaRecorderRef.current?.stop();
-    mediaRecorderRef.current?.stream?.getTracks().forEach(t => t.stop());
-    chunksRef.current = [];
-    setRecording(false);
-    setRecordingTime(0);
-  };
-
-  const fmtTime = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
   return (
     <div style={S.page}>
@@ -2459,123 +2866,32 @@ function Messages({ user, chatSeller, onChatStarted }) {
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
               <p style={{ color: C.greyDark }}>No messages yet. Start a conversation!</p>
             </div>
-          ) : conversations.map(c => {
-            const isUnread = c.unreadFor?.includes(user.uid);
-            const lastTime = c.lastMessageAt?.toMillis ? new Date(c.lastMessageAt.toMillis()).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
-            return (
-              <div key={c.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, marginBottom: 8, cursor: "pointer", borderLeft: isUnread ? `3px solid ${C.primary}` : "none" }}
-                onClick={() => setSelected(c)}>
-                <div style={{ width: 48, height: 48, borderRadius: "50%", background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                </div>
-                <div style={{ flex: 1, overflow: "hidden" }}>
-                  <div style={{ fontWeight: isUnread ? 800 : 700 }}>{c.participantNames?.filter(n => n !== user.displayName).join(", ") || "Chat"}</div>
-                  <div style={{ color: C.greyDark, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", fontWeight: isUnread ? 600 : 400 }}>{c.lastMessage || "No messages yet"}</div>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
-                  {lastTime && <div style={{ fontSize: 11, color: C.greyDark }}>{lastTime}</div>}
-                  {isUnread && <div style={{ width: 10, height: 10, borderRadius: "50%", background: C.primary }} />}
-                </div>
+          ) : conversations.map(c => (
+            <div key={c.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, marginBottom: 8, cursor: "pointer" }} onClick={() => setSelected(c)}>
+              <div style={{ ...S.avatar(48), background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700 }}>{c.participantNames?.filter(n => n !== user.displayName).join(", ") || "Chat"}</div>
+                <div style={{ color: C.greyDark, fontSize: 13 }}>{c.lastMessage || "No messages yet"}</div>
               </div>
-            );
-          })}
+            </div>
+          ))}
         </>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 140px)" }}>
-          {/* Chat header */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12, paddingBottom: 12, borderBottom: `1px solid ${C.border}` }}>
-            <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, color: C.text, padding: 4 }} onClick={() => setSelected(null)}>←</button>
-            <div style={{ width: 38, height: 38, borderRadius: "50%", background: `${C.primary}20`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6"/></svg>
-            </div>
-            <span style={{ fontWeight: 700, fontSize: 15 }}>{selected.participantNames?.filter(n => n !== user.displayName).join(", ") || "Chat"}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+            <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20 }} onClick={() => setSelected(null)}>←</button>
+            <span style={{ fontWeight: 700 }}>{selected.participantNames?.filter(n => n !== user.displayName).join(", ")}</span>
           </div>
-
-          {/* Messages */}
-          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, marginBottom: 12, paddingRight: 4 }}>
-            {messages.filter(m => !m.deleted).map(m => {
-              const isMine = m.senderId === user.uid;
-              const time = m.createdAt?.toMillis ? new Date(m.createdAt.toMillis()).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
-              return (
-                <div key={m.id} style={{ display: "flex", justifyContent: isMine ? "flex-end" : "flex-start", alignItems: "flex-end", gap: 6 }}>
-                  {isMine && (
-                    <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: C.greyDark, padding: 2, opacity: 0.5, flexShrink: 0 }}
-                      onClick={() => deleteMessage(m.id)}>🗑</button>
-                  )}
-                  <div style={{ background: isMine ? C.primary : C.grey, color: isMine ? "white" : C.text, borderRadius: isMine ? "16px 16px 2px 16px" : "16px 16px 16px 2px", padding: m.type === "voice" ? "10px 12px" : "10px 14px", maxWidth: "72%", fontSize: 13 }}>
-                    {m.type === "voice"
-                      ? <VoicePlayer url={m.voiceUrl} isMine={isMine} />
-                      : <span>{m.text}</span>
-                    }
-                    <div style={{ fontSize: 10, color: isMine ? "rgba(255,255,255,0.6)" : C.greyDark, marginTop: 4, textAlign: "right" }}>{time}</div>
-                  </div>
-                </div>
-              );
-            })}
-            <div ref={messagesEndRef} />
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+            {messages.map(m => (
+              <div key={m.id} style={{ display: "flex", justifyContent: m.senderId === user.uid ? "flex-end" : "flex-start" }}>
+                <div style={{ background: m.senderId === user.uid ? C.primary : C.grey, color: m.senderId === user.uid ? "white" : C.text, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", fontSize: 13 }}>{m.text}</div>
+              </div>
+            ))}
           </div>
-
-          {/* Input area */}
-          {recording ? (
-            // Recording UI
-            <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.grey, borderRadius: 24, padding: "10px 16px" }}>
-              <div style={{ width: 10, height: 10, borderRadius: "50%", background: "#EF4444", animation: "pulse 1s infinite" }} />
-              <span style={{ color: C.error, fontWeight: 700, fontSize: 14, flex: 1 }}>Recording... {fmtTime(recordingTime)}</span>
-              <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, color: C.greyDark }} onClick={cancelRecording} title="Cancel">✕</button>
-              <button style={{ ...S.btn(), borderRadius: "50%", width: 42, height: 42, padding: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
-                onClick={stopAndSend} title="Send voice message">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><polygon points="5,3 19,12 5,21"/></svg>
-              </button>
-            </div>
-          ) : uploadingVoice ? (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: 14, color: C.greyDark, fontSize: 13 }}>
-              <span>⏳ Sending voice message...</span>
-            </div>
-          ) : (
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input
-                style={{ ...S.input, flex: 1, borderRadius: 24, padding: "11px 16px" }}
-                placeholder="Type a message..."
-                value={newMsg}
-                onChange={e => setNewMsg(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && sendMessage()}
-              />
-              {newMsg.trim() ? (
-                <button style={{ ...S.btn(), borderRadius: "50%", width: 44, height: 44, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }} onClick={sendMessage}>
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22,2 15,22 11,13 2,9"/></svg>
-                </button>
-              ) : (
-                <button
-                  style={{ ...S.btn(), borderRadius: "50%", width: 44, height: 44, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: C.primary }}
-                  onTouchStart={startRecording}
-                  onMouseDown={startRecording}
-                  title="Hold to record voice message"
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-
-      {newChat && (
-        <div style={S.modal} onClick={() => setNewChat(false)}>
-          <div style={{ ...S.modalBox, padding: 24 }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ fontWeight: 800, fontSize: 18, marginBottom: 16 }}>New Message</h3>
-            <label style={S.label}>Recipient Email</label>
-            <input style={{ ...S.input, marginBottom: 16 }} placeholder="their@email.com" value={recipientEmail} onChange={e => setRecipientEmail(e.target.value)} />
-            <div style={{ display: "flex", gap: 10 }}>
-              <button style={{ ...S.btn(), flex: 1 }} onClick={async () => {
-                if (!recipientEmail.trim()) return;
-                const snap = await getDocs(query(collection(db, "users"), where("email", "==", recipientEmail.trim())));
-                if (snap.empty) { alert("User not found."); return; }
-                const other = { id: snap.docs[0].id, ...snap.docs[0].data() };
-                await startSellerChat({ id: other.id, name: other.name || other.email }, conversations);
-                setNewChat(false); setRecipientEmail("");
-              }}>Start Chat</button>
-              <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setNewChat(false)}>Cancel</button>
-            </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <input style={{ ...S.input, flex: 1 }} placeholder="Type a message..." value={newMsg} onChange={e => setNewMsg(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMessage()} />
+            <button style={{ ...S.btn(), padding: "10px 18px" }} onClick={sendMessage}>Send</button>
           </div>
         </div>
       )}
@@ -2584,6 +2900,96 @@ function Messages({ user, chatSeller, onChatStarted }) {
 }
 
 // ── Profile ────────────────────────────────────────────────────
+
+// ── Public Profile Page ─────────────────────────────────────────
+function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct }) {
+  const [profile, setProfile] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!profileUser?.uid) return;
+    getDoc(doc(db, "users", profileUser.uid)).then(d => {
+      if (d.exists()) setProfile({ uid: profileUser.uid, ...d.data() });
+      setLoading(false);
+    });
+    getDocs(query(collection(db, "products"), where("sellerId", "==", profileUser.uid))).then(snap => {
+      setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted));
+    });
+    if (currentUser) {
+      getDoc(doc(db, "users", currentUser.uid, "following", profileUser.uid)).then(d => setIsFollowing(d.exists()));
+      // Record this profile view (only if viewing someone else's profile)
+      if (currentUser.uid !== profileUser.uid) {
+        setDoc(doc(db, "users", profileUser.uid, "profileViews", currentUser.uid), {
+          uid: currentUser.uid,
+          name: currentUser.displayName || "User",
+          photoURL: currentUser.photoURL || "",
+          viewedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
+    }
+  }, [profileUser?.uid]);
+
+  const handleFollow = async () => {
+    if (!currentUser) return;
+    if (isFollowing) {
+      await setDoc(doc(db, "users", currentUser.uid, "following", profileUser.uid), { unfollowed: true }, { merge: true });
+      setIsFollowing(false);
+    } else {
+      await setDoc(doc(db, "users", currentUser.uid, "following", profileUser.uid), { name: profile?.name || profileUser.displayName, followedAt: serverTimestamp() });
+      await sendNotification(profileUser.uid, "follow", `${currentUser.displayName} started following you`, currentUser.displayName);
+      setIsFollowing(true);
+    }
+  };
+
+  if (loading) return <div style={{ textAlign: "center", padding: 60, color: C.greyDark }}>Loading...</div>;
+  if (!profile) return <div style={{ textAlign: "center", padding: 60, color: C.greyDark }}>User not found.</div>;
+
+  const photoURL = profile.photoURL || profileUser?.photoURL || "";
+
+  return (
+    <div style={S.page}>
+      <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage("reels")}>
+        ← Back
+      </button>
+      <div style={{ ...S.card, padding: 20, marginBottom: 16, textAlign: "center" }}>
+        <div style={{ width: 80, height: 80, borderRadius: "50%", overflow: "hidden", background: C.grey, margin: "0 auto 12px", border: `3px solid ${C.primary}` }}>
+          {photoURL ? <img src={photoURL} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>👤</div>}
+        </div>
+        <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>{profile.name || profileUser.displayName}</div>
+        {profile.bio && <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 12 }}>{profile.bio}</div>}
+        {profile.isSeller && profile.businessName && (
+          <div style={{ fontSize: 13, color: C.primary, fontWeight: 600, marginBottom: 12 }}>🏪 {profile.businessName}</div>
+        )}
+        {currentUser?.uid !== profileUser.uid && (
+          <button style={{ ...S.btn(isFollowing ? "outline" : ""), padding: "8px 24px" }} onClick={handleFollow}>
+            {isFollowing ? "Following" : "Follow"}
+          </button>
+        )}
+      </div>
+      {products.length > 0 && (
+        <>
+          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 12 }}>Products</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {products.map(p => (
+              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+                <div style={{ height: 120, background: C.grey, overflow: "hidden" }}>
+                  {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+                </div>
+                <div style={{ padding: "10px 12px" }}>
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
+                  <div style={{ color: C.primary, fontWeight: 800 }}>GH₵{p.price}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 
 // ── Seller Analytics Dashboard ─────────────────────────────────
 function SellerAnalytics({ user }) {
@@ -2745,155 +3151,108 @@ function SellerAnalytics({ user }) {
 }
 
 
-// ── Wallet Page ────────────────────────────────────────────────
-function WalletPage({ user, setPage }) {
-  const [balance, setBalance] = useState(0);
-  const [transactions, setTransactions] = useState([]);
+// ── Profile Views Page ──────────────────────────────────────────
+function ProfileViewsPage({ user, setPage, setViewingPublicProfile }) {
+  const [views, setViews] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showTopUp, setShowTopUp] = useState(false);
-  const [topUpAmount, setTopUpAmount] = useState("");
-  const [topUpPhone, setTopUpPhone] = useState("");
-  const [topUpLoading, setTopUpLoading] = useState(false);
-  const [topUpDone, setTopUpDone] = useState(false);
+  const [following, setFollowing] = useState({});
+  const [nudged, setNudged] = useState({});
 
   useEffect(() => {
     if (!user) return;
-    const unsub = onSnapshot(doc(db, "wallets", user.uid), snap => {
-      if (snap.exists()) {
-        setBalance(snap.data().balance || 0);
-      } else {
-        setDoc(doc(db, "wallets", user.uid), { balance: 0, userId: user.uid, createdAt: serverTimestamp() });
-        setBalance(0);
-      }
+    const load = async () => {
+      setLoading(true);
+      const snap = await getDocs(query(collection(db, "users", user.uid, "profileViews"), orderBy("viewedAt", "desc")));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setViews(list);
+      // Check following status for each viewer
+      const followMap = {};
+      await Promise.all(list.map(async v => {
+        const fDoc = await getDoc(doc(db, "users", user.uid, "following", v.uid)).catch(() => null);
+        followMap[v.uid] = fDoc?.exists() && !fDoc.data().unfollowed;
+      }));
+      setFollowing(followMap);
       setLoading(false);
-    });
-    const q = query(collection(db, "walletTransactions"), where("userId", "==", user.uid), orderBy("createdAt", "desc"));
-    const unsub2 = onSnapshot(q, snap => {
-      setTransactions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    }, () => {});
-    return () => { unsub(); unsub2(); };
+    };
+    load();
   }, [user]);
 
-  const requestTopUp = async () => {
-    if (!topUpAmount || isNaN(topUpAmount) || Number(topUpAmount) < 1) { alert("Enter a valid amount."); return; }
-    if (!topUpPhone) { alert("Enter your MoMo number."); return; }
-    setTopUpLoading(true);
-    await addDoc(collection(db, "walletTopUpRequests"), {
-      userId: user.uid, userName: user.displayName, userEmail: user.email,
-      amount: Number(topUpAmount), phone: topUpPhone,
-      status: "pending", createdAt: serverTimestamp(),
-    });
-    await sendNotification(user.uid, "premium", `💰 Top-up request of GH₵${topUpAmount} received! Admin will verify and credit your wallet within 1 hour.`, "E-Connect");
-    setTopUpLoading(false);
-    setTopUpDone(true);
-    setTopUpAmount(""); setTopUpPhone("");
-    setTimeout(() => { setTopUpDone(false); setShowTopUp(false); }, 3000);
+  const toggleFollow = async (viewer) => {
+    if (!user) return;
+    const isF = following[viewer.uid];
+    setFollowing(prev => ({ ...prev, [viewer.uid]: !isF }));
+    if (!isF) {
+      await setDoc(doc(db, "users", user.uid, "following", viewer.uid), { name: viewer.name, followedAt: serverTimestamp(), unfollowed: false });
+      await setDoc(doc(db, "users", viewer.uid, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
+      await sendNotification(viewer.uid, "follow", `${user.displayName || "Someone"} started following you`, user.displayName);
+    } else {
+      await setDoc(doc(db, "users", user.uid, "following", viewer.uid), { unfollowed: true }, { merge: true });
+    }
   };
 
-  const getIcon = (type) => ({ topup: "💰", payment: "🛒", reward: "🎁", refund: "↩️" }[type] || "💳");
-  const getColor = (type) => (["topup", "reward", "refund"].includes(type) ? C.success : C.error);
-  const getSign = (type) => (["topup", "reward", "refund"].includes(type) ? "+" : "-");
+  const nudge = async (viewer) => {
+    setNudged(prev => ({ ...prev, [viewer.uid]: true }));
+    await sendNotification(viewer.uid, "nudge", `👋 ${user.displayName || "Someone"} nudged you — check out their profile!`, user.displayName);
+  };
+
+  const getTimeAgo = (ts) => {
+    if (!ts) return "";
+    const now = Date.now();
+    const time = ts.toMillis ? ts.toMillis() : new Date(ts).getTime();
+    const diff = Math.floor((now - time) / 60000);
+    if (diff < 60) return `${diff}m ago`;
+    if (diff < 1440) return `${Math.floor(diff / 60)}h ago`;
+    return `${Math.floor(diff / 1440)}d ago`;
+  };
 
   return (
     <div style={S.page}>
-      <div style={S.sectionTitle}>My Wallet</div>
+      <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage("profile")}>
+        ← Back
+      </button>
+      <div style={S.sectionTitle}>Profile Views</div>
+      <p style={S.sectionSub}>{views.length} {views.length === 1 ? "person" : "people"} viewed your profile</p>
 
-      {/* Balance Card */}
-      <div style={{ background: `linear-gradient(135deg, ${C.primary}, #007A6E)`, borderRadius: 20, padding: "28px 24px", marginBottom: 20, color: "white", position: "relative", overflow: "hidden" }}>
-        <div style={{ position: "absolute", top: -20, right: -20, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.08)" }} />
-        <div style={{ position: "absolute", bottom: -30, left: -10, width: 100, height: 100, borderRadius: "50%", background: "rgba(255,255,255,0.05)" }} />
-        <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>Available Balance</div>
-        <div style={{ fontSize: 38, fontWeight: 900, letterSpacing: -1, marginBottom: 4 }}>GH₵{loading ? "..." : balance.toFixed(2)}</div>
-        <div style={{ fontSize: 12, opacity: 0.75 }}>{user?.displayName}</div>
-        <button style={{ marginTop: 16, background: "white", color: C.primary, border: "none", borderRadius: 10, padding: "10px 24px", fontWeight: 800, fontSize: 14, cursor: "pointer" }}
-          onClick={() => setShowTopUp(true)}>+ Top Up</button>
-      </div>
-
-      {/* Quick Stats */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
-        {[
-          { label: "Total In", value: `GH₵${transactions.filter(t => ["topup","reward","refund"].includes(t.type)).reduce((s,t) => s + (t.amount||0), 0).toFixed(2)}`, icon: "📥" },
-          { label: "Total Spent", value: `GH₵${transactions.filter(t => t.type === "payment").reduce((s,t) => s + (t.amount||0), 0).toFixed(2)}`, icon: "📤" },
-          { label: "Transactions", value: transactions.length, icon: "📋" },
-        ].map((s, i) => (
-          <div key={i} style={{ ...S.card, flex: 1, padding: "12px 10px", textAlign: "center" }}>
-            <div style={{ fontSize: 20, marginBottom: 4 }}>{s.icon}</div>
-            <div style={{ fontWeight: 800, fontSize: 14, color: C.primary }}>{s.value}</div>
-            <div style={{ fontSize: 10, color: C.greyDark }}>{s.label}</div>
-          </div>
-        ))}
-      </div>
-
-      {/* How to Top Up */}
-      <div style={{ ...S.card, padding: 16, marginBottom: 20, background: `${C.primary}08` }}>
-        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>💡 How to Top Up</div>
-        <div style={{ fontSize: 13, color: C.greyDark, lineHeight: 1.7 }}>
-          1. Click <b>+ Top Up</b> and enter amount<br/>
-          2. Send MoMo to <b>+233 54 194 0967</b> (Asante Gideon)<br/>
-          3. Enter your MoMo number and submit<br/>
-          4. Admin verifies and credits within <b>1 hour</b>
-        </div>
-      </div>
-
-      {/* Transaction History */}
-      <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 12 }}>Transaction History</div>
-      {transactions.length === 0 ? (
-        <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>
-          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 8, opacity: 0.5 }}><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
-          <div>No transactions yet. Top up to get started!</div>
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading...</div>
+      ) : views.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 60 }}>
+          <div style={{ fontSize: 56, marginBottom: 12 }}>👁️</div>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>No profile views yet</div>
+          <div style={{ color: C.greyDark, fontSize: 13 }}>When someone views your profile, they'll show up here.</div>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 80 }}>
-          {transactions.map(t => (
-            <div key={t.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12 }}>
-              <div style={{ width: 42, height: 42, borderRadius: "50%", background: `${getColor(t.type)}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0 }}>
-                {getIcon(t.type)}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 80 }}>
+          {views.map(v => (
+            <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer" }}
+              onClick={() => setViewingPublicProfile && setViewingPublicProfile({ uid: v.uid, displayName: v.name, photoURL: v.photoURL })}>
+              <div style={{ width: 50, height: 50, borderRadius: "50%", overflow: "hidden", background: C.grey, flexShrink: 0, border: `2px solid ${C.border}` }}>
+                {v.photoURL ? <img src={v.photoURL} alt={v.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>{t.description || t.type}</div>
-                <div style={{ fontSize: 12, color: C.greyDark }}>{t.createdAt?.toDate ? t.createdAt.toDate().toLocaleDateString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : ""}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name}</div>
+                {v.viewedAt && <div style={{ fontSize: 12, color: C.greyDark }}>Viewed {getTimeAgo(v.viewedAt)}</div>}
               </div>
-              <div style={{ fontWeight: 800, fontSize: 16, color: getColor(t.type) }}>
-                {getSign(t.type)}GH₵{t.amount?.toFixed(2)}
-              </div>
+              {following[v.uid] ? (
+                <button style={{ ...S.btn("grey"), padding: "8px 18px", fontSize: 13, fontWeight: 700, borderRadius: 20 }}
+                  onClick={(e) => { e.stopPropagation(); toggleFollow(v); }}>Following</button>
+              ) : nudged[v.uid] ? (
+                <button style={{ ...S.btn("grey"), padding: "8px 18px", fontSize: 13, fontWeight: 700, borderRadius: 20 }} disabled>👋 Nudged</button>
+              ) : (
+                <button style={{ ...S.btn(), padding: "8px 18px", fontSize: 13, fontWeight: 700, borderRadius: 20 }}
+                  onClick={(e) => { e.stopPropagation(); toggleFollow(v); }}>Follow</button>
+              )}
             </div>
           ))}
-        </div>
-      )}
-
-      {/* Top Up Modal */}
-      {showTopUp && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
-          <div style={{ background: C.white, borderRadius: "20px 20px 0 0", padding: 28, width: "100%", maxWidth: 480 }}>
-            {topUpDone ? (
-              <div style={{ textAlign: "center", padding: 20 }}>
-                <div style={{ fontSize: 60, marginBottom: 12 }}>✅</div>
-                <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 8 }}>Request Sent!</div>
-                <div style={{ color: C.greyDark, fontSize: 13 }}>Admin will verify your payment and credit your wallet within 1 hour.</div>
-              </div>
-            ) : (
-              <>
-                <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 4 }}>Top Up Wallet</div>
-                <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 20 }}>Send MoMo to <b>+233 54 194 0967</b> then fill this form.</div>
-                <label style={S.label}>Amount (GH₵)</label>
-                <input style={{ ...S.input, marginBottom: 12 }} type="number" placeholder="e.g. 20" value={topUpAmount} onChange={e => setTopUpAmount(e.target.value)} />
-                <label style={S.label}>Your MoMo Number</label>
-                <input style={{ ...S.input, marginBottom: 20 }} placeholder="+233..." value={topUpPhone} onChange={e => setTopUpPhone(e.target.value)} />
-                <div style={{ display: "flex", gap: 10 }}>
-                  <button style={{ ...S.btn(), flex: 1, opacity: topUpLoading ? 0.7 : 1 }} onClick={requestTopUp} disabled={topUpLoading}>
-                    {topUpLoading ? "Submitting..." : "Submit Request"}
-                  </button>
-                  <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowTopUp(false)}>Cancel</button>
-                </div>
-              </>
-            )}
-          </div>
         </div>
       )}
     </div>
   );
 }
 
+
+
+// ── Profile ────────────────────────────────────────────────────
 function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [profile, setProfile] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -2909,6 +3268,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [storeSaved, setStoreSaved] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [profileViewsCount, setProfileViewsCount] = useState(0);
 
   useEffect(() => {
     if (!user) return;
@@ -2937,14 +3297,29 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
     getDocs(collection(db, "users", user.uid, "followers")).then(snap => setFollowers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users", user.uid, "following")).then(snap => setFollowing(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users", user.uid, "friends")).then(snap => setFriends(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(collection(db, "users", user.uid, "profileViews")).then(snap => setProfileViewsCount(snap.size));
   }, [user]);
 
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  const [profilePhoto, setProfilePhoto] = useState(user?.photoURL || "");
+  const [profilePhoto, setProfilePhoto] = useState("");
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [editForm, setEditForm] = useState({ name: user?.displayName || "", phone: "", bio: "" });
   const [savingProfile, setSavingProfile] = useState(false);
   const [profileSaved, setProfileSaved] = useState(false);
+
+  // Load photo from Firestore first (most reliable on Android)
+  useEffect(() => {
+    if (!user?.uid) return;
+    getDoc(doc(db, "users", user.uid)).then(d => {
+      if (d.exists()) {
+        const photoURL = d.data().photoURL || user?.photoURL || "";
+        setProfilePhoto(photoURL);
+        setEditForm(prev => ({ ...prev, phone: d.data().phone || "", bio: d.data().bio || "" }));
+      } else {
+        setProfilePhoto(user?.photoURL || "");
+      }
+    });
+  }, [user?.uid]);
 
   const handleLogout = async () => { await signOut(auth); setUser(null); };
 
@@ -2975,10 +3350,15 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
       data.append("cloud_name", "dxmmsq0gq");
       const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
       const result = await res.json();
-      setProfilePhoto(result.secure_url);
-      await updateProfile(auth.currentUser, { photoURL: result.secure_url });
-      await setDoc(doc(db, "users", user.uid), { photoURL: result.secure_url }, { merge: true });
-    } catch (err) { console.error(err); }
+      if (!result.secure_url) throw new Error("Upload failed");
+      const photoURL = result.secure_url;
+      // 1. Update local state immediately so it shows right away
+      setProfilePhoto(photoURL);
+      // 2. Save to Firestore (most reliable across all devices)
+      await setDoc(doc(db, "users", user.uid), { photoURL }, { merge: true });
+      // 3. Update Firebase Auth profile (may be slow on Android but Firestore is source of truth)
+      try { await updateProfile(auth.currentUser, { photoURL }); } catch (e) { console.log("Auth update slow, Firestore saved"); }
+    } catch (err) { console.error(err); alert("Photo upload failed. Please try again."); }
     setUploadingPhoto(false);
   };
 
@@ -2999,13 +3379,14 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontWeight: 800, fontSize: 18 }}>{user?.displayName || "User"}</span>
-              {profile?.verified && <VerifiedBadge size={18} />}
+              {profile?.premium && <PremiumBadge size={24} />}
+              {!profile?.premium && profile?.verified && <VerifiedBadge size={20} />}
               {profile?.premium && <svg width="16" height="16" viewBox="0 0 24 24" fill="#FFD700"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>}
             </div>
             <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8 }}>{user?.email}</div>
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              {[{ num: myProducts.length, label: "Products" }, { num: orders.length, label: "Orders" }, { num: followers.length, label: "Followers" }, { num: following.length, label: "Following" }, { num: friends.length, label: "Friends" }].map(s => (
-                <div key={s.label} style={{ textAlign: "center" }}>
+              {[{ num: myProducts.length, label: "Products" }, { num: orders.length, label: "Orders" }, { num: followers.length, label: "Followers" }, { num: following.length, label: "Following" }, { num: friends.length, label: "Friends" }, { num: profileViewsCount, label: "Profile Views", action: () => setPage("profileViews") }].map(s => (
+                <div key={s.label} style={{ textAlign: "center", cursor: s.action ? "pointer" : "default" }} onClick={s.action}>
                   <div style={{ fontWeight: 800, color: C.primary }}>{s.num}</div>
                   <div style={{ fontSize: 11, color: C.greyDark }}>{s.label}</div>
                 </div>
@@ -3017,73 +3398,22 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             <button style={{ ...S.btn("grey"), padding: "8px 14px", fontSize: 12, color: C.error }} onClick={handleLogout}>Logout</button>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
-          <button style={{ ...S.btn(), flex: 1, background: isPremium ? `linear-gradient(135deg, ${C.accent}, #FFA500)` : `linear-gradient(135deg, ${C.accent}, #FFA500)`, color: "#333", fontWeight: 800 }}
+        {/* Action Buttons - 2x2 grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 14 }}>
+          <button style={{ background: `linear-gradient(135deg, ${C.accent}, #FFA500)`, border: "none", borderRadius: 12, padding: "12px 10px", fontWeight: 800, fontSize: 13, color: "#333", cursor: "pointer", textAlign: "center" }}
             onClick={() => !isPremium && setShowPremium(true)}>
-            {isPremium
-              ? `⭐ Premium Active${profile?.premiumExpiry ? " · Expires " + new Date(profile.premiumExpiry?.toMillis ? profile.premiumExpiry.toMillis() : profile.premiumExpiry).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}`
-              : "⭐ Go Premium · GH₵20/mo"}
+            ⭐ {isPremium
+              ? `Premium · Exp ${profile?.premiumExpiry ? new Date(profile.premiumExpiry?.toMillis ? profile.premiumExpiry.toMillis() : profile.premiumExpiry).toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}`
+              : "Go Premium · GH₵20/mo"}
           </button>
-          <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setShowStore(true)}>
+          <button style={{ ...S.btn("outline"), padding: "12px 10px", fontSize: 13, fontWeight: 700, borderRadius: 12 }} onClick={() => setShowStore(true)}>
             🏪 My Store
           </button>
-          <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setPage("wallet")}>
-            💰 Wallet
-          </button>
-          <button style={{ ...S.btn("outline"), flex: 1 }} onClick={() => setPage("analytics")}>
+          <button style={{ ...S.btn("outline"), padding: "12px 10px", fontSize: 13, fontWeight: 700, borderRadius: 12 }} onClick={() => setPage("analytics")}>
             📊 Analytics
           </button>
         </div>
       </div>
-
-      {/* ── Referral Card ─────────────────────────────────── */}
-      {(() => {
-        const refCode = profile?.referralCode || user?.uid?.slice(0, 8).toUpperCase();
-        const refLink = `${window.location.origin}?ref=${refCode}`;
-        const reward = profile?.referralReward || 0;
-        const count = profile?.referralCount || 0;
-        return (
-          <div style={{ ...S.card, padding: 16, marginBottom: 16, background: `linear-gradient(135deg, ${C.primary}10, ${C.accent}10)`, border: `1px solid ${C.primary}30` }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-              <span style={{ fontSize: 22 }}>🔗</span>
-              <div>
-                <div style={{ fontWeight: 800, fontSize: 15 }}>Your Referral Link</div>
-                <div style={{ fontSize: 12, color: C.greyDark }}>Invite friends · Earn GH₵5 per signup</div>
-              </div>
-            </div>
-            <div style={{ background: C.white, borderRadius: 10, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, gap: 8 }}>
-              <span style={{ fontSize: 12, color: C.primary, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{refLink}</span>
-              <button style={{ ...S.btn(), padding: "6px 12px", fontSize: 11, flexShrink: 0 }} onClick={() => {
-                if (navigator.share) {
-                  navigator.share({ title: "Join E-Connect!", text: "Sign up on E-Connect and start buying & selling easily!", url: refLink });
-                } else {
-                  navigator.clipboard.writeText(refLink);
-                  alert("Referral link copied!");
-                }
-              }}>Share</button>
-            </div>
-            <div style={{ display: "flex", gap: 10 }}>
-              <div style={{ flex: 1, background: C.white, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
-                <div style={{ fontWeight: 800, fontSize: 20, color: C.primary }}>{count}</div>
-                <div style={{ fontSize: 11, color: C.greyDark }}>Friends Invited</div>
-              </div>
-              <div style={{ flex: 1, background: C.white, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
-                <div style={{ fontWeight: 800, fontSize: 20, color: C.success }}>GH₵{reward}</div>
-                <div style={{ fontSize: 11, color: C.greyDark }}>Rewards Earned</div>
-              </div>
-              <div style={{ flex: 1, background: C.white, borderRadius: 10, padding: "10px 12px", textAlign: "center" }}>
-                <div style={{ fontWeight: 800, fontSize: 20, color: C.accent }}>GH₵5</div>
-                <div style={{ fontSize: 11, color: C.greyDark }}>Per Signup</div>
-              </div>
-            </div>
-            {reward > 0 && (
-              <div style={{ marginTop: 10, background: "#e6faf8", borderRadius: 8, padding: "8px 12px", fontSize: 12, color: C.primary, fontWeight: 600, textAlign: "center" }}>
-                🎉 You have GH₵{reward} in referral rewards! Contact admin to redeem.
-              </div>
-            )}
-          </div>
-        );
-      })()}
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
         {["orders", "products", "followers", "following", "friends"].map(t => (
@@ -3503,7 +3833,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {[
                   { label: "MoMo Number", value: "0541940967" },
-                  { label: "Account Name", value: "E-Connect GH" },
+                  { label: "Account Name", value: "Ebenezer Boateng" },
                   { label: "Amount", value: "GH₵20.00" },
                   { label: "Reference", value: "PREMIUM-SUB" },
                 ].map(item => (
@@ -3549,38 +3879,15 @@ function Admin() {
   const [users, setUsers] = useState([]);
   const [products, setProducts] = useState([]);
   const [ads, setAds] = useState([]);
-  const [topUpRequests, setTopUpRequests] = useState([]);
+
   const [tab, setTab] = useState("overview");
 
   useEffect(() => {
     getDocs(collection(db, "orders")).then(snap => setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users")).then(snap => setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    getDocs(collection(db, "products")).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(collection(db, "products")).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted)));
     getDocs(collection(db, "ads")).then(snap => setAds(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const q = query(collection(db, "walletTopUpRequests"), orderBy("createdAt", "desc"));
-    onSnapshot(q, snap => setTopUpRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))), () => {});
   }, []);
-
-  const approveTopUp = async (req) => {
-    // Credit user wallet
-    const walletSnap = await getDoc(doc(db, "wallets", req.userId));
-    const currentBal = walletSnap.exists() ? (walletSnap.data().balance || 0) : 0;
-    await setDoc(doc(db, "wallets", req.userId), { balance: currentBal + req.amount, userId: req.userId }, { merge: true });
-    await addDoc(collection(db, "walletTransactions"), {
-      userId: req.userId, type: "topup", amount: req.amount,
-      description: `Wallet top-up via MoMo (${req.phone})`,
-      createdAt: serverTimestamp(),
-    });
-    await setDoc(doc(db, "walletTopUpRequests", req.id), { status: "approved" }, { merge: true });
-    await sendNotification(req.userId, "premium", `✅ Your wallet top-up of GH₵${req.amount} has been approved! New balance added.`, "E-Connect");
-    setTopUpRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "approved" } : r));
-  };
-
-  const rejectTopUp = async (req) => {
-    await setDoc(doc(db, "walletTopUpRequests", req.id), { status: "rejected" }, { merge: true });
-    await sendNotification(req.userId, "premium", `❌ Your wallet top-up of GH₵${req.amount} was rejected. Contact support if this is an error.`, "E-Connect");
-    setTopUpRequests(prev => prev.map(r => r.id === req.id ? { ...r, status: "rejected" } : r));
-  };
 
   const totalRevenue = orders.reduce((s, o) => s + (o.total || 0), 0);
 
@@ -3589,7 +3896,7 @@ function Admin() {
       <div style={S.sectionTitle}>Admin Dashboard</div>
       <p style={S.sectionSub}>Manage E-Connect platform</p>
       <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
-        {["overview", "orders", "users", "products", "ads", "wallet"].map(t => (
+        {["overview", "orders", "users", "products", "ads", ].map(t => (
           <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 16px", textTransform: "capitalize", position: "relative" }} onClick={() => setTab(t)}>
             {t}
             {t === "ads" && ads.filter(a => a.status === "pending").length > 0 && (
@@ -3597,11 +3904,7 @@ function Admin() {
                 {ads.filter(a => a.status === "pending").length}
               </span>
             )}
-            {t === "wallet" && topUpRequests.filter(r => r.status === "pending").length > 0 && (
-              <span style={{ position: "absolute", top: -4, right: -4, background: C.error, color: "white", borderRadius: "50%", width: 16, height: 16, fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {topUpRequests.filter(r => r.status === "pending").length}
-              </span>
-            )}
+
           </button>
         ))}
       </div>
@@ -3731,8 +4034,8 @@ function Discover({ setPage, setSelectedProduct, user }) {
   const [friends, setFriends] = useState({});
 
   useEffect(() => {
-    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    getDocs(collection(db, "users")).then(snap => setSellers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))).then(snap => setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted)));
+    getDocs(collection(db, "users")).then(snap => setSellers(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.isSeller && s.businessName)));
     if (user) {
       getDocs(collection(db, "users", user.uid, "following")).then(snap => {
         const f = {}; snap.docs.forEach(d => f[d.id] = true); setFollowing(f);
@@ -3899,6 +4202,8 @@ export default function App() {
   const [cart, setCart] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [chatSeller, setChatSeller] = useState(null);
+  const [viewingPublicProfile, setViewingPublicProfile] = useState(null);
+  const [currentUserPhoto, setCurrentUserPhoto] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("econnect-theme");
@@ -3913,7 +4218,16 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => { setUser(u); setLoading(false); });
+    const unsub = onAuthStateChanged(auth, u => {
+      setUser(u);
+      setLoading(false);
+      if (u) {
+        getDoc(doc(db, "users", u.uid)).then(d => {
+          if (d.exists()) setCurrentUserPhoto(d.data().photoURL || u.photoURL || "");
+          else setCurrentUserPhoto(u.photoURL || "");
+        }).catch(() => setCurrentUserPhoto(u.photoURL || ""));
+      }
+    });
     return unsub;
   }, []);
 
@@ -3942,10 +4256,30 @@ export default function App() {
     if (!user) return;
     const q = query(collection(db, "notifications"), where("toUserId", "==", user.uid), where("read", "==", false));
     const unsub = onSnapshot(q, snap => setUnreadCount(snap.size));
-    return unsub;
+    // Listen for profile photo changes in Firestore
+    const userUnsub = onSnapshot(doc(db, "users", user.uid), snap => {
+      if (snap.exists() && snap.data().photoURL) setCurrentUserPhoto(snap.data().photoURL);
+    });
+    return () => { unsub(); userUnsub(); };
   }, [user]);
 
-  if (loading) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, color: C.primary, fontSize: 20, fontWeight: 700 }}><img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ height: 60, width: "auto", objectFit: "contain" }} /></div>;
+  if (loading) return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, background: "linear-gradient(160deg, #e8faf8 0%, #ffffff 60%, #fff8ee 100%)", position: "relative", overflow: "hidden" }}>
+      {/* Background circles for depth */}
+      <div style={{ position: "absolute", top: -80, right: -80, width: 300, height: 300, borderRadius: "50%", background: `${C.primary}10` }} />
+      <div style={{ position: "absolute", bottom: -60, left: -60, width: 240, height: 240, borderRadius: "50%", background: `#F9731610` }} />
+      {/* Logo */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 20, zIndex: 1 }}>
+        <img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ width: 180, height: 180, objectFit: "contain", borderRadius: 32, boxShadow: "0 12px 40px rgba(0,168,150,0.2)" }} />
+        {/* Loading dots */}
+        <div style={{ display: "flex", gap: 8 }}>
+          {[0,1,2].map(i => (
+            <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: C.primary, opacity: 0.4 + i * 0.2 }} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
   if (!user) return <Auth setUser={setUser} />;
 
   const NavIcon = ({ id, active }) => {
@@ -3974,21 +4308,22 @@ export default function App() {
 
   const renderPage = () => {
     switch (page) {
-      case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
+      case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
       case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} user={user} />;
       case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
-      case "reels": return <ReelsPage user={user} />;
+      case "reels": return <ReelsPage user={user} setPage={setPage} setViewingUser={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
       case "live": return <LivePage user={user} setPage={setPage} setCart={setCart} />;
       case "notifications": return <NotificationsPage user={user} />;
       case "orders": return <OrderTrackingPage user={user} />;
       case "location": return <LocationPage user={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "messages": return <Messages user={user} chatSeller={chatSeller} onChatStarted={() => setChatSeller(null)} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
-      case "wallet": return <WalletPage user={user} setPage={setPage} />;
+      case "profileViews": return <ProfileViewsPage user={user} setPage={setPage} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
       case "analytics": return <SellerAnalytics user={user} />;
-      case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
-      default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
+      case "publicProfile": return <PublicProfile profileUser={viewingPublicProfile} currentUser={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
+      case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
+      default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
     }
   };
 
@@ -4019,8 +4354,8 @@ export default function App() {
           {/* Profile with photo */}
           <button onClick={() => setPage("profile")} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 1, padding: "2px 4px" }}>
             <div style={{ width: 32, height: 32, borderRadius: "50%", overflow: "hidden", border: `2px solid ${page === "profile" ? C.primary : C.border}`, background: C.grey, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {user?.photoURL
-                ? <img src={user.photoURL} alt="profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              {currentUserPhoto
+                ? <img src={currentUserPhoto} alt="profile" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.8"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>}
             </div>
             <span style={{ fontSize: 9, fontWeight: 700, color: page === "profile" ? C.primary : C.greyDark }}>Profile</span>
