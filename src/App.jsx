@@ -10,7 +10,7 @@ import {
 import {
   collection, addDoc, getDocs, doc, setDoc,
   getDoc, query, orderBy, onSnapshot, serverTimestamp,
-  where
+  where, limit
 } from "firebase/firestore";
 
 const THEMES = {
@@ -357,6 +357,7 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
   const [musicQuery, setMusicQuery] = useState("");
   const [musicResults, setMusicResults] = useState([]);
   const [musicSearching, setMusicSearching] = useState(false);
+  const [musicError, setMusicError] = useState(null);
   const [selectedMusicPreview, setSelectedMusicPreview] = useState(null);
   const [progress, setProgress] = useState(0);
   const progressRef = useRef(null);
@@ -433,12 +434,33 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
   const searchMusic = async (q) => {
     if (!q.trim()) return;
     setMusicSearching(true);
+    setMusicError(null);
+    setMusicResults([]);
+    const directUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=20`;
     try {
-      // Use iTunes Search API - free, no key needed, millions of songs
-      const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=20`);
-      const data = await res.json();
+      let res = await fetch(directUrl);
+      let data = await res.json();
+      if (!data.results || data.results.length === 0) {
+        // Try via CORS proxy as fallback (handles environments where itunes.apple.com is blocked)
+        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(directUrl)}`;
+        res = await fetch(proxyUrl);
+        data = await res.json();
+      }
       setMusicResults(data.results || []);
-    } catch (err) { console.error(err); }
+      if (!data.results || data.results.length === 0) setMusicError("No songs found for this search. Try a different name or spelling.");
+    } catch (err) {
+      // Direct fetch failed (likely CORS/network) - try proxy
+      try {
+        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(directUrl)}`;
+        const res = await fetch(proxyUrl);
+        const data = await res.json();
+        setMusicResults(data.results || []);
+        if (!data.results || data.results.length === 0) setMusicError("No songs found for this search. Try a different name or spelling.");
+      } catch (err2) {
+        console.error(err2);
+        setMusicError("Couldn't reach the music search service. Check your connection and try again.");
+      }
+    }
     setMusicSearching(false);
   };
 
@@ -646,7 +668,11 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
           <div style={{ flex: 1, overflowY: "auto", padding: "0 16px" }}>
             {musicSearching && <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.5)" }}>Searching...</div>}
             {!musicSearching && musicResults.length === 0 && musicQuery && (
-              <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.5)" }}>No results found</div>
+              <div style={{ textAlign: "center", padding: 40 }}>
+                <div style={{ fontSize: 40, marginBottom: 10 }}>🔍</div>
+                <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 14, marginBottom: 14 }}>{musicError || "No results found"}</div>
+                <button style={{ ...S.btn(), padding: "8px 18px", fontSize: 13 }} onClick={() => searchMusic(musicQuery)}>Try Again</button>
+              </div>
             )}
             {!musicSearching && musicResults.length === 0 && !musicQuery && (
               <div style={{ textAlign: "center", padding: 40 }}>
@@ -1014,7 +1040,7 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
 }
 
 // ── Order Tracking Page ────────────────────────────────────────
-function OrderTrackingPage({ user }) {
+function OrderTrackingPage({ user, startChat }) {
   const [orders, setOrders] = useState([]);
   const [sellerOrders, setSellerOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1215,6 +1241,28 @@ function OrderTrackingPage({ user }) {
             </div>
             <div style={{ fontSize: 13, color: C.greyDark, marginBottom: 4 }}>📞 {selectedOrder.customerPhone}</div>
             {selectedOrder.address && <div style={{ fontSize: 13, color: C.greyDark, marginBottom: 14 }}>📍 {selectedOrder.address}</div>}
+            {tab === "my-orders" && selectedOrder.items?.[0]?.sellerId && (
+              <button style={{ ...S.btn(), width: "100%", marginBottom: 10 }}
+                onClick={() => startChat && startChat({
+                  id: selectedOrder.items[0].sellerId,
+                  name: selectedOrder.items[0].seller || "Seller",
+                  productName: selectedOrder.items[0].name,
+                  orderId: selectedOrder.id,
+                })}>
+                💬 Message Seller about this Order
+              </button>
+            )}
+            {tab === "seller-orders" && selectedOrder.userId && (
+              <button style={{ ...S.btn(), width: "100%", marginBottom: 10 }}
+                onClick={() => startChat && startChat({
+                  id: selectedOrder.userId,
+                  name: selectedOrder.customerName || "Buyer",
+                  productName: selectedOrder.items?.[0]?.name,
+                  orderId: selectedOrder.id,
+                })}>
+                💬 Message Buyer about this Order
+              </button>
+            )}
             <button style={{ ...S.btn("outline"), width: "100%" }} onClick={() => setSelectedOrder(null)}>Close</button>
           </div>
         </div>
@@ -1267,7 +1315,7 @@ function NotificationsPage({ user }) {
 
   const getIcon = (type) => {
     const icons = {
-      like: "❤️", follow: "👤", order: "🛒", comment: "💬",
+      like: "❤️", follow: "👤", order: "🛒", comment: "💬", message: "✉️",
       ad_approved: "⭐", ad_rejected: "❌", premium: "⭐", review: "⭐", nudge: "👋",
     };
     return icons[type] || "🔔";
@@ -1407,7 +1455,7 @@ async function sendNotification(toUserId, type, message, fromUserName) {
       read: false, createdAt: serverTimestamp(),
     });
     if ("Notification" in window && Notification.permission === "granted" && "serviceWorker" in navigator) {
-      const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", ad_approved: "⭐", premium: "⭐", review: "⭐", nudge: "👋" };
+      const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", message: "✉️", ad_approved: "⭐", premium: "⭐", review: "⭐", nudge: "👋" };
       const icon = icons[type] || "🔔";
       navigator.serviceWorker.ready.then(reg => {
         reg.showNotification("E-Connect " + icon, {
@@ -1564,6 +1612,10 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
   const [showAdd, setShowAdd] = useState(false);
   const [cartMsg, setCartMsg] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showSearchPanel, setShowSearchPanel] = useState(false);
+  const [searchHistory, setSearchHistory] = useState([]);
+  const [trendingSearches, setTrendingSearches] = useState([]);
+  const [recentlyViewed, setRecentlyViewed] = useState([]);
 
   const fetchProducts = async () => {
     setLoading(true);
@@ -1574,11 +1626,75 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
 
   useEffect(() => { fetchProducts(); }, []);
 
+  // Load search history & recently viewed from localStorage
+  useEffect(() => {
+    try {
+      const hist = JSON.parse(localStorage.getItem("econnect-search-history") || "[]");
+      setSearchHistory(hist);
+      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
+      setRecentlyViewed(rv);
+    } catch (e) {}
+    // Load trending searches from Firestore
+    getDocs(query(collection(db, "searchQueries"), orderBy("count", "desc"), limit(8)))
+      .then(snap => setTrendingSearches(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+      .catch(() => {});
+  }, []);
+
+  // Re-sync recently viewed when returning to Home
+  useEffect(() => {
+    try {
+      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
+      setRecentlyViewed(rv);
+    } catch (e) {}
+  }, [products]);
+
+  const saveSearchTerm = async (term) => {
+    const t = term.trim();
+    if (!t) return;
+    // Update local history (max 8, no duplicates, most recent first)
+    const updated = [t, ...searchHistory.filter(h => h.toLowerCase() !== t.toLowerCase())].slice(0, 8);
+    setSearchHistory(updated);
+    try { localStorage.setItem("econnect-search-history", JSON.stringify(updated)); } catch (e) {}
+    // Increment global trending counter
+    const key = t.toLowerCase();
+    try {
+      const ref = doc(db, "searchQueries", key);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        await setDoc(ref, { term: t, count: (snap.data().count || 0) + 1, updatedAt: serverTimestamp() }, { merge: true });
+      } else {
+        await setDoc(ref, { term: t, count: 1, updatedAt: serverTimestamp() });
+      }
+    } catch (e) {}
+  };
+
+  const removeSearchHistoryItem = (term) => {
+    const updated = searchHistory.filter(h => h !== term);
+    setSearchHistory(updated);
+    try { localStorage.setItem("econnect-search-history", JSON.stringify(updated)); } catch (e) {}
+  };
+
+  const clearSearchHistory = () => {
+    setSearchHistory([]);
+    try { localStorage.removeItem("econnect-search-history"); } catch (e) {}
+  };
+
+  const applySearch = (term) => {
+    setSearch(term);
+    setShowSearchPanel(false);
+    saveSearchTerm(term);
+  };
+
   const filtered = products.filter(p => {
     const matchCat = activeCategory === "All" || p.category === activeCategory;
     const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
     return matchCat && matchSearch;
   });
+
+  const recentlyViewedProducts = recentlyViewed
+    .map(id => products.find(p => p.id === id))
+    .filter(Boolean)
+    .slice(0, 10);
 
   const addToCart = (p) => {
     setCart(prev => { const ex = prev.find(i => i.id === p.id); if (ex) return prev.map(i => i.id === p.id ? { ...i, qty: i.qty + 1 } : i); return [...prev, { ...p, qty: 1 }]; });
@@ -1591,7 +1707,55 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
 
       <div style={{ position: "relative", marginBottom: 16 }}>
         <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 16 }}>🔍</span>
-        <input style={{ ...S.input, paddingLeft: 38 }} placeholder="Search products..." value={search} onChange={e => setSearch(e.target.value)} />
+        <input
+          style={{ ...S.input, paddingLeft: 38 }}
+          placeholder="Search products..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          onFocus={() => setShowSearchPanel(true)}
+          onBlur={() => setTimeout(() => setShowSearchPanel(false), 150)}
+          onKeyDown={e => { if (e.key === "Enter" && search.trim()) { saveSearchTerm(search); setShowSearchPanel(false); } }}
+        />
+        {search && (
+          <button style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", fontSize: 16, color: C.greyDark, cursor: "pointer" }}
+            onClick={() => setSearch("")}>✕</button>
+        )}
+
+        {/* Search History & Trending Panel */}
+        {showSearchPanel && (searchHistory.length > 0 || trendingSearches.length > 0) && (
+          <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 6, background: C.white, borderRadius: 12, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", zIndex: 50, padding: 14, maxHeight: 320, overflowY: "auto" }}>
+            {searchHistory.length > 0 && (
+              <div style={{ marginBottom: trendingSearches.length > 0 ? 14 : 0 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: C.greyDark }}>🕐 Recent Searches</span>
+                  <span style={{ fontSize: 12, color: C.primary, cursor: "pointer", fontWeight: 600 }} onMouseDown={e => { e.preventDefault(); clearSearchHistory(); }}>Clear</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {searchHistory.map(term => (
+                    <div key={term} style={{ display: "flex", alignItems: "center", gap: 6, background: C.grey, borderRadius: 20, padding: "6px 10px 6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                      onMouseDown={e => { e.preventDefault(); applySearch(term); }}>
+                      {term}
+                      <span style={{ color: C.greyDark, fontSize: 13, lineHeight: 1 }} onMouseDown={e => { e.preventDefault(); e.stopPropagation(); removeSearchHistoryItem(term); }}>✕</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {trendingSearches.length > 0 && (
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: C.greyDark, marginBottom: 8 }}>🔥 Trending Searches</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {trendingSearches.map(t => (
+                    <div key={t.id} style={{ background: `${C.primary}12`, color: C.primary, borderRadius: 20, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                      onMouseDown={e => { e.preventDefault(); applySearch(t.term); }}>
+                      {t.term}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <StoriesBar user={user} setPage={setPage} setViewingPublicProfile={setViewingPublicProfile} />
@@ -1641,6 +1805,30 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
                     {p.seller} <VerifiedBadge size={12} />
                   </div>
                   <div style={{ color: C.primary, fontWeight: 800, fontSize: 15 }}>GH₵{p.price}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Recently Viewed ── */}
+      {recentlyViewedProducts.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 16 }}>🕐</span>
+            <span style={{ fontWeight: 800, fontSize: 16 }}>Recently Viewed</span>
+          </div>
+          <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8 }}>
+            {recentlyViewedProducts.map(p => (
+              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", minWidth: 130, flexShrink: 0 }}
+                onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+                <div style={{ height: 90, overflow: "hidden", background: C.grey }}>
+                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+                </div>
+                <div style={{ padding: 8 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                  <div style={{ color: C.primary, fontWeight: 800, fontSize: 13 }}>GH₵{p.price}</div>
                 </div>
               </div>
             ))}
@@ -1732,6 +1920,12 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
     getDoc(doc(db, "users", product.sellerId)).then(d => {
       if (d.exists()) setSellerData(d.data());
     }).catch(() => {});
+    // Track recently viewed in localStorage (most recent first, max 20, no duplicates)
+    try {
+      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
+      const updated = [product.id, ...rv.filter(id => id !== product.id)].slice(0, 20);
+      localStorage.setItem("econnect-recently-viewed", JSON.stringify(updated));
+    } catch (e) {}
   }, [product?.id]);
 
   // Attach sellerData to product for rendering
@@ -2784,6 +2978,14 @@ function Messages({ user, chatSeller, onChatStarted }) {
   const [newChat, setNewChat] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState("");
   const [loadingChat, setLoadingChat] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [uploadingVoice, setUploadingVoice] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordTimerRef = useRef(null);
+  const playingAudioRef = useRef(null);
+  const [playingId, setPlayingId] = useState(null);
 
   useEffect(() => {
     if (!user) return;
@@ -2791,17 +2993,22 @@ function Messages({ user, chatSeller, onChatStarted }) {
     const unsub = onSnapshot(q, snap => {
       const convos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setConversations(convos);
-      // Auto-open chat with seller if coming from product page
+      // Auto-open chat with seller if coming from product page or order page
       if (chatSeller && !loadingChat) {
         setLoadingChat(true);
-        const existing = convos.find(c => c.participants?.includes(chatSeller.id) && c.participants?.includes(user.uid));
+        let existing;
+        if (chatSeller.orderId) {
+          existing = convos.find(c => c.orderId === chatSeller.orderId && c.participants?.includes(chatSeller.id) && c.participants?.includes(user.uid));
+        } else {
+          existing = convos.find(c => c.participants?.includes(chatSeller.id) && c.participants?.includes(user.uid) && !c.orderId);
+        }
         if (existing) {
           setSelected(existing);
           if (chatSeller.productName && !existing.lastMessage) {
             // Send automatic first message
             addDoc(collection(db, "conversations", existing.id, "messages"), {
               text: `Hi! I have a question about "${chatSeller.productName}". Is it still available?`,
-              senderId: user.uid, senderName: user.displayName, createdAt: serverTimestamp(),
+              senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp(),
             });
             setDoc(doc(db, "conversations", existing.id), { lastMessage: `Hi! I have a question about "${chatSeller.productName}".`, lastMessageAt: serverTimestamp() }, { merge: true });
           }
@@ -2815,24 +3022,29 @@ function Messages({ user, chatSeller, onChatStarted }) {
   }, [user, chatSeller]);
 
   const startSellerChat = async (seller, existingConvos) => {
-    const existing = existingConvos?.find(c => c.participants?.includes(seller.id));
+    const existing = seller.orderId
+      ? existingConvos?.find(c => c.orderId === seller.orderId && c.participants?.includes(seller.id))
+      : existingConvos?.find(c => c.participants?.includes(seller.id) && !c.orderId);
     if (existing) { setSelected(existing); onChatStarted && onChatStarted(); return; }
     const convoRef = await addDoc(collection(db, "conversations"), {
       participants: [user.uid, seller.id],
       participantNames: [user.displayName, seller.name],
-      lastMessage: seller.productName ? `Hi! About "${seller.productName}"` : "Hello!",
+      lastMessage: seller.orderId ? `Order chat started` : (seller.productName ? `Hi! About "${seller.productName}"` : "Hello!"),
       lastMessageAt: serverTimestamp(),
       productId: seller.productId || null,
       productName: seller.productName || null,
+      orderId: seller.orderId || null,
     });
-    const firstMsg = seller.productName
-      ? `Hi! I have a question about "${seller.productName}". Is it still available?`
-      : "Hello!";
+    const firstMsg = seller.orderId
+      ? `Hi! I'd like to discuss my order${seller.productName ? ` for "${seller.productName}"` : ""}.`
+      : seller.productName
+        ? `Hi! I have a question about "${seller.productName}". Is it still available?`
+        : "Hello!";
     await addDoc(collection(db, "conversations", convoRef.id, "messages"), {
-      text: firstMsg, senderId: user.uid, senderName: user.displayName, createdAt: serverTimestamp(),
+      text: firstMsg, senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp(),
     });
-    await sendNotification(seller.id, "comment", `💬 ${user.displayName} wants to ask about "${seller.productName || "your product"}"`, user.displayName);
-    setSelected({ id: convoRef.id, participants: [user.uid, seller.id], participantNames: [user.displayName, seller.name], productName: seller.productName });
+    await sendNotification(seller.id, "message", `💬 ${user.displayName} sent you a message${seller.orderId ? " about an order" : ""}`, user.displayName);
+    setSelected({ id: convoRef.id, participants: [user.uid, seller.id], participantNames: [user.displayName, seller.name], productName: seller.productName, orderId: seller.orderId || null });
     onChatStarted && onChatStarted();
   };
 
@@ -2847,14 +3059,101 @@ function Messages({ user, chatSeller, onChatStarted }) {
 
   const sendMessage = async () => {
     if (!newMsg.trim() || !selected) return;
-    await addDoc(collection(db, "conversations", selected.id, "messages"), {
-      text: newMsg, senderId: user.uid, senderName: user.displayName, createdAt: serverTimestamp()
-    });
+    const text = newMsg;
     setNewMsg("");
+    await addDoc(collection(db, "conversations", selected.id, "messages"), {
+      text, senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp()
+    });
+    await setDoc(doc(db, "conversations", selected.id), { lastMessage: text, lastMessageAt: serverTimestamp() }, { merge: true });
+    // Notify the other participant
+    const recipientId = selected.participants?.find(id => id !== user.uid);
+    if (recipientId) {
+      await sendNotification(recipientId, "message", `💬 ${user.displayName || "Someone"}: ${text.length > 40 ? text.slice(0, 40) + "…" : text}`, user.displayName);
+    }
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
+      const recorder = new MediaRecorder(stream, { mimeType });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      recorder.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        clearInterval(recordTimerRef.current);
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        if (recordSeconds >= 1) uploadVoiceMessage(blob, mimeType);
+        setRecordSeconds(0);
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+      setRecordSeconds(0);
+      recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+    } catch (err) {
+      console.error("Mic access error:", err);
+      alert("Couldn't access microphone. Please allow microphone permission and try again.");
+    }
+  };
+
+  const stopRecording = (cancel) => {
+    if (!mediaRecorderRef.current) return;
+    if (cancel) audioChunksRef.current = [];
+    mediaRecorderRef.current.stop();
+    setIsRecording(false);
+  };
+
+  const uploadVoiceMessage = async (blob, mimeType) => {
+    if (!selected) return;
+    setUploadingVoice(true);
+    try {
+      const ext = mimeType.includes("webm") ? "webm" : "m4a";
+      const data = new FormData();
+      data.append("file", blob, `voice.${ext}`);
+      data.append("upload_preset", "Econnect");
+      data.append("cloud_name", "dxmmsq0gq");
+      const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/video/upload", { method: "POST", body: data });
+      const result = await res.json();
+      if (result.secure_url) {
+        const duration = result.duration ? Math.round(result.duration) : recordSeconds;
+        await addDoc(collection(db, "conversations", selected.id, "messages"), {
+          audioUrl: result.secure_url, audioDuration: duration, type: "audio",
+          senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp(),
+        });
+        await setDoc(doc(db, "conversations", selected.id), { lastMessage: "🎤 Voice message", lastMessageAt: serverTimestamp() }, { merge: true });
+        const recipientId = selected.participants?.find(id => id !== user.uid);
+        if (recipientId) {
+          await sendNotification(recipientId, "message", `🎤 ${user.displayName || "Someone"} sent a voice message`, user.displayName);
+        }
+      }
+    } catch (err) { console.error("Voice upload error:", err); alert("Failed to send voice message. Please try again."); }
+    setUploadingVoice(false);
+  };
+
+  const toggleAudioPlayback = (msg) => {
+    if (playingId === msg.id) {
+      playingAudioRef.current?.pause();
+      setPlayingId(null);
+      return;
+    }
+    playingAudioRef.current?.pause();
+    const audio = new Audio(msg.audioUrl);
+    audio.play().catch(() => {});
+    audio.onended = () => setPlayingId(null);
+    playingAudioRef.current = audio;
+    setPlayingId(msg.id);
+  };
+
+  const formatDuration = (sec) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
   return (
     <div style={S.page}>
+      <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
       {!selected ? (
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -2869,9 +3168,12 @@ function Messages({ user, chatSeller, onChatStarted }) {
           ) : conversations.map(c => (
             <div key={c.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, marginBottom: 8, cursor: "pointer" }} onClick={() => setSelected(c)}>
               <div style={{ ...S.avatar(48), background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700 }}>{c.participantNames?.filter(n => n !== user.displayName).join(", ") || "Chat"}</div>
-                <div style={{ color: C.greyDark, fontSize: 13 }}>{c.lastMessage || "No messages yet"}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                  {c.participantNames?.filter(n => n !== user.displayName).join(", ") || "Chat"}
+                  {c.orderId && <span style={{ background: `${C.primary}15`, color: C.primary, fontSize: 10, fontWeight: 700, borderRadius: 8, padding: "2px 6px" }}>🛒 Order</span>}
+                </div>
+                <div style={{ color: C.greyDark, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.lastMessage || "No messages yet"}</div>
               </div>
             </div>
           ))}
@@ -2880,18 +3182,51 @@ function Messages({ user, chatSeller, onChatStarted }) {
         <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 140px)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
             <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20 }} onClick={() => setSelected(null)}>←</button>
-            <span style={{ fontWeight: 700 }}>{selected.participantNames?.filter(n => n !== user.displayName).join(", ")}</span>
+            <div>
+              <span style={{ fontWeight: 700 }}>{selected.participantNames?.filter(n => n !== user.displayName).join(", ")}</span>
+              {selected.orderId && <div style={{ fontSize: 11, color: C.primary, fontWeight: 700 }}>🛒 About order {selected.orderId.slice(0, 6)}…{selected.productName ? ` · ${selected.productName}` : ""}</div>}
+            </div>
           </div>
           <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
             {messages.map(m => (
               <div key={m.id} style={{ display: "flex", justifyContent: m.senderId === user.uid ? "flex-end" : "flex-start" }}>
-                <div style={{ background: m.senderId === user.uid ? C.primary : C.grey, color: m.senderId === user.uid ? "white" : C.text, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", fontSize: 13 }}>{m.text}</div>
+                {m.type === "audio" ? (
+                  <div style={{ background: m.senderId === user.uid ? C.primary : C.grey, color: m.senderId === user.uid ? "white" : C.text, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", display: "flex", alignItems: "center", gap: 10, minWidth: 160 }}>
+                    <button style={{ background: "rgba(255,255,255,0.25)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "inherit", fontSize: 14, flexShrink: 0 }}
+                      onClick={() => toggleAudioPlayback(m)}>
+                      {playingId === m.id ? "⏸" : "▶"}
+                    </button>
+                    <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.3)", borderRadius: 2, position: "relative" }}>
+                      <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: playingId === m.id ? "100%" : "0%", background: "currentColor", borderRadius: 2, transition: playingId === m.id ? `width ${m.audioDuration || 1}s linear` : "none" }} />
+                    </div>
+                    <span style={{ fontSize: 11, fontWeight: 600, flexShrink: 0 }}>🎤 {formatDuration(m.audioDuration || 0)}</span>
+                  </div>
+                ) : (
+                  <div style={{ background: m.senderId === user.uid ? C.primary : C.grey, color: m.senderId === user.uid ? "white" : C.text, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", fontSize: 13 }}>{m.text}</div>
+                )}
               </div>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            <input style={{ ...S.input, flex: 1 }} placeholder="Type a message..." value={newMsg} onChange={e => setNewMsg(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMessage()} />
-            <button style={{ ...S.btn(), padding: "10px 18px" }} onClick={sendMessage}>Send</button>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            {isRecording ? (
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: C.grey, borderRadius: 24, padding: "8px 14px" }}>
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#EF4444", animation: "pulse 1s infinite" }} />
+                <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>Recording... {formatDuration(recordSeconds)}</span>
+                <button style={{ background: "none", border: "none", color: C.greyDark, fontWeight: 700, fontSize: 13, cursor: "pointer" }} onClick={() => stopRecording(true)}>Cancel</button>
+                <button style={{ background: C.primary, border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, fontSize: 14, cursor: "pointer" }} onClick={() => stopRecording(false)}>✓</button>
+              </div>
+            ) : (
+              <>
+                <input style={{ ...S.input, flex: 1 }} placeholder="Type a message..." value={newMsg} onChange={e => setNewMsg(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMessage()} />
+                {newMsg.trim() ? (
+                  <button style={{ ...S.btn(), padding: "10px 18px" }} onClick={sendMessage}>Send</button>
+                ) : (
+                  <button style={{ ...S.btn(), padding: "10px 14px", opacity: uploadingVoice ? 0.6 : 1 }} disabled={uploadingVoice} onClick={startRecording}>
+                    {uploadingVoice ? "..." : "🎤"}
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}
@@ -4315,7 +4650,7 @@ export default function App() {
       case "reels": return <ReelsPage user={user} setPage={setPage} setViewingUser={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
       case "live": return <LivePage user={user} setPage={setPage} setCart={setCart} />;
       case "notifications": return <NotificationsPage user={user} />;
-      case "orders": return <OrderTrackingPage user={user} />;
+      case "orders": return <OrderTrackingPage user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "location": return <LocationPage user={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "messages": return <Messages user={user} chatSeller={chatSeller} onChatStarted={() => setChatSeller(null)} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
