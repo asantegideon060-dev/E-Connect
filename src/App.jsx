@@ -437,30 +437,27 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
     setMusicError(null);
     setMusicResults([]);
     const directUrl = `https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=20`;
-    try {
-      let res = await fetch(directUrl);
-      let data = await res.json();
-      if (!data.results || data.results.length === 0) {
-        // Try via CORS proxy as fallback (handles environments where itunes.apple.com is blocked)
-        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(directUrl)}`;
-        res = await fetch(proxyUrl);
-        data = await res.json();
-      }
-      setMusicResults(data.results || []);
-      if (!data.results || data.results.length === 0) setMusicError("No songs found for this search. Try a different name or spelling.");
-    } catch (err) {
-      // Direct fetch failed (likely CORS/network) - try proxy
+    const attempts = [
+      directUrl,
+      `https://corsproxy.io/?${encodeURIComponent(directUrl)}`,
+      `https://api.allorigins.win/raw?url=${encodeURIComponent(directUrl)}`,
+      `https://r.jina.ai/${directUrl}`,
+    ];
+    for (const url of attempts) {
       try {
-        const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(directUrl)}`;
-        const res = await fetch(proxyUrl);
+        const res = await fetch(url);
+        if (!res.ok) continue;
         const data = await res.json();
-        setMusicResults(data.results || []);
-        if (!data.results || data.results.length === 0) setMusicError("No songs found for this search. Try a different name or spelling.");
-      } catch (err2) {
-        console.error(err2);
-        setMusicError("Couldn't reach the music search service. Check your connection and try again.");
+        if (data.results && data.results.length > 0) {
+          setMusicResults(data.results);
+          setMusicSearching(false);
+          return;
+        }
+      } catch (err) {
+        // try next fallback
       }
     }
+    setMusicError("No songs found for this search. Try a different name or spelling.");
     setMusicSearching(false);
   };
 
@@ -1075,7 +1072,7 @@ function OrderTrackingPage({ user, startChat }) {
   const updateOrderStatus = async (orderId, newStatus, buyerId) => {
     await setDoc(doc(db, "orders", orderId), { status: newStatus, updatedAt: serverTimestamp() }, { merge: true });
     const statusInfo = getStatus(newStatus);
-    await sendNotification(buyerId, "order", `Your order status has been updated to: ${statusInfo.label} ${statusInfo.icon}`, "E-Connect");
+    await sendNotification(buyerId, "order", `Your order status has been updated to: ${statusInfo.label} ${statusInfo.icon}`, "E-Connect", { orderId });
     setSellerOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     if (selectedOrder?.id === orderId) setSelectedOrder(prev => ({ ...prev, status: newStatus }));
@@ -1272,7 +1269,7 @@ function OrderTrackingPage({ user, startChat }) {
 }
 
 // ── Notifications Page ─────────────────────────────────────────
-function NotificationsPage({ user }) {
+function NotificationsPage({ user, setPage, setChatSeller, setSelectedProduct, setViewingPublicProfile }) {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notifPermission, setNotifPermission] = useState(
@@ -1283,14 +1280,22 @@ function NotificationsPage({ user }) {
     if (!("Notification" in window)) { alert("Your browser does not support notifications."); return; }
     const result = await Notification.requestPermission();
     setNotifPermission(result);
-    if (result === "granted" && "serviceWorker" in navigator) {
-      navigator.serviceWorker.ready.then(reg => {
-        reg.showNotification("E-Connect 🔔", {
-          body: "Notifications enabled! You will now receive updates.",
-          icon: "https://res.cloudinary.com/dxmmsq0gq/image/upload/w_192,h_192,c_fill/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg",
-          vibrate: [200, 100, 200],
-        });
-      });
+    if (result === "granted") {
+      if ("serviceWorker" in navigator) {
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          reg.showNotification("E-Connect 🔔", {
+            body: "Notifications enabled! You will now receive updates.",
+            icon: "https://res.cloudinary.com/dxmmsq0gq/image/upload/w_192,h_192,c_fill/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg",
+            vibrate: [200, 100, 200],
+          });
+        } catch (e) {
+          // Service worker not ready - fall back to plain notification
+          new Notification("E-Connect 🔔", { body: "Notifications enabled! You will now receive updates." });
+        }
+      } else {
+        new Notification("E-Connect 🔔", { body: "Notifications enabled! You will now receive updates." });
+      }
     }
   };
 
@@ -1302,8 +1307,31 @@ function NotificationsPage({ user }) {
       orderBy("createdAt", "desc")
     );
     const unsub = onSnapshot(q, snap => {
-      setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Deduplicate: collapse consecutive notifications with the same type+message+fromUserId
+      // (keeps the most recent, but counts how many were collapsed)
+      const deduped = [];
+      for (const n of all) {
+        const last = deduped[deduped.length - 1];
+        if (last && last.type === n.type && last.message === n.message && last.fromUserId === n.fromUserId) {
+          last._count = (last._count || 1) + 1;
+          // Keep the most recent createdAt and id, mark older duplicates for cleanup
+          last._dupIds = last._dupIds || [];
+          last._dupIds.push(n.id);
+        } else {
+          deduped.push({ ...n, _count: 1, _dupIds: [] });
+        }
+      }
+      setNotifications(deduped);
       setLoading(false);
+      // Clean up duplicate notification docs in the background (best-effort)
+      deduped.forEach(n => {
+        if (n._dupIds && n._dupIds.length > 0) {
+          n._dupIds.forEach(dupId => {
+            setDoc(doc(db, "notifications", dupId), { read: true, _duplicate: true }, { merge: true }).catch(() => {});
+          });
+        }
+      });
     }, () => setLoading(false));
     return unsub;
   }, [user]);
@@ -1311,6 +1339,45 @@ function NotificationsPage({ user }) {
   const markAllRead = async () => {
     const unread = notifications.filter(n => !n.read);
     await Promise.all(unread.map(n => setDoc(doc(db, "notifications", n.id), { read: true }, { merge: true })));
+  };
+
+  const handleNotificationClick = async (n) => {
+    await setDoc(doc(db, "notifications", n.id), { read: true }, { merge: true });
+    switch (n.type) {
+      case "message":
+        if (n.conversationId) {
+          setChatSeller && setChatSeller({ id: n.fromUserId, name: n.fromUserName, conversationId: n.conversationId });
+        }
+        setPage && setPage("messages");
+        break;
+      case "follow":
+      case "nudge":
+        if (n.fromUserId) {
+          setViewingPublicProfile && setViewingPublicProfile({ uid: n.fromUserId, displayName: n.fromUserName });
+          setPage && setPage("publicProfile");
+        }
+        break;
+      case "like":
+      case "comment":
+        if (n.productId) {
+          // Need full product data - navigate to discover/home where ProductDetail can be opened
+          setPage && setPage("home");
+        } else if (n.reelId) {
+          setPage && setPage("reels");
+        }
+        break;
+      case "order":
+        setPage && setPage("orders");
+        break;
+      case "premium":
+      case "verification":
+      case "ad_approved":
+      case "ad_rejected":
+        setPage && setPage("profile");
+        break;
+      default:
+        break;
+    }
   };
 
   const getIcon = (type) => {
@@ -1378,12 +1445,15 @@ function NotificationsPage({ user }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 80 }}>
           {notifications.map(n => (
             <div key={n.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, background: n.read ? C.white : `${C.primary}08`, borderLeft: n.read ? "none" : `3px solid ${C.primary}`, cursor: "pointer" }}
-              onClick={() => setDoc(doc(db, "notifications", n.id), { read: true }, { merge: true })}>
+              onClick={() => handleNotificationClick(n)}>
               <div style={{ width: 44, height: 44, borderRadius: "50%", background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>
                 {getIcon(n.type)}
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: n.read ? 500 : 700, color: C.text, lineHeight: 1.4 }}>{n.message}</div>
+                <div style={{ fontSize: 14, fontWeight: n.read ? 500 : 700, color: C.text, lineHeight: 1.4 }}>
+                  {n.message}
+                  {n._count > 1 && <span style={{ color: C.greyDark, fontWeight: 600 }}> ({n._count}x)</span>}
+                </div>
                 <div style={{ fontSize: 12, color: C.greyDark, marginTop: 3 }}>{getTimeAgo(n.createdAt)}</div>
               </div>
               {!n.read && <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.primary, flexShrink: 0 }} />}
@@ -1447,12 +1517,12 @@ function ProductPlaceholder({ name, category, size = "100%" }) {
 }
 
 // ── Send Notification Helper ────────────────────────────────────
-async function sendNotification(toUserId, type, message, fromUserName) {
+async function sendNotification(toUserId, type, message, fromUserName, meta = {}) {
   if (!toUserId) return;
   try {
     await addDoc(collection(db, "notifications"), {
       toUserId, type, message, fromUserName: fromUserName || "",
-      read: false, createdAt: serverTimestamp(),
+      read: false, createdAt: serverTimestamp(), ...meta,
     });
     if ("Notification" in window && Notification.permission === "granted" && "serviceWorker" in navigator) {
       const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", message: "✉️", ad_approved: "⭐", premium: "⭐", review: "⭐", nudge: "👋" };
@@ -1472,46 +1542,139 @@ async function sendNotification(toUserId, type, message, fromUserName) {
 }
 
 // ── Approved Ads Banner ────────────────────────────────────────
-function ApprovedAdsBanner() {
+function ApprovedAdsBanner({ setViewingPublicProfile, setPage, setChatSeller }) {
   const [ads, setAds] = useState([]);
   const [current, setCurrent] = useState(0);
+  const [selectedAd, setSelectedAd] = useState(null);
+  const [isVisible, setIsVisible] = useState(true);
+  const [showSponsoredTip, setShowSponsoredTip] = useState(false);
+  const containerRef = useRef(null);
 
   useEffect(() => {
     getDocs(query(collection(db, "ads"), where("status", "==", "approved"))).then(snap => {
       setAds(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
+    // Show the "Sponsored" tooltip once per device, on first encounter
+    try {
+      if (!localStorage.getItem("econnect-sponsored-tip-seen")) {
+        setShowSponsoredTip(true);
+      }
+    } catch (e) {}
+  }, []);
+
+  // Pause auto-rotate when the banner scrolls out of view
+  useEffect(() => {
+    if (!containerRef.current || !("IntersectionObserver" in window)) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setIsVisible(entry.isIntersecting),
+      { threshold: 0.3 }
+    );
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
-    if (ads.length <= 1) return;
+    if (ads.length <= 1 || selectedAd || !isVisible) return;
     const timer = setInterval(() => setCurrent(prev => (prev + 1) % ads.length), 4000);
     return () => clearInterval(timer);
-  }, [ads]);
+  }, [ads, selectedAd, isVisible]);
+
+  const dismissSponsoredTip = () => {
+    setShowSponsoredTip(false);
+    try { localStorage.setItem("econnect-sponsored-tip-seen", "true"); } catch (e) {}
+  };
 
   if (ads.length === 0) return null;
 
   const ad = ads[current];
+
   return (
-    <div style={{ borderRadius: 14, overflow: "hidden", marginBottom: 16, position: "relative", cursor: "pointer" }}>
-      {ad.adType === "video" ? (
-        <video src={ad.mediaUrl || ad.imageUrl} style={{ width: "100%", height: 200, objectFit: "cover" }} autoPlay muted loop playsInline poster={ad.imageUrl} />
-      ) : (
-        <img src={ad.imageUrl} alt={ad.businessName} style={{ width: "100%", height: 160, objectFit: "cover" }} />
-      )}
-      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent, rgba(0,0,0,0.7))", padding: "20px 16px 12px" }}>
-        <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{ad.title || ad.businessName}</div>
-        <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 12 }}>{ad.description}</div>
+    <>
+      <div ref={containerRef} style={{ ...S.card, overflow: "hidden", marginBottom: 16, cursor: "pointer", position: "relative" }} onClick={() => setSelectedAd(ad)}>
+        <div style={{ position: "relative" }}>
+          {ad.adType === "video" ? (
+            <video src={ad.mediaUrl || ad.imageUrl} style={{ width: "100%", height: 180, objectFit: "cover", display: "block" }} autoPlay muted loop playsInline poster={ad.imageUrl} />
+          ) : (
+            <img src={ad.imageUrl} alt={ad.businessName} style={{ width: "100%", height: 180, objectFit: "cover", display: "block" }} />
+          )}
+          <div style={{ position: "absolute", top: 10, right: 10, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}
+            onClick={(e) => { if (showSponsoredTip) { e.stopPropagation(); dismissSponsoredTip(); } }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+            Promoted
+          </div>
+          {showSponsoredTip && (
+            <div style={{ position: "absolute", top: 42, right: 10, background: "rgba(20,20,20,0.92)", color: "white", borderRadius: 10, padding: "10px 12px", fontSize: 11, maxWidth: 200, zIndex: 5, lineHeight: 1.4 }}
+              onClick={(e) => { e.stopPropagation(); dismissSponsoredTip(); }}>
+              <div style={{ position: "absolute", top: -5, right: 16, width: 10, height: 10, background: "rgba(20,20,20,0.92)", transform: "rotate(45deg)" }} />
+              "Promoted" means a seller paid to feature this here. Tap to dismiss.
+            </div>
+          )}
+          {ads.length > 1 && (
+            <div style={{ position: "absolute", bottom: 8, right: 12, display: "flex", gap: 4 }}>
+              {ads.map((_, i) => <div key={i} style={{ width: i === current ? 16 : 6, height: 6, borderRadius: 3, background: i === current ? "white" : "rgba(255,255,255,0.6)", transition: "width 0.3s" }} />)}
+            </div>
+          )}
+        </div>
+        <div style={{ padding: "10px 14px" }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ad.title || ad.businessName}</div>
+          {ad.description && <div style={{ color: C.greyDark, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ad.description}</div>}
+        </div>
       </div>
-      <div style={{ position: "absolute", top: 10, right: 10, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
-        Promoted
-      </div>
-      {ads.length > 1 && (
-        <div style={{ position: "absolute", bottom: 8, right: 12, display: "flex", gap: 4 }}>
-          {ads.map((_, i) => <div key={i} style={{ width: i === current ? 16 : 6, height: 6, borderRadius: 3, background: i === current ? "white" : "rgba(255,255,255,0.5)", transition: "width 0.3s" }} />)}
+
+      {/* Ad Detail Modal */}
+      {selectedAd && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.6)", zIndex: 300, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+          onClick={() => setSelectedAd(null)}>
+          <div style={{ background: C.white, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 0" }}>
+              <div style={{ width: 36, height: 4, borderRadius: 2, background: C.greyMid }} />
+            </div>
+            <div style={{ position: "relative" }}>
+              {selectedAd.adType === "video" ? (
+                <video src={selectedAd.mediaUrl || selectedAd.imageUrl} style={{ width: "100%", maxHeight: 320, objectFit: "cover", display: "block" }} controls autoPlay playsInline />
+              ) : (
+                <img src={selectedAd.imageUrl} alt={selectedAd.businessName} style={{ width: "100%", maxHeight: 320, objectFit: "cover", display: "block" }} />
+              )}
+              <div style={{ position: "absolute", top: 10, right: 10, background: "#FFD700", borderRadius: 20, padding: "4px 12px", fontSize: 11, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+                Promoted
+              </div>
+            </div>
+            <div style={{ padding: 18 }}>
+              <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>{selectedAd.title || selectedAd.businessName}</div>
+              {selectedAd.description && <div style={{ color: C.greyDark, fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>{selectedAd.description}</div>}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, padding: 12, background: C.grey, borderRadius: 12 }}>
+                <div style={{ width: 40, height: 40, borderRadius: "50%", background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: C.primary, flexShrink: 0 }}>
+                  {(selectedAd.businessName || "?").charAt(0).toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedAd.businessName}</div>
+                  <div style={{ fontSize: 12, color: C.greyDark }}>Posted this ad</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button style={{ ...S.btn("outline"), flex: 1 }}
+                  onClick={() => {
+                    setSelectedAd(null);
+                    setViewingPublicProfile && setViewingPublicProfile({ uid: selectedAd.userId, displayName: selectedAd.businessName });
+                    setPage && setPage("publicProfile");
+                  }}>
+                  👤 View Profile
+                </button>
+                <button style={{ ...S.btn(), flex: 1 }}
+                  onClick={() => {
+                    setSelectedAd(null);
+                    setChatSeller && setChatSeller({ id: selectedAd.userId, name: selectedAd.businessName, productName: selectedAd.title });
+                    setPage && setPage("messages");
+                  }}>
+                  💬 Chat
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -1605,7 +1768,21 @@ function PremiumCarousel({ products, setSelectedProduct, setPage }) {
 
 
 // ── Home Page ──────────────────────────────────────────────────
-function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPublicProfile }) {
+// ── Product Card Skeleton (loading shimmer) ─────────────────────
+function ProductCardSkeleton() {
+  return (
+    <div style={{ ...S.card, overflow: "hidden" }}>
+      <div className="skeleton-shimmer" style={{ height: 110, background: C.greyMid }} />
+      <div style={{ padding: 10 }}>
+        <div className="skeleton-shimmer" style={{ height: 13, width: "80%", borderRadius: 4, background: C.greyMid, marginBottom: 8 }} />
+        <div className="skeleton-shimmer" style={{ height: 11, width: "50%", borderRadius: 4, background: C.greyMid, marginBottom: 8 }} />
+        <div className="skeleton-shimmer" style={{ height: 14, width: "40%", borderRadius: 4, background: C.greyMid }} />
+      </div>
+    </div>
+  );
+}
+
+function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPublicProfile, setChatSeller }) {
   const [products, setProducts] = useState([]);
   const [activeCategory, setActiveCategory] = useState("All");
   const [search, setSearch] = useState("");
@@ -1615,24 +1792,38 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
   const [showSearchPanel, setShowSearchPanel] = useState(false);
   const [searchHistory, setSearchHistory] = useState([]);
   const [trendingSearches, setTrendingSearches] = useState([]);
-  const [recentlyViewed, setRecentlyViewed] = useState([]);
 
-  const fetchProducts = async () => {
-    setLoading(true);
-    const snap = await getDocs(query(collection(db, "products"), orderBy("createdAt", "desc")));
-    setProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted));
+  const fetchProducts = async (isBackground = false) => {
+    if (!isBackground) setLoading(true);
+    try {
+      const snap = await getDocs(query(collection(db, "products"), orderBy("createdAt", "desc")));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted);
+      setProducts(list);
+      try { localStorage.setItem("econnect-products-cache", JSON.stringify({ data: list, cachedAt: Date.now() })); } catch (e) {}
+    } catch (e) { console.error("Failed to fetch products:", e); }
     setLoading(false);
   };
 
-  useEffect(() => { fetchProducts(); }, []);
+  useEffect(() => {
+    // Load cached products instantly for fast first paint
+    try {
+      const cached = JSON.parse(localStorage.getItem("econnect-products-cache") || "null");
+      if (cached?.data?.length) {
+        setProducts(cached.data);
+        setLoading(false);
+        // Refresh in the background
+        fetchProducts(true);
+        return;
+      }
+    } catch (e) {}
+    fetchProducts();
+  }, []);
 
-  // Load search history & recently viewed from localStorage
+  // Load search history from localStorage
   useEffect(() => {
     try {
       const hist = JSON.parse(localStorage.getItem("econnect-search-history") || "[]");
       setSearchHistory(hist);
-      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
-      setRecentlyViewed(rv);
     } catch (e) {}
     // Load trending searches from Firestore
     getDocs(query(collection(db, "searchQueries"), orderBy("count", "desc"), limit(8)))
@@ -1640,13 +1831,6 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
       .catch(() => {});
   }, []);
 
-  // Re-sync recently viewed when returning to Home
-  useEffect(() => {
-    try {
-      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
-      setRecentlyViewed(rv);
-    } catch (e) {}
-  }, [products]);
 
   const saveSearchTerm = async (term) => {
     const t = term.trim();
@@ -1691,10 +1875,6 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
     return matchCat && matchSearch;
   });
 
-  const recentlyViewedProducts = recentlyViewed
-    .map(id => products.find(p => p.id === id))
-    .filter(Boolean)
-    .slice(0, 10);
 
   const addToCart = (p) => {
     setCart(prev => { const ex = prev.find(i => i.id === p.id); if (ex) return prev.map(i => i.id === p.id ? { ...i, qty: i.qty + 1 } : i); return [...prev, { ...p, qty: 1 }]; });
@@ -1760,15 +1940,15 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
 
       <StoriesBar user={user} setPage={setPage} setViewingPublicProfile={setViewingPublicProfile} />
 
-      <ApprovedAdsBanner />
-
-      <div style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})`, borderRadius: 14, padding: "18px 20px", marginBottom: 20, color: "white", position: "relative", overflow: "hidden" }}>
+      <div style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})`, borderRadius: 14, padding: "18px 20px", marginBottom: 16, color: "white", position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", right: -20, top: -20, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.1)" }} />
         <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.8, marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Welcome to E-Connect</div>
         <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>Ghana's Social Commerce Platform</div>
         <div style={{ fontSize: 13, opacity: 0.9, marginBottom: 12 }}>Buy from local sellers. Support small businesses.</div>
         <button style={{ background: "white", color: C.primary, border: "none", borderRadius: 8, padding: "8px 18px", fontWeight: 700, fontSize: 13, cursor: "pointer" }} onClick={() => setPage("discover")}>Discover Sellers</button>
       </div>
+
+      <ApprovedAdsBanner setViewingPublicProfile={setViewingPublicProfile} setPage={setPage} setChatSeller={setChatSeller} />
 
       <div style={{ display: "flex", gap: 8, overflowX: "auto", marginBottom: 20, paddingBottom: 4 }}>
         {CATEGORIES.map(cat => (
@@ -1812,29 +1992,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
         </div>
       )}
 
-      {/* ── Recently Viewed ── */}
-      {recentlyViewedProducts.length > 0 && (
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <span style={{ fontSize: 16 }}>🕐</span>
-            <span style={{ fontWeight: 800, fontSize: 16 }}>Recently Viewed</span>
-          </div>
-          <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8 }}>
-            {recentlyViewedProducts.map(p => (
-              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", minWidth: 130, flexShrink: 0 }}
-                onClick={() => { setSelectedProduct(p); setPage("product"); }}>
-                <div style={{ height: 90, overflow: "hidden", background: C.grey }}>
-                  {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
-                </div>
-                <div style={{ padding: 8 }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
-                  <div style={{ color: C.primary, fontWeight: 800, fontSize: 13 }}>GH₵{p.price}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+
 
       {/* ── TIER 3: NEW/TRENDING (Small Cards) ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
@@ -1847,7 +2005,29 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
       </div>
 
       {loading ? (
-        <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading products...</div>
+        <>
+          <style>{`
+            .skeleton-shimmer {
+              position: relative;
+              overflow: hidden;
+              background-color: ${C.greyMid};
+            }
+            .skeleton-shimmer::after {
+              content: "";
+              position: absolute;
+              top: 0; left: 0; right: 0; bottom: 0;
+              background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
+              animation: shimmer 1.4s infinite;
+            }
+            @keyframes shimmer {
+              0% { transform: translateX(-100%); }
+              100% { transform: translateX(100%); }
+            }
+          `}</style>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+            {Array.from({ length: 6 }).map((_, i) => <ProductCardSkeleton key={i} />)}
+          </div>
+        </>
       ) : filtered.filter(p => !p.sellerPremium && !p.sellerVerified).length === 0 ? (
         <div style={{ textAlign: "center", padding: 40 }}>
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
@@ -1871,7 +2051,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
                       onClick={async (e) => {
                         e.stopPropagation();
                         await setDoc(doc(db, "productLikes", p.id + "_" + (user?.uid || "guest")), { productId: p.id, userId: user?.uid, createdAt: serverTimestamp() }, { merge: true });
-                      if (p.sellerId && p.sellerId !== user?.uid) await sendNotification(p.sellerId, "like", `${user?.displayName || "Someone"} liked your product "${p.name}"`, user?.displayName);
+                      if (p.sellerId && p.sellerId !== user?.uid) await sendNotification(p.sellerId, "like", `${user?.displayName || "Someone"} liked your product "${p.name}"`, user?.displayName, { productId: p.id, fromUserId: user?.uid || null });
                       }}>
                       ♥ Like
                     </button>
@@ -2667,7 +2847,7 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     }
     await setDoc(doc(db, "reels", reel.id), { likes: (reel.likes || 0) + (isLiked ? -1 : 1) }, { merge: true });
     if (!isLiked && reel.userId && reel.userId !== user?.uid) {
-      await sendNotification(reel.userId, "like", `❤️ ${user.displayName || "Someone"} liked your reel`, user.displayName);
+      await sendNotification(reel.userId, "like", `❤️ ${user.displayName || "Someone"} liked your reel`, user.displayName, { fromUserId: user.uid, reelId: reel.id });
     }
   };
 
@@ -2682,16 +2862,23 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     setShowLikes(true);
   };
 
+  const [followProcessing, setFollowProcessing] = useState({});
+
   const handleFollow = async (reel) => {
-    if (!user) return;
+    if (!user || followProcessing[reel.userId]) return;
+    setFollowProcessing(prev => ({ ...prev, [reel.userId]: true }));
     const isF = following[reel.userId];
     setFollowing(prev => ({ ...prev, [reel.userId]: !isF }));
-    if (!isF) {
-      await setDoc(doc(db, "users", user.uid, "following", reel.userId), { name: reel.userName, followedAt: serverTimestamp(), unfollowed: false });
-      await setDoc(doc(db, "users", reel.userId, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
-      await sendNotification(reel.userId, "follow", `${user.displayName || "Someone"} started following you`, user.displayName);
-    } else {
-      await setDoc(doc(db, "users", user.uid, "following", reel.userId), { unfollowed: true }, { merge: true });
+    try {
+      if (!isF) {
+        await setDoc(doc(db, "users", user.uid, "following", reel.userId), { name: reel.userName, followedAt: serverTimestamp(), unfollowed: false });
+        await setDoc(doc(db, "users", reel.userId, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
+        await sendNotification(reel.userId, "follow", `${user.displayName || "Someone"} started following you`, user.displayName, { fromUserId: user.uid });
+      } else {
+        await setDoc(doc(db, "users", user.uid, "following", reel.userId), { unfollowed: true }, { merge: true });
+      }
+    } finally {
+      setFollowProcessing(prev => ({ ...prev, [reel.userId]: false }));
     }
   };
 
@@ -2745,7 +2932,7 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     await setDoc(doc(db, "reels", reelId), { comments: (reels.find(r => r.id === reelId)?.comments || 0) + 1 }, { merge: true });
     const reelData = reels.find(r => r.id === reelId);
     if (reelData?.userId && reelData.userId !== user.uid) {
-      await sendNotification(reelData.userId, "comment", `💬 ${user.displayName || "Someone"} commented on your reel: "${commentText.slice(0, 40)}"`, user.displayName);
+      await sendNotification(reelData.userId, "comment", `💬 ${user.displayName || "Someone"} commented on your reel: "${commentText.slice(0, 40)}"`, user.displayName, { fromUserId: user.uid, reelId: reelId });
     }
   };
 
@@ -2996,6 +3183,19 @@ function Messages({ user, chatSeller, onChatStarted }) {
       // Auto-open chat with seller if coming from product page or order page
       if (chatSeller && !loadingChat) {
         setLoadingChat(true);
+        // If we have a direct conversationId (from a notification click), open it directly
+        if (chatSeller.conversationId) {
+          const direct = convos.find(c => c.id === chatSeller.conversationId);
+          if (direct) {
+            setSelected(direct);
+          } else {
+            getDoc(doc(db, "conversations", chatSeller.conversationId)).then(d => {
+              if (d.exists()) setSelected({ id: d.id, ...d.data() });
+            });
+          }
+          onChatStarted && onChatStarted();
+          return;
+        }
         let existing;
         if (chatSeller.orderId) {
           existing = convos.find(c => c.orderId === chatSeller.orderId && c.participants?.includes(chatSeller.id) && c.participants?.includes(user.uid));
@@ -3043,7 +3243,7 @@ function Messages({ user, chatSeller, onChatStarted }) {
     await addDoc(collection(db, "conversations", convoRef.id, "messages"), {
       text: firstMsg, senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp(),
     });
-    await sendNotification(seller.id, "message", `💬 ${user.displayName} sent you a message${seller.orderId ? " about an order" : ""}`, user.displayName);
+    await sendNotification(seller.id, "message", `💬 ${user.displayName} sent you a message${seller.orderId ? " about an order" : ""}`, user.displayName, { fromUserId: user.uid, conversationId: convoRef.id });
     setSelected({ id: convoRef.id, participants: [user.uid, seller.id], participantNames: [user.displayName, seller.name], productName: seller.productName, orderId: seller.orderId || null });
     onChatStarted && onChatStarted();
   };
@@ -3068,7 +3268,7 @@ function Messages({ user, chatSeller, onChatStarted }) {
     // Notify the other participant
     const recipientId = selected.participants?.find(id => id !== user.uid);
     if (recipientId) {
-      await sendNotification(recipientId, "message", `💬 ${user.displayName || "Someone"}: ${text.length > 40 ? text.slice(0, 40) + "…" : text}`, user.displayName);
+      await sendNotification(recipientId, "message", `💬 ${user.displayName || "Someone"}: ${text.length > 40 ? text.slice(0, 40) + "…" : text}`, user.displayName, { fromUserId: user.uid, conversationId: selected.id });
     }
   };
 
@@ -3124,7 +3324,7 @@ function Messages({ user, chatSeller, onChatStarted }) {
         await setDoc(doc(db, "conversations", selected.id), { lastMessage: "🎤 Voice message", lastMessageAt: serverTimestamp() }, { merge: true });
         const recipientId = selected.participants?.find(id => id !== user.uid);
         if (recipientId) {
-          await sendNotification(recipientId, "message", `🎤 ${user.displayName || "Someone"} sent a voice message`, user.displayName);
+          await sendNotification(recipientId, "message", `🎤 ${user.displayName || "Someone"} sent a voice message`, user.displayName, { fromUserId: user.uid, conversationId: selected.id });
         }
       }
     } catch (err) { console.error("Voice upload error:", err); alert("Failed to send voice message. Please try again."); }
@@ -3273,7 +3473,7 @@ function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct }
       setIsFollowing(false);
     } else {
       await setDoc(doc(db, "users", currentUser.uid, "following", profileUser.uid), { name: profile?.name || profileUser.displayName, followedAt: serverTimestamp() });
-      await sendNotification(profileUser.uid, "follow", `${currentUser.displayName} started following you`, currentUser.displayName);
+      await sendNotification(profileUser.uid, "follow", `${currentUser.displayName} started following you`, currentUser.displayName, { fromUserId: currentUser.uid });
       setIsFollowing(true);
     }
   };
@@ -3487,6 +3687,89 @@ function SellerAnalytics({ user }) {
 
 
 // ── Profile Views Page ──────────────────────────────────────────
+// ── Recently Viewed Page (TikTok-style history) ─────────────────
+function RecentlyViewedPage({ setPage, setSelectedProduct }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
+      if (rv.length === 0) { setItems([]); setLoading(false); return; }
+      const results = await Promise.all(rv.map(async id => {
+        try {
+          const snap = await getDoc(doc(db, "products", id));
+          return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+        } catch (e) { return null; }
+      }));
+      setItems(results.filter(p => p && !p.deleted));
+    } catch (e) {}
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const clearHistory = () => {
+    try { localStorage.removeItem("econnect-recently-viewed"); } catch (e) {}
+    setItems([]);
+  };
+
+  const removeItem = (id) => {
+    try {
+      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
+      const updated = rv.filter(x => x !== id);
+      localStorage.setItem("econnect-recently-viewed", JSON.stringify(updated));
+    } catch (e) {}
+    setItems(prev => prev.filter(p => p.id !== id));
+  };
+
+  return (
+    <div style={S.page}>
+      <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage("profile")}>
+        ← Back
+      </button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <div style={S.sectionTitle}>Recently Viewed</div>
+        {items.length > 0 && (
+          <span style={{ fontSize: 13, color: C.primary, fontWeight: 700, cursor: "pointer" }} onClick={clearHistory}>Clear All</span>
+        )}
+      </div>
+      <p style={S.sectionSub}>Products you've recently looked at</p>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading...</div>
+      ) : items.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 60 }}>
+          <div style={{ fontSize: 56, marginBottom: 12 }}>🕐</div>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>No viewing history yet</div>
+          <div style={{ color: C.greyDark, fontSize: 13 }}>Products you view will show up here so you can find them again easily.</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 80 }}>
+          {items.map(p => (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer" }}
+              onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+              <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
+                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                <div style={{ color: C.primary, fontWeight: 800, fontSize: 14 }}>GH₵{p.price}</div>
+                {p.seller && <div style={{ fontSize: 12, color: C.greyDark }}>{p.seller}</div>}
+              </div>
+              <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: C.greyDark, padding: 6 }}
+                onClick={(e) => { e.stopPropagation(); removeItem(p.id); }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Profile Views Page ──────────────────────────────────────────
 function ProfileViewsPage({ user, setPage, setViewingPublicProfile }) {
   const [views, setViews] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -3519,7 +3802,7 @@ function ProfileViewsPage({ user, setPage, setViewingPublicProfile }) {
     if (!isF) {
       await setDoc(doc(db, "users", user.uid, "following", viewer.uid), { name: viewer.name, followedAt: serverTimestamp(), unfollowed: false });
       await setDoc(doc(db, "users", viewer.uid, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
-      await sendNotification(viewer.uid, "follow", `${user.displayName || "Someone"} started following you`, user.displayName);
+      await sendNotification(viewer.uid, "follow", `${user.displayName || "Someone"} started following you`, user.displayName, { fromUserId: user.uid });
     } else {
       await setDoc(doc(db, "users", user.uid, "following", viewer.uid), { unfollowed: true }, { merge: true });
     }
@@ -3527,7 +3810,7 @@ function ProfileViewsPage({ user, setPage, setViewingPublicProfile }) {
 
   const nudge = async (viewer) => {
     setNudged(prev => ({ ...prev, [viewer.uid]: true }));
-    await sendNotification(viewer.uid, "nudge", `👋 ${user.displayName || "Someone"} nudged you — check out their profile!`, user.displayName);
+    await sendNotification(viewer.uid, "nudge", `👋 ${user.displayName || "Someone"} nudged you — check out their profile!`, user.displayName, { fromUserId: user.uid });
   };
 
   const getTimeAgo = (ts) => {
@@ -3720,7 +4003,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             </div>
             <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8 }}>{user?.email}</div>
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              {[{ num: myProducts.length, label: "Products" }, { num: orders.length, label: "Orders" }, { num: followers.length, label: "Followers" }, { num: following.length, label: "Following" }, { num: friends.length, label: "Friends" }, { num: profileViewsCount, label: "Profile Views", action: () => setPage("profileViews") }].map(s => (
+              {[{ num: myProducts.length, label: "Products" }, { num: orders.length, label: "Orders" }, { num: followers.length, label: "Followers" }, { num: following.length, label: "Following" }, { num: friends.length, label: "Friends" }, { num: profileViewsCount, label: "Profile Views", action: () => setPage("profileViews") }, { num: "🕐", label: "History", action: () => setPage("recentlyViewed") }].map(s => (
                 <div key={s.label} style={{ textAlign: "center", cursor: s.action ? "pointer" : "default" }} onClick={s.action}>
                   <div style={{ fontWeight: 800, color: C.primary }}>{s.num}</div>
                   <div style={{ fontSize: 11, color: C.greyDark }}>{s.label}</div>
@@ -4392,7 +4675,7 @@ function Discover({ setPage, setSelectedProduct, user }) {
       newFollowing[sellerId] = true;
       await setDoc(doc(db, "users", user.uid, "following", sellerId), { name: sellerName, followedAt: serverTimestamp() });
       await setDoc(doc(db, "users", sellerId, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
-      await sendNotification(sellerId, "follow", `${user.displayName || "Someone"} started following you`, user.displayName);
+      await sendNotification(sellerId, "follow", `${user.displayName || "Someone"} started following you`, user.displayName, { fromUserId: user.uid });
     }
     setFollowing(newFollowing);
   };
@@ -4643,22 +4926,23 @@ export default function App() {
 
   const renderPage = () => {
     switch (page) {
-      case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
+      case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} setChatSeller={setChatSeller} />;
       case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} user={user} />;
       case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
       case "reels": return <ReelsPage user={user} setPage={setPage} setViewingUser={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
       case "live": return <LivePage user={user} setPage={setPage} setCart={setCart} />;
-      case "notifications": return <NotificationsPage user={user} />;
+      case "notifications": return <NotificationsPage user={user} setPage={setPage} setChatSeller={setChatSeller} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => setViewingPublicProfile(u)} />;
       case "orders": return <OrderTrackingPage user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "location": return <LocationPage user={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "messages": return <Messages user={user} chatSeller={chatSeller} onChatStarted={() => setChatSeller(null)} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
       case "profileViews": return <ProfileViewsPage user={user} setPage={setPage} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
+      case "recentlyViewed": return <RecentlyViewedPage setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "analytics": return <SellerAnalytics user={user} />;
       case "publicProfile": return <PublicProfile profileUser={viewingPublicProfile} currentUser={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
-      case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
-      default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
+      case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} setChatSeller={setChatSeller} />;
+      default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} setChatSeller={setChatSeller} />;
     }
   };
 
