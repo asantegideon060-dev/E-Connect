@@ -158,10 +158,23 @@ const CLOUDINARY_CLOUD = "dxmmsq0gq";
 const CLOUDINARY_PRESET = "Econnect";
 
 // ── Product Image Carousel ─────────────────────────────────────
-function ProductImageCarousel({ images, height = 200, onClick, autoRotate = true }) {
-  const [idx, setIdx] = useState(0);
+function ProductImageCarousel({ images, height = 200, onClick, autoRotate = true, activeIndex, onIndexChange }) {
+  const [internalIdx, setInternalIdx] = useState(0);
   const timerRef = useRef(null);
   const touchStartX = useRef(0);
+
+  // Controlled mode: parent (e.g. ProductDetail) owns the active index
+  // so it can sync thumbnails, variant selection, and Add-to-Cart state.
+  const isControlled = activeIndex !== undefined;
+  const idx = isControlled ? activeIndex : internalIdx;
+  const setIdx = (updater) => {
+    if (isControlled) {
+      const next = typeof updater === "function" ? updater(activeIndex) : updater;
+      onIndexChange && onIndexChange(next);
+    } else {
+      setInternalIdx(updater);
+    }
+  };
 
   useEffect(() => {
     if (!autoRotate || !images || images.length <= 1) return;
@@ -2246,6 +2259,7 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
   const [rating, setRating] = useState(5);
   const [reviews, setReviews] = useState([]);
   const [submitted, setSubmitted] = useState(false);
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
   useEffect(() => {
     if (!product) return;
@@ -2275,11 +2289,42 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
     } catch (e) {}
   }, [product?.id]);
 
+  // Reset to the first image whenever a different product is opened
+  useEffect(() => {
+    setCurrentImageIndex(0);
+  }, [product?.id]);
+
   // Attach sellerData to product for rendering
   const productWithSeller = { ...product, sellerData };
 
+  // ── Slider data: all images for this product, falling back to the
+  // single legacy `image` field for older listings. ──
+  const productImages = (product.images && product.images.length > 0)
+    ? product.images
+    : (product.image ? [product.image] : []);
+
+  // ── Variant labels tied 1:1 to each image. Sellers can optionally
+  // provide `product.variantLabels` (array of strings, same length as
+  // images, e.g. ["Red", "Black", "Blue"]). If not provided, we fall
+  // back to generic "Option N" labels so the picker still works. ──
+  const variantLabels = productImages.map((_, i) => product.variantLabels?.[i] || `Option ${i + 1}`);
+
   const addToCart = () => {
-    setCart(prev => { const ex = prev.find(i => i.id === product.id); if (ex) return prev.map(i => i.id === product.id ? { ...i, qty: i.qty + 1 } : i); return [...prev, { ...product, qty: 1 }]; });
+    const cartItem = {
+      ...product,
+      qty: 1,
+      // ── DATA STATE RETENTION: remember exactly which photo/variant
+      // the buyer was viewing when they tapped Add to Cart. ──
+      selectedImageIndex: currentImageIndex,
+      selectedImage: productImages[currentImageIndex] || product.image,
+      selectedVariant: variantLabels[currentImageIndex] || null,
+    };
+    setCart(prev => {
+      // Treat different variants of the same product as distinct cart lines
+      const ex = prev.find(i => i.id === product.id && i.selectedImageIndex === currentImageIndex);
+      if (ex) return prev.map(i => (i.id === product.id && i.selectedImageIndex === currentImageIndex) ? { ...i, qty: i.qty + 1 } : i);
+      return [...prev, cartItem];
+    });
     setPage("cart");
   };
 
@@ -2295,10 +2340,22 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
       <button style={{ ...S.btn("grey"), marginBottom: 16, color: C.text }} onClick={() => setPage("home")}>← Back</button>
       <div style={S.card}>
         <div style={{ height: 260, overflow: "hidden", borderRadius: "14px 14px 0 0", background: C.grey }}>
-          {product.images && product.images.length > 1
-            ? <ProductImageCarousel images={product.images} height={260} autoRotate={false} />
-            : product.image ? <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
+          {productImages.length > 1
+            ? <ProductImageCarousel images={productImages} height={260} autoRotate={false} activeIndex={currentImageIndex} onIndexChange={setCurrentImageIndex} />
+            : productImages[0] ? <img src={productImages[0]} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
         </div>
+
+        {/* ── Thumbnail row: tap any thumbnail to jump the carousel to that image ── */}
+        {productImages.length > 1 && (
+          <div style={{ display: "flex", gap: 8, padding: "10px 14px 0", overflowX: "auto" }}>
+            {productImages.map((img, i) => (
+              <div key={i} onClick={() => setCurrentImageIndex(i)}
+                style={{ width: 52, height: 52, borderRadius: 8, overflow: "hidden", flexShrink: 0, cursor: "pointer", border: i === currentImageIndex ? `2px solid ${C.primary}` : `2px solid transparent`, opacity: i === currentImageIndex ? 1 : 0.6, transition: "opacity 0.2s, border-color 0.2s" }}>
+                <img src={img} alt={`Photo ${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              </div>
+            ))}
+          </div>
+        )}
         <div style={{ padding: 20 }}>
           <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 4 }}>{product.category}</div>
           <h2 style={{ fontWeight: 800, fontSize: 22, margin: "0 0 4px" }}>{product.name}</h2>
@@ -2327,6 +2384,27 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
           <div style={{ background: C.grey, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.greyDark }}>
             📦 {product.stock || 0} items in stock · 📞 Contact: +233 54 194 0967
           </div>
+          {/* ── Variant Selection: mirrors the currently-active image/thumbnail ── */}
+          {productImages.length > 1 && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.greyDark, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                Selected: {variantLabels[currentImageIndex]}
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {variantLabels.map((label, i) => (
+                  <button key={i} onClick={() => setCurrentImageIndex(i)}
+                    style={{
+                      padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                      border: i === currentImageIndex ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+                      background: i === currentImageIndex ? `${C.primary}12` : C.white,
+                      color: i === currentImageIndex ? C.primary : C.text,
+                    }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, marginBottom: 10 }} onClick={addToCart}>Add to Cart</button>
           {product.sellerId && product.sellerId !== user?.uid && (
             <button style={{ ...S.btn("outline"), width: "100%", padding: 14, fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
@@ -2416,18 +2494,24 @@ function Cart({ cart, setCart, setPage, user }) {
         </div>
       ) : (
         <>
-          {cart.map(item => (
-            <div key={item.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
-              <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
-                {item.image ? <img src={item.image} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
+          {cart.map((item, idx) => {
+            const displayImage = item.selectedImage || item.image;
+            const cartKey = `${item.id}-${item.selectedImageIndex ?? 0}-${idx}`;
+            return (
+              <div key={cartKey} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
+                <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
+                  {displayImage ? <img src={displayImage} alt={item.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={item.name} category={item.category} />}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>{item.name}</div>
+                  {item.selectedVariant && <div style={{ fontSize: 12, color: C.greyDark, marginTop: 2 }}>Variant: {item.selectedVariant}</div>}
+                  <div style={{ color: C.primary, fontWeight: 800 }}>GH₵{item.price} × {item.qty}</div>
+                </div>
+                <button style={{ background: "none", border: "none", color: C.error, cursor: "pointer", fontSize: 20 }}
+                  onClick={() => setCart(prev => prev.filter((i, iIdx) => !(i.id === item.id && (i.selectedImageIndex ?? 0) === (item.selectedImageIndex ?? 0) && iIdx === idx)))}>✕</button>
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 14 }}>{item.name}</div>
-                <div style={{ color: C.primary, fontWeight: 800 }}>GH₵{item.price} × {item.qty}</div>
-              </div>
-              <button style={{ background: "none", border: "none", color: C.error, cursor: "pointer", fontSize: 20 }} onClick={() => setCart(prev => prev.filter(i => i.id !== item.id))}>✕</button>
-            </div>
-          ))}
+            );
+          })}
           <div style={{ ...S.card, padding: 16, marginBottom: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
               <span style={{ fontWeight: 800, fontSize: 16 }}>Total</span>
@@ -2967,7 +3051,19 @@ function ReelsPage({ user, setPage, setViewingUser }) {
   const [following, setFollowing] = useState({});
   const touchStartY = useRef(0);
   const videoRefs = useRef({});
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const REEL_CATEGORIES = ["Entertainment", "Fashion", "Food", "Tech", "Sports", "Beauty", "Business", "Music", "Comedy"];
+
+  // Track on-screen keyboard so the Comments sheet can shrink and avoid
+  // overflow/clipping when the keyboard pushes content up.
+  useEffect(() => {
+    if (!window.visualViewport) return;
+    const vv = window.visualViewport;
+    const baseHeight = window.innerHeight;
+    const onResize = () => setKeyboardOpen(vv.height < baseHeight * 0.75);
+    vv.addEventListener("resize", onResize);
+    return () => vv.removeEventListener("resize", onResize);
+  }, []);
 
   const fetchReels = async () => {
     setLoading(true);
@@ -2987,8 +3083,15 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     });
   }, [currentIndex]);
 
-  const handleTouchStart = (e) => { touchStartY.current = e.touches[0].clientY; };
+  const handleTouchStart = (e) => {
+    // Don't track swipe-to-change-reel while an overlay (comments, likes,
+    // upload modal) is open - prevents the reel underneath from changing
+    // while the user is typing/tapping inside the sheet.
+    if (showComments || showLikes || showUpload) return;
+    touchStartY.current = e.touches[0].clientY;
+  };
   const handleTouchEnd = (e) => {
+    if (showComments || showLikes || showUpload) return;
     const diff = touchStartY.current - e.changedTouches[0].clientY;
     if (diff > 60 && currentIndex < reels.length - 1) setCurrentIndex(p => p + 1);
     if (diff < -60 && currentIndex > 0) setCurrentIndex(p => p - 1);
@@ -3015,24 +3118,32 @@ function ReelsPage({ user, setPage, setViewingUser }) {
 
   const handleLike = async (reel) => {
     if (!user) return;
-    setLiked(prev => ({ ...prev, [reel.id]: !isLiked }));
-    setReels(prev => prev.map(r => r.id === reel.id ? { ...r, likes: (r.likes || 0) + (isLiked ? -1 : 1) } : r));
-    // Save full user info permanently in reelLikes subcollection
-    const likeRef = doc(db, "reels", reel.id, "likes", user.uid);
-    if (isLiked) {
-      await setDoc(likeRef, { liked: false, removedAt: serverTimestamp() }, { merge: true });
-    } else {
-      await setDoc(likeRef, {
-        liked: true,
-        userId: user.uid,
-        userName: user.displayName || "User",
-        userPhoto: user.photoURL || "",
-        likedAt: serverTimestamp(),
-      });
-    }
-    await setDoc(doc(db, "reels", reel.id), { likes: (reel.likes || 0) + (isLiked ? -1 : 1) }, { merge: true });
-    if (!isLiked && reel.userId && reel.userId !== user?.uid) {
-      await sendNotification(reel.userId, "like", `❤️ ${user.displayName || "Someone"} liked your reel`, user.displayName, { fromUserId: user.uid, reelId: reel.id });
+    const isLiked = !!liked[reel.id];
+    try {
+      setLiked(prev => ({ ...prev, [reel.id]: !isLiked }));
+      setReels(prev => prev.map(r => r.id === reel.id ? { ...r, likes: (r.likes || 0) + (isLiked ? -1 : 1) } : r));
+      // Save full user info permanently in reelLikes subcollection
+      const likeRef = doc(db, "reels", reel.id, "likes", user.uid);
+      if (isLiked) {
+        await setDoc(likeRef, { liked: false, removedAt: serverTimestamp() }, { merge: true });
+      } else {
+        await setDoc(likeRef, {
+          liked: true,
+          userId: user.uid,
+          userName: user.displayName || "User",
+          userPhoto: user.photoURL || "",
+          likedAt: serverTimestamp(),
+        });
+      }
+      await setDoc(doc(db, "reels", reel.id), { likes: (reel.likes || 0) + (isLiked ? -1 : 1) }, { merge: true });
+      if (!isLiked && reel.userId && reel.userId !== user?.uid) {
+        await sendNotification(reel.userId, "like", `❤️ ${user.displayName || "Someone"} liked your reel`, user.displayName, { fromUserId: user.uid, reelId: reel.id });
+      }
+    } catch (err) {
+      console.error("Failed to update like:", err);
+      // Roll back optimistic UI update if something went wrong
+      setLiked(prev => ({ ...prev, [reel.id]: isLiked }));
+      setReels(prev => prev.map(r => r.id === reel.id ? { ...r, likes: (r.likes || 0) + (isLiked ? 1 : -1) } : r));
     }
   };
 
@@ -3074,8 +3185,13 @@ function ReelsPage({ user, setPage, setViewingUser }) {
   };
 
   const loadComments = async (reelId) => {
-    const snap = await getDocs(query(collection(db, "reels", reelId, "comments"), orderBy("createdAt")));
-    setComments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    try {
+      const snap = await getDocs(query(collection(db, "reels", reelId, "comments"), orderBy("createdAt")));
+      setComments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      console.error("Failed to load comments:", err);
+      setComments([]);
+    }
   };
 
   // Load existing follow state for current user on mount
@@ -3105,19 +3221,25 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     if (!newComment.trim() || !user) return;
     const commentText = newComment.trim();
     setNewComment("");
-    await addDoc(collection(db, "reels", reelId, "comments"), {
-      text: commentText,
-      userId: user.uid,
-      userName: user.displayName || "User",
-      userPhoto: user.photoURL || "",
-      createdAt: serverTimestamp(),
-    });
-    loadComments(reelId);
-    setReels(prev => prev.map(r => r.id === reelId ? { ...r, comments: (r.comments || 0) + 1 } : r));
-    await setDoc(doc(db, "reels", reelId), { comments: (reels.find(r => r.id === reelId)?.comments || 0) + 1 }, { merge: true });
-    const reelData = reels.find(r => r.id === reelId);
-    if (reelData?.userId && reelData.userId !== user.uid) {
-      await sendNotification(reelData.userId, "comment", `💬 ${user.displayName || "Someone"} commented on your reel: "${commentText.slice(0, 40)}"`, user.displayName, { fromUserId: user.uid, reelId: reelId });
+    try {
+      await addDoc(collection(db, "reels", reelId, "comments"), {
+        text: commentText,
+        userId: user.uid,
+        userName: user.displayName || "User",
+        userPhoto: user.photoURL || "",
+        createdAt: serverTimestamp(),
+      });
+      loadComments(reelId);
+      setReels(prev => prev.map(r => r.id === reelId ? { ...r, comments: (r.comments || 0) + 1 } : r));
+      await setDoc(doc(db, "reels", reelId), { comments: (reels.find(r => r.id === reelId)?.comments || 0) + 1 }, { merge: true });
+      const reelData = reels.find(r => r.id === reelId);
+      if (reelData?.userId && reelData.userId !== user.uid) {
+        await sendNotification(reelData.userId, "comment", `💬 ${user.displayName || "Someone"} commented on your reel: "${commentText.slice(0, 40)}"`, user.displayName, { fromUserId: user.uid, reelId: reelId });
+      }
+    } catch (err) {
+      console.error("Failed to post comment:", err);
+      // Restore the text so the user doesn't lose what they typed
+      setNewComment(commentText);
     }
   };
 
@@ -3262,7 +3384,8 @@ function ReelsPage({ user, setPage, setViewingUser }) {
 
       {/* Comments Panel */}
       {showComments && (
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(15,15,15,0.97)", borderRadius: "20px 20px 0 0", height: "65vh", maxHeight: "65vh", zIndex: 20, display: "flex", flexDirection: "column" }}>
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(15,15,15,0.97)", borderRadius: "20px 20px 0 0", height: keyboardOpen ? "85vh" : "65vh", maxHeight: keyboardOpen ? "85vh" : "65vh", zIndex: 20, display: "flex", flexDirection: "column", transition: "height 0.2s" }}
+          onTouchStart={e => e.stopPropagation()} onTouchEnd={e => e.stopPropagation()} onClick={e => e.stopPropagation()}>
           <div style={{ display: "flex", justifyContent: "center", padding: "8px 0 0" }}>
             <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.25)" }} />
           </div>
@@ -4023,7 +4146,7 @@ function SellerAnalytics({ user }) {
         ) : topProducts.map((p, i) => (
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: i < topProducts.length - 1 ? `1px solid ${C.border}` : "none" }}>
             <div style={{ width: 36, height: 36, borderRadius: 8, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
-              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
+              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name} category={p?.category} />}
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
@@ -4042,7 +4165,7 @@ function SellerAnalytics({ user }) {
         ) : products.map((p, i) => (
           <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 0", borderBottom: i < products.length - 1 ? `1px solid ${C.border}` : "none" }}>
             <div style={{ width: 40, height: 40, borderRadius: 8, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
-              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name || item?.name || product?.name} category={p?.category || item?.category || product?.category} />}
+              {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p?.name} category={p?.category} />}
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
