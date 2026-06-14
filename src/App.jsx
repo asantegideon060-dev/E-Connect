@@ -158,20 +158,31 @@ const CLOUDINARY_CLOUD = "dxmmsq0gq";
 const CLOUDINARY_PRESET = "Econnect";
 
 // ── Product Image Carousel ─────────────────────────────────────
-function ProductImageCarousel({ images, height = 200, onClick }) {
+function ProductImageCarousel({ images, height = 200, onClick, autoRotate = true }) {
   const [idx, setIdx] = useState(0);
   const timerRef = useRef(null);
+  const touchStartX = useRef(0);
 
   useEffect(() => {
-    if (!images || images.length <= 1) return;
+    if (!autoRotate || !images || images.length <= 1) return;
     timerRef.current = setInterval(() => setIdx(prev => (prev + 1) % images.length), 3000);
     return () => clearInterval(timerRef.current);
-  }, [images?.length]);
+  }, [images?.length, autoRotate]);
 
   if (!images || images.length === 0) return null;
 
+  const handleTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; };
+  const handleTouchEnd = (e) => {
+    const diff = touchStartX.current - e.changedTouches[0].clientX;
+    if (Math.abs(diff) < 40) return; // ignore small movements/taps
+    clearInterval(timerRef.current);
+    if (diff > 0) setIdx(prev => (prev + 1) % images.length); // swiped left -> next
+    else setIdx(prev => (prev - 1 + images.length) % images.length); // swiped right -> prev
+  };
+
   return (
-    <div style={{ position: "relative", height, overflow: "hidden", borderRadius: 0, cursor: onClick ? "pointer" : "default" }} onClick={onClick}>
+    <div style={{ position: "relative", height, overflow: "hidden", borderRadius: 0, cursor: onClick ? "pointer" : "default" }}
+      onClick={onClick} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <img src={images[idx]} alt="product" style={{ width: "100%", height: "100%", objectFit: "cover", transition: "opacity 0.4s" }} />
       {images.length > 1 && (
         <>
@@ -184,9 +195,9 @@ function ProductImageCarousel({ images, height = 200, onClick }) {
           </div>
           {/* Left/Right tap areas */}
           <div style={{ position: "absolute", top: 0, left: 0, width: "30%", height: "100%", zIndex: 2 }}
-            onClick={e => { e.stopPropagation(); setIdx(prev => (prev - 1 + images.length) % images.length); }} />
+            onClick={e => { e.stopPropagation(); clearInterval(timerRef.current); setIdx(prev => (prev - 1 + images.length) % images.length); }} />
           <div style={{ position: "absolute", top: 0, right: 0, width: "30%", height: "100%", zIndex: 2 }}
-            onClick={e => { e.stopPropagation(); setIdx(prev => (prev + 1) % images.length); }} />
+            onClick={e => { e.stopPropagation(); clearInterval(timerRef.current); setIdx(prev => (prev + 1) % images.length); }} />
           {/* Image counter */}
           <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.5)", borderRadius: 10, padding: "2px 8px", fontSize: 10, color: "white", fontWeight: 700 }}>
             {idx + 1}/{images.length}
@@ -442,6 +453,26 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
     }
   };
 
+  // JSONP request - bypasses CORS and service-worker fetch interception entirely
+  // by loading a <script> tag, which is how the iTunes Search API has been
+  // accessed client-side for over a decade.
+  const searchMusicJSONP = (url) => {
+    return new Promise((resolve, reject) => {
+      const cbName = `__itunesCb_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+      const script = document.createElement("script");
+      const timer = setTimeout(() => { cleanup(); reject(new Error("JSONP timeout")); }, 6000);
+      const cleanup = () => {
+        clearTimeout(timer);
+        delete window[cbName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+      };
+      window[cbName] = (data) => { cleanup(); resolve(data); };
+      script.onerror = () => { cleanup(); reject(new Error("JSONP script error")); };
+      script.src = `${url}&callback=${cbName}`;
+      document.body.appendChild(script);
+    });
+  };
+
   const searchMusic = async (q) => {
     if (!q.trim()) return;
     setMusicSearching(true);
@@ -452,6 +483,22 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
       `https://itunes.apple.com/search?term=${term}&media=music&entity=song&limit=20&country=US`,
       `https://itunes.apple.com/search?term=${term}&media=music&limit=20`,
     ];
+
+    // 1. Try JSONP first - most reliable, bypasses CORS/SW entirely
+    for (const directUrl of directUrls) {
+      try {
+        const data = await searchMusicJSONP(directUrl);
+        if (data?.results && data.results.length > 0) {
+          setMusicResults(data.results);
+          setMusicSearching(false);
+          return;
+        }
+      } catch (err) {
+        // fall through to fetch-based attempts
+      }
+    }
+
+    // 2. Fall back to fetch (direct + proxies)
     const attempts = [];
     for (const directUrl of directUrls) {
       attempts.push(directUrl);
@@ -733,19 +780,18 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
 
           {/* User info */}
           <div style={{ position: "absolute", top: 28, left: 0, right: 0, zIndex: 10, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 16px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => {
+              const story = viewingStory;
+              closeStory();
+              setViewingPublicProfile && setViewingPublicProfile({ uid: story.userId, displayName: story.userName, photoURL: story.userPhoto });
+              setPage && setPage("publicProfile");
+            }}>
               <div style={{ width: 40, height: 40, borderRadius: "50%", overflow: "hidden", border: "2px solid white" }}>
                 {viewingStory.imageUrl
                   ? <img src={viewingStory.imageUrl} alt={viewingStory.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   : <div style={{ height: "100%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>👤</div>}
               </div>
-              <div style={{ cursor: "pointer" }} onClick={() => {
-                closeStory();
-                if (viewingStory.userId && viewingStory.userId !== user?.uid) {
-                  setViewingPublicProfile && setViewingPublicProfile({ uid: viewingStory.userId, displayName: viewingStory.userName, photoURL: viewingStory.userPhoto });
-                  setPage && setPage("publicProfile");
-                }
-              }}>
+              <div>
                 <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{viewingStory.userName}</div>
                 <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>Tap to view profile</div>
               </div>
@@ -2148,7 +2194,7 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
       <div style={S.card}>
         <div style={{ height: 260, overflow: "hidden", borderRadius: "14px 14px 0 0", background: C.grey }}>
           {product.images && product.images.length > 1
-            ? <ProductImageCarousel images={product.images} height={260} />
+            ? <ProductImageCarousel images={product.images} height={260} autoRotate={false} />
             : product.image ? <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
         </div>
         <div style={{ padding: 20 }}>
@@ -3645,14 +3691,14 @@ function Messages({ user, chatSeller, onChatStarted }) {
 }
 
 // ── Public Profile Page ─────────────────────────────────────────
-function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct }) {
+function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct, previousPage }) {
   const [profile, setProfile] = useState(null);
   const [products, setProducts] = useState([]);
   const [isFollowing, setIsFollowing] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!profileUser?.uid) return;
+    if (!profileUser?.uid) { setLoading(false); return; }
     getDoc(doc(db, "users", profileUser.uid)).then(d => {
       if (d.exists()) setProfile({ uid: profileUser.uid, ...d.data() });
       setLoading(false);
@@ -3687,13 +3733,26 @@ function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct }
   };
 
   if (loading) return <div style={{ textAlign: "center", padding: 60, color: C.greyDark }}>Loading...</div>;
-  if (!profile) return <div style={{ textAlign: "center", padding: 60, color: C.greyDark }}>User not found.</div>;
+  if (!profileUser?.uid || !profile) {
+    return (
+      <div style={S.page}>
+        <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage(previousPage || "home")}>
+          ← Back
+        </button>
+        <div style={{ textAlign: "center", padding: 60 }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>👤</div>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Profile not available</div>
+          <div style={{ color: C.greyDark, fontSize: 13 }}>{profileUser?.displayName ? `We couldn't load ${profileUser.displayName}'s profile.` : "We couldn't load this profile."}</div>
+        </div>
+      </div>
+    );
+  }
 
   const photoURL = profile.photoURL || profileUser?.photoURL || "";
 
   return (
     <div style={S.page}>
-      <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage("reels")}>
+      <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage(previousPage || "home")}>
         ← Back
       </button>
       <div style={{ ...S.card, padding: 20, marginBottom: 16, textAlign: "center" }}>
@@ -5029,6 +5088,7 @@ export default function App() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [chatSeller, setChatSeller] = useState(null);
   const [viewingPublicProfile, setViewingPublicProfile] = useState(null);
+  const [previousPage, setPreviousPage] = useState("home");
   const [currentUserPhoto, setCurrentUserPhoto] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
   const [theme, setTheme] = useState(() => {
@@ -5132,25 +5192,36 @@ export default function App() {
     { id: "cart", label: "Cart", badge: cart.length },
   ];
 
+  const goToPublicProfile = (u) => {
+    if (!u || !u.uid) {
+      // No identifying info available - let the user know instead of silently doing nothing
+      alert("This profile isn't available.");
+      return;
+    }
+    setPreviousPage(page);
+    setViewingPublicProfile(u);
+    setPage("publicProfile");
+  };
+
   const renderPage = () => {
     switch (page) {
-      case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} setChatSeller={setChatSeller} />;
+      case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
       case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} user={user} />;
       case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
-      case "reels": return <ReelsPage user={user} setPage={setPage} setViewingUser={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
+      case "reels": return <ReelsPage user={user} setPage={setPage} setViewingUser={goToPublicProfile} />;
       case "live": return <LivePage user={user} setPage={setPage} setCart={setCart} />;
-      case "notifications": return <NotificationsPage user={user} setPage={setPage} setChatSeller={setChatSeller} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => setViewingPublicProfile(u)} />;
+      case "notifications": return <NotificationsPage user={user} setPage={setPage} setChatSeller={setChatSeller} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} />;
       case "orders": return <OrderTrackingPage user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "location": return <LocationPage user={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "messages": return <Messages user={user} chatSeller={chatSeller} onChatStarted={() => setChatSeller(null)} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
-      case "profileViews": return <ProfileViewsPage user={user} setPage={setPage} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
+      case "profileViews": return <ProfileViewsPage user={user} setPage={setPage} setViewingPublicProfile={goToPublicProfile} />;
       case "recentlyViewed": return <RecentlyViewedPage setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "analytics": return <SellerAnalytics user={user} />;
-      case "publicProfile": return <PublicProfile profileUser={viewingPublicProfile} currentUser={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
-      case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} setChatSeller={setChatSeller} />;
-      default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} setChatSeller={setChatSeller} />;
+      case "publicProfile": return <PublicProfile profileUser={viewingPublicProfile} currentUser={user} setPage={setPage} setSelectedProduct={setSelectedProduct} previousPage={previousPage} />;
+      case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
+      default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
     }
   };
 
