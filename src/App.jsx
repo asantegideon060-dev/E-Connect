@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { auth, db } from "./firebase";
 import {
   createUserWithEmailAndPassword,
@@ -1589,36 +1589,112 @@ async function sendNotification(toUserId, type, message, fromUserName, meta = {}
       toUserId, type, message, fromUserName: fromUserName || "",
       read: false, createdAt: serverTimestamp(), ...meta,
     });
-    if ("Notification" in window && Notification.permission === "granted" && "serviceWorker" in navigator) {
-      const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", message: "✉️", ad_approved: "⭐", premium: "⭐", review: "⭐", nudge: "👋" };
-      const icon = icons[type] || "🔔";
-      navigator.serviceWorker.ready.then(reg => {
-        reg.showNotification("E-Connect " + icon, {
-          body: message,
-          icon: "/icon-192.png",
-          badge: "/icon-192.png",
-          vibrate: [200, 100, 200],
-          tag: type,
-          renotify: true,
-        });
-      }).catch(() => {});
-    }
   } catch (err) { console.error("Notification error:", err); }
 }
 
+// Shows a local device notification (used when WE receive a new notification doc)
+function showLocalNotification(type, message) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", message: "✉️", ad_approved: "⭐", premium: "⭐", review: "⭐", nudge: "👋" };
+  const icon = icons[type] || "🔔";
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.ready.then(reg => {
+      reg.showNotification("E-Connect " + icon, {
+        body: message,
+        icon: "/icon-192.png",
+        badge: "/icon-192.png",
+        vibrate: [200, 100, 200],
+        tag: type,
+        renotify: true,
+      });
+    }).catch(() => {
+      try { new Notification("E-Connect " + icon, { body: message }); } catch (e) {}
+    });
+  } else {
+    try { new Notification("E-Connect " + icon, { body: message }); } catch (e) {}
+  }
+}
+
 // ── Approved Ads Banner ────────────────────────────────────────
-function ApprovedAdsBanner({ setViewingPublicProfile, setPage, setChatSeller }) {
-  const [ads, setAds] = useState([]);
+// ── Shared Bottom-Sheet Ad Detail / Video Player Overlay ─────────
+// Used by BOTH the Promoted Image Carousel and the Trending
+// Shoppable Videos section below. Handles image ads (static photo)
+// and video ads (full <video> player with controls).
+function AdDetailModal({ ad, onClose, setViewingPublicProfile, setPage, setChatSeller }) {
+  if (!ad) return null;
+  return (
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.6)", zIndex: 300, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+      onClick={onClose}>
+      <div style={{ background: C.white, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 0" }}>
+          <div style={{ width: 36, height: 4, borderRadius: 2, background: C.greyMid }} />
+        </div>
+        <div style={{ position: "relative" }}>
+          {ad.adType === "video" ? (
+            // Full video controller + seek bar - only rendered once the
+            // sheet is opened (never autoplays on the main feed).
+            <video src={ad.mediaUrl || ad.imageUrl} style={{ width: "100%", maxHeight: 320, objectFit: "cover", display: "block" }} controls autoPlay playsInline poster={ad.imageUrl} />
+          ) : (
+            <img src={ad.imageUrl} alt={ad.businessName} style={{ width: "100%", maxHeight: 320, objectFit: "cover", display: "block" }} />
+          )}
+          <div style={{ position: "absolute", top: 10, right: 10, background: "#FFD700", borderRadius: 20, padding: "4px 12px", fontSize: 11, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+            Promoted
+          </div>
+        </div>
+        <div style={{ padding: 18 }}>
+          <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>{ad.title || ad.businessName}</div>
+          {ad.description && <div style={{ color: C.greyDark, fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>{ad.description}</div>}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, padding: 12, background: C.grey, borderRadius: 12 }}>
+            <div style={{ width: 40, height: 40, borderRadius: "50%", background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: C.primary, flexShrink: 0 }}>
+              {(ad.businessName || "?").charAt(0).toUpperCase()}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ad.businessName}</div>
+              <div style={{ fontSize: 12, color: C.greyDark }}>Posted this ad</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button style={{ ...S.btn("outline"), flex: 1 }}
+              onClick={() => {
+                onClose();
+                setViewingPublicProfile && setViewingPublicProfile({ uid: ad.userId, displayName: ad.businessName });
+                setPage && setPage("publicProfile");
+              }}>
+              👤 View Profile
+            </button>
+            <button style={{ ...S.btn(), flex: 1 }}
+              onClick={() => {
+                onClose();
+                setChatSeller && setChatSeller({ id: ad.userId, name: ad.businessName, productName: ad.title });
+                setPage && setPage("messages");
+              }}>
+              💬 Chat
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Promoted Image Carousel ──────────────────────────────────────
+// Sits directly below the Welcome Banner. ONLY rotates static image
+// ads (adType !== "video"). Video ads are handled separately by
+// <TrendingShoppableVideos /> further down the page.
+function PromotedImageCarousel({ ads, setViewingPublicProfile, setPage, setChatSeller }) {
   const [current, setCurrent] = useState(0);
   const [selectedAd, setSelectedAd] = useState(null);
   const [isVisible, setIsVisible] = useState(true);
   const [showSponsoredTip, setShowSponsoredTip] = useState(false);
   const containerRef = useRef(null);
 
+  // ── PLUG POINT: this is where static image ads are filtered from
+  // the full ads list. Video ads (adType === "video") are excluded
+  // here and instead picked up by TrendingShoppableVideos below. ──
+  const imageAds = useMemo(() => ads.filter(a => a.adType !== "video"), [ads]);
+
   useEffect(() => {
-    getDocs(query(collection(db, "ads"), where("status", "==", "approved"))).then(snap => {
-      setAds(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-    });
     // Show the "Sponsored" tooltip once per device, on first encounter
     try {
       if (!localStorage.getItem("econnect-sponsored-tip-seen")) {
@@ -1627,7 +1703,7 @@ function ApprovedAdsBanner({ setViewingPublicProfile, setPage, setChatSeller }) 
     } catch (e) {}
   }, []);
 
-  // Pause auto-rotate when the banner scrolls out of view
+  // Pause auto-rotate when the carousel scrolls out of view
   useEffect(() => {
     if (!containerRef.current || !("IntersectionObserver" in window)) return;
     const observer = new IntersectionObserver(
@@ -1639,29 +1715,30 @@ function ApprovedAdsBanner({ setViewingPublicProfile, setPage, setChatSeller }) 
   }, []);
 
   useEffect(() => {
-    if (ads.length <= 1 || selectedAd || !isVisible) return;
-    const timer = setInterval(() => setCurrent(prev => (prev + 1) % ads.length), 4000);
+    if (imageAds.length <= 1 || selectedAd || !isVisible) return;
+    const timer = setInterval(() => setCurrent(prev => (prev + 1) % imageAds.length), 4000);
     return () => clearInterval(timer);
-  }, [ads, selectedAd, isVisible]);
+  }, [imageAds.length, selectedAd, isVisible]);
+
+  // Reset index if the filtered list shrinks (e.g. ads reload)
+  useEffect(() => {
+    if (current >= imageAds.length) setCurrent(0);
+  }, [imageAds.length, current]);
 
   const dismissSponsoredTip = () => {
     setShowSponsoredTip(false);
     try { localStorage.setItem("econnect-sponsored-tip-seen", "true"); } catch (e) {}
   };
 
-  if (ads.length === 0) return null;
+  if (imageAds.length === 0) return null;
 
-  const ad = ads[current];
+  const ad = imageAds[current];
 
   return (
     <>
       <div ref={containerRef} style={{ ...S.card, overflow: "hidden", marginBottom: 16, cursor: "pointer", position: "relative" }} onClick={() => setSelectedAd(ad)}>
         <div style={{ position: "relative" }}>
-          {ad.adType === "video" ? (
-            <video src={ad.mediaUrl || ad.imageUrl} style={{ width: "100%", height: 180, objectFit: "cover", display: "block" }} autoPlay muted loop playsInline poster={ad.imageUrl} />
-          ) : (
-            <img src={ad.imageUrl} alt={ad.businessName} style={{ width: "100%", height: 180, objectFit: "cover", display: "block" }} />
-          )}
+          <img src={ad.imageUrl} alt={ad.businessName} style={{ width: "100%", height: 180, objectFit: "cover", display: "block" }} />
           <div style={{ position: "absolute", top: 10, right: 10, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}
             onClick={(e) => { if (showSponsoredTip) { e.stopPropagation(); dismissSponsoredTip(); } }}>
             <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
@@ -1674,9 +1751,10 @@ function ApprovedAdsBanner({ setViewingPublicProfile, setPage, setChatSeller }) 
               "Promoted" means a seller paid to feature this here. Tap to dismiss.
             </div>
           )}
-          {ads.length > 1 && (
+          {/* Standard horizontal page-indicator dots, bottom-right */}
+          {imageAds.length > 1 && (
             <div style={{ position: "absolute", bottom: 8, right: 12, display: "flex", gap: 4 }}>
-              {ads.map((_, i) => <div key={i} style={{ width: i === current ? 16 : 6, height: 6, borderRadius: 3, background: i === current ? "white" : "rgba(255,255,255,0.6)", transition: "width 0.3s" }} />)}
+              {imageAds.map((_, i) => <div key={i} style={{ width: i === current ? 16 : 6, height: 6, borderRadius: 3, background: i === current ? "white" : "rgba(255,255,255,0.6)", transition: "width 0.3s" }} />)}
             </div>
           )}
         </div>
@@ -1686,60 +1764,71 @@ function ApprovedAdsBanner({ setViewingPublicProfile, setPage, setChatSeller }) 
         </div>
       </div>
 
-      {/* Ad Detail Modal */}
-      {selectedAd && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.6)", zIndex: 300, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
-          onClick={() => setSelectedAd(null)}>
-          <div style={{ background: C.white, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 0" }}>
-              <div style={{ width: 36, height: 4, borderRadius: 2, background: C.greyMid }} />
+      {/* ── PLUG POINT: existing Bottom-Sheet Player Overlay, shared with TrendingShoppableVideos ── */}
+      <AdDetailModal ad={selectedAd} onClose={() => setSelectedAd(null)} setViewingPublicProfile={setViewingPublicProfile} setPage={setPage} setChatSeller={setChatSeller} />
+    </>
+  );
+}
+
+// ── Trending Shoppable Videos ────────────────────────────────────
+// Horizontally scrollable row of vertical (9:16) video preview cards.
+// Shows ONLY a static thumbnail + play icon (never autoplays, to save
+// user data). Tapping a card opens the shared bottom-sheet video
+// player overlay (<AdDetailModal />) with full controls.
+function TrendingShoppableVideos({ ads, setViewingPublicProfile, setPage, setChatSeller }) {
+  const [selectedAd, setSelectedAd] = useState(null);
+
+  // ── PLUG POINT: this is where video ads are filtered from the full
+  // ads list. Static image ads (adType !== "video") are excluded here
+  // and instead handled by <PromotedImageCarousel /> above. ──
+  const videoAds = useMemo(() => ads.filter(a => a.adType === "video"), [ads]);
+
+  if (videoAds.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+        <span style={{ fontSize: 18 }}>🎬</span>
+        <span style={{ fontWeight: 800, fontSize: 16 }}>Trending Shoppable Videos</span>
+      </div>
+      <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8 }}>
+        {videoAds.map(ad => (
+          <div key={ad.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", minWidth: 150, width: 150, height: 260, flexShrink: 0, position: "relative" }}
+            onClick={() => setSelectedAd(ad)}>
+            {/* Static thumbnail only - the real <video> only loads inside the bottom-sheet overlay */}
+            {ad.imageUrl
+              ? <img src={ad.imageUrl} alt={ad.title || ad.businessName} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              : <div style={{ width: "100%", height: "100%", background: C.grey }} />}
+
+            {/* Dark gradient so the title text stays readable */}
+            <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.05) 30%, rgba(0,0,0,0.7) 100%)" }} />
+
+            {/* Center play icon overlay */}
+            <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: 46, height: 46, borderRadius: "50%", background: "rgba(255,255,255,0.3)", border: "2px solid rgba(255,255,255,0.8)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><path d="M8 5v14l11-7z"/></svg>
             </div>
-            <div style={{ position: "relative" }}>
-              {selectedAd.adType === "video" ? (
-                <video src={selectedAd.mediaUrl || selectedAd.imageUrl} style={{ width: "100%", maxHeight: 320, objectFit: "cover", display: "block" }} controls autoPlay playsInline />
-              ) : (
-                <img src={selectedAd.imageUrl} alt={selectedAd.businessName} style={{ width: "100%", maxHeight: 320, objectFit: "cover", display: "block" }} />
-              )}
-              <div style={{ position: "absolute", top: 10, right: 10, background: "#FFD700", borderRadius: 20, padding: "4px 12px", fontSize: 11, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
-                Promoted
-              </div>
+
+            {/* "Promoted" badge */}
+            <div style={{ position: "absolute", top: 8, right: 8, background: "#FFD700", borderRadius: 20, padding: "2px 8px", fontSize: 9, fontWeight: 700, color: "#333" }}>
+              Promoted
             </div>
-            <div style={{ padding: 18 }}>
-              <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>{selectedAd.title || selectedAd.businessName}</div>
-              {selectedAd.description && <div style={{ color: C.greyDark, fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>{selectedAd.description}</div>}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, padding: 12, background: C.grey, borderRadius: 12 }}>
-                <div style={{ width: 40, height: 40, borderRadius: "50%", background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: C.primary, flexShrink: 0 }}>
-                  {(selectedAd.businessName || "?").charAt(0).toUpperCase()}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedAd.businessName}</div>
-                  <div style={{ fontSize: 12, color: C.greyDark }}>Posted this ad</div>
-                </div>
+
+            {/* Title + Shop Now overlay at bottom */}
+            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 10px 12px" }}>
+              <div style={{ color: "white", fontWeight: 800, fontSize: 14, marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textShadow: "0 1px 4px rgba(0,0,0,0.5)" }}>
+                {ad.title || ad.businessName}
               </div>
-              <div style={{ display: "flex", gap: 10 }}>
-                <button style={{ ...S.btn("outline"), flex: 1 }}
-                  onClick={() => {
-                    setSelectedAd(null);
-                    setViewingPublicProfile && setViewingPublicProfile({ uid: selectedAd.userId, displayName: selectedAd.businessName });
-                    setPage && setPage("publicProfile");
-                  }}>
-                  👤 View Profile
-                </button>
-                <button style={{ ...S.btn(), flex: 1 }}
-                  onClick={() => {
-                    setSelectedAd(null);
-                    setChatSeller && setChatSeller({ id: selectedAd.userId, name: selectedAd.businessName, productName: selectedAd.title });
-                    setPage && setPage("messages");
-                  }}>
-                  💬 Chat
-                </button>
+              <div style={{ background: C.primary, color: "white", borderRadius: 20, padding: "6px 0", textAlign: "center", fontWeight: 700, fontSize: 12 }}>
+                Shop Now
               </div>
             </div>
           </div>
-        </div>
-      )}
-    </>
+        ))}
+      </div>
+
+      {/* ── PLUG POINT: existing Bottom-Sheet Player Overlay, shared with PromotedImageCarousel ── */}
+      <AdDetailModal ad={selectedAd} onClose={() => setSelectedAd(null)} setViewingPublicProfile={setViewingPublicProfile} setPage={setPage} setChatSeller={setChatSeller} />
+    </div>
   );
 }
 
@@ -1857,6 +1946,16 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
   const [showSearchPanel, setShowSearchPanel] = useState(false);
   const [searchHistory, setSearchHistory] = useState([]);
   const [trendingSearches, setTrendingSearches] = useState([]);
+  const [ads, setAds] = useState([]);
+
+  // Fetch approved ads ONCE here and split them between the image
+  // carousel and the video section via props - avoids each section
+  // running its own Firestore query (and its own loading flicker).
+  useEffect(() => {
+    getDocs(query(collection(db, "ads"), where("status", "==", "approved")))
+      .then(snap => setAds(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+      .catch(() => {});
+  }, []);
 
   const fetchProducts = async (isBackground = false) => {
     if (!isBackground) setLoading(true);
@@ -2013,7 +2112,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
         <button style={{ background: "white", color: C.primary, border: "none", borderRadius: 8, padding: "8px 18px", fontWeight: 700, fontSize: 13, cursor: "pointer" }} onClick={() => setPage("discover")}>Discover Sellers</button>
       </div>
 
-      <ApprovedAdsBanner setViewingPublicProfile={setViewingPublicProfile} setPage={setPage} setChatSeller={setChatSeller} />
+      <PromotedImageCarousel ads={ads} setViewingPublicProfile={setViewingPublicProfile} setPage={setPage} setChatSeller={setChatSeller} />
 
       <div style={{ display: "flex", gap: 8, overflowX: "auto", marginBottom: 20, paddingBottom: 4 }}>
         {CATEGORIES.map(cat => (
@@ -2026,6 +2125,9 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
       {filtered.some(p => p.sellerPremium) && (
         <PremiumCarousel products={filtered.filter(p => p.sellerPremium)} setSelectedProduct={setSelectedProduct} setPage={setPage} />
       )}
+
+      {/* ── NEW: Trending Shoppable Videos (video ads only) ── */}
+      <TrendingShoppableVideos ads={ads} setViewingPublicProfile={setViewingPublicProfile} setPage={setPage} setChatSeller={setChatSeller} />
 
       {/* ── TIER 2: VERIFIED (Medium Cards horizontal scroll) ── */}
       {filtered.some(p => p.sellerVerified && !p.sellerPremium) && (
@@ -3412,25 +3514,31 @@ function Messages({ user, chatSeller, onChatStarted }) {
     setContextMenuMsg(null);
   };
 
+  const recordSecondsRef = useRef(0);
+
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
       const recorder = new MediaRecorder(stream, { mimeType });
       audioChunksRef.current = [];
+      recordSecondsRef.current = 0;
       recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
       recorder.onstop = () => {
         stream.getTracks().forEach(t => t.stop());
         clearInterval(recordTimerRef.current);
         const blob = new Blob(audioChunksRef.current, { type: mimeType });
-        if (recordSeconds >= 1) uploadVoiceMessage(blob, mimeType);
+        if (recordSecondsRef.current >= 1) uploadVoiceMessage(blob, mimeType, recordSecondsRef.current);
         setRecordSeconds(0);
       };
       mediaRecorderRef.current = recorder;
       recorder.start();
       setIsRecording(true);
       setRecordSeconds(0);
-      recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+      recordTimerRef.current = setInterval(() => {
+        recordSecondsRef.current += 1;
+        setRecordSeconds(recordSecondsRef.current);
+      }, 1000);
     } catch (err) {
       console.error("Mic access error:", err);
       alert("Couldn't access microphone. Please allow microphone permission and try again.");
@@ -3444,7 +3552,7 @@ function Messages({ user, chatSeller, onChatStarted }) {
     setIsRecording(false);
   };
 
-  const uploadVoiceMessage = async (blob, mimeType) => {
+  const uploadVoiceMessage = async (blob, mimeType, durationSeconds) => {
     if (!selected) return;
     setUploadingVoice(true);
     try {
@@ -3456,7 +3564,7 @@ function Messages({ user, chatSeller, onChatStarted }) {
       const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/video/upload", { method: "POST", body: data });
       const result = await res.json();
       if (result.secure_url) {
-        const duration = result.duration ? Math.round(result.duration) : recordSeconds;
+        const duration = result.duration ? Math.round(result.duration) : (durationSeconds || 0);
         await addDoc(collection(db, "conversations", selected.id, "messages"), {
           audioUrl: result.secure_url, audioDuration: duration, type: "audio",
           senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp(),
@@ -4966,7 +5074,6 @@ function Discover({ setPage, setSelectedProduct, user }) {
 
   return (
     <div style={S.page}>
-      <ApprovedAdsBanner />
       <div style={S.sectionTitle}>Discover</div>
       <p style={S.sectionSub}>Find products, sellers and connect with people</p>
       <div style={{ position: "relative", marginBottom: 16 }}>
@@ -5147,6 +5254,26 @@ export default function App() {
       if (snap.exists() && snap.data().photoURL) setCurrentUserPhoto(snap.data().photoURL);
     });
     return () => { unsub(); userUnsub(); };
+  }, [user]);
+
+  // Show a local device notification whenever a NEW notification arrives for us
+  // (e.g. someone messages, likes, follows, or comments) - not for ones we already had on load.
+  useEffect(() => {
+    if (!user) return;
+    const mountedAt = Date.now();
+    const q = query(collection(db, "notifications"), where("toUserId", "==", user.uid), orderBy("createdAt", "desc"), limit(20));
+    const unsub = onSnapshot(q, snap => {
+      snap.docChanges().forEach(change => {
+        if (change.type !== "added") return;
+        const n = change.doc.data();
+        const created = n.createdAt?.toMillis ? n.createdAt.toMillis() : null;
+        // Only notify for items created after this listener mounted, to avoid replaying old notifications on load
+        if (created && created >= mountedAt - 5000) {
+          showLocalNotification(n.type, n.message);
+        }
+      });
+    });
+    return unsub;
   }, [user]);
 
   if (loading) return (
