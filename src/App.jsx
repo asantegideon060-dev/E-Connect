@@ -10,7 +10,7 @@ import {
 import {
   collection, addDoc, getDocs, doc, setDoc,
   getDoc, query, orderBy, onSnapshot, serverTimestamp,
-  where
+  where, limit
 } from "firebase/firestore";
 
 const THEMES = {
@@ -158,20 +158,31 @@ const CLOUDINARY_CLOUD = "dxmmsq0gq";
 const CLOUDINARY_PRESET = "Econnect";
 
 // ── Product Image Carousel ─────────────────────────────────────
-function ProductImageCarousel({ images, height = 200, onClick }) {
+function ProductImageCarousel({ images, height = 200, onClick, autoRotate = true }) {
   const [idx, setIdx] = useState(0);
   const timerRef = useRef(null);
+  const touchStartX = useRef(0);
 
   useEffect(() => {
-    if (!images || images.length <= 1) return;
+    if (!autoRotate || !images || images.length <= 1) return;
     timerRef.current = setInterval(() => setIdx(prev => (prev + 1) % images.length), 3000);
     return () => clearInterval(timerRef.current);
-  }, [images?.length]);
+  }, [images?.length, autoRotate]);
 
   if (!images || images.length === 0) return null;
 
+  const handleTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; };
+  const handleTouchEnd = (e) => {
+    const diff = touchStartX.current - e.changedTouches[0].clientX;
+    if (Math.abs(diff) < 40) return; // ignore small movements/taps
+    clearInterval(timerRef.current);
+    if (diff > 0) setIdx(prev => (prev + 1) % images.length); // swiped left -> next
+    else setIdx(prev => (prev - 1 + images.length) % images.length); // swiped right -> prev
+  };
+
   return (
-    <div style={{ position: "relative", height, overflow: "hidden", borderRadius: 0, cursor: onClick ? "pointer" : "default" }} onClick={onClick}>
+    <div style={{ position: "relative", height, overflow: "hidden", borderRadius: 0, cursor: onClick ? "pointer" : "default" }}
+      onClick={onClick} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
       <img src={images[idx]} alt="product" style={{ width: "100%", height: "100%", objectFit: "cover", transition: "opacity 0.4s" }} />
       {images.length > 1 && (
         <>
@@ -184,9 +195,9 @@ function ProductImageCarousel({ images, height = 200, onClick }) {
           </div>
           {/* Left/Right tap areas */}
           <div style={{ position: "absolute", top: 0, left: 0, width: "30%", height: "100%", zIndex: 2 }}
-            onClick={e => { e.stopPropagation(); setIdx(prev => (prev - 1 + images.length) % images.length); }} />
+            onClick={e => { e.stopPropagation(); clearInterval(timerRef.current); setIdx(prev => (prev - 1 + images.length) % images.length); }} />
           <div style={{ position: "absolute", top: 0, right: 0, width: "30%", height: "100%", zIndex: 2 }}
-            onClick={e => { e.stopPropagation(); setIdx(prev => (prev + 1) % images.length); }} />
+            onClick={e => { e.stopPropagation(); clearInterval(timerRef.current); setIdx(prev => (prev + 1) % images.length); }} />
           {/* Image counter */}
           <div style={{ position: "absolute", top: 8, right: 8, background: "rgba(0,0,0,0.5)", borderRadius: 10, padding: "2px 8px", fontSize: 10, color: "white", fontWeight: 700 }}>
             {idx + 1}/{images.length}
@@ -357,6 +368,7 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
   const [musicQuery, setMusicQuery] = useState("");
   const [musicResults, setMusicResults] = useState([]);
   const [musicSearching, setMusicSearching] = useState(false);
+  const [musicError, setMusicError] = useState(null);
   const [selectedMusicPreview, setSelectedMusicPreview] = useState(null);
   const [progress, setProgress] = useState(0);
   const progressRef = useRef(null);
@@ -430,15 +442,88 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
     }
   };
 
+  const fetchWithTimeout = async (url, ms = 6000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ms);
+    try {
+      const res = await fetch(url, { signal: controller.signal });
+      return res;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  // JSONP request - bypasses CORS and service-worker fetch interception entirely
+  // by loading a <script> tag, which is how the iTunes Search API has been
+  // accessed client-side for over a decade.
+  const searchMusicJSONP = (url) => {
+    return new Promise((resolve, reject) => {
+      const cbName = `__itunesCb_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+      const script = document.createElement("script");
+      const timer = setTimeout(() => { cleanup(); reject(new Error("JSONP timeout")); }, 6000);
+      const cleanup = () => {
+        clearTimeout(timer);
+        delete window[cbName];
+        if (script.parentNode) script.parentNode.removeChild(script);
+      };
+      window[cbName] = (data) => { cleanup(); resolve(data); };
+      script.onerror = () => { cleanup(); reject(new Error("JSONP script error")); };
+      script.src = `${url}&callback=${cbName}`;
+      document.body.appendChild(script);
+    });
+  };
+
   const searchMusic = async (q) => {
     if (!q.trim()) return;
     setMusicSearching(true);
-    try {
-      // Use iTunes Search API - free, no key needed, millions of songs
-      const res = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(q)}&media=music&limit=20`);
-      const data = await res.json();
-      setMusicResults(data.results || []);
-    } catch (err) { console.error(err); }
+    setMusicError(null);
+    setMusicResults([]);
+    const term = encodeURIComponent(q);
+    const directUrls = [
+      `https://itunes.apple.com/search?term=${term}&media=music&entity=song&limit=20&country=US`,
+      `https://itunes.apple.com/search?term=${term}&media=music&limit=20`,
+    ];
+
+    // 1. Try JSONP first - most reliable, bypasses CORS/SW entirely
+    for (const directUrl of directUrls) {
+      try {
+        const data = await searchMusicJSONP(directUrl);
+        if (data?.results && data.results.length > 0) {
+          setMusicResults(data.results);
+          setMusicSearching(false);
+          return;
+        }
+      } catch (err) {
+        // fall through to fetch-based attempts
+      }
+    }
+
+    // 2. Fall back to fetch (direct + proxies)
+    const attempts = [];
+    for (const directUrl of directUrls) {
+      attempts.push(directUrl);
+      attempts.push(`https://corsproxy.io/?${encodeURIComponent(directUrl)}`);
+      attempts.push(`https://api.allorigins.win/raw?url=${encodeURIComponent(directUrl)}`);
+      attempts.push(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(directUrl)}`);
+      attempts.push(`https://thingproxy.freeboard.io/fetch/${directUrl}`);
+    }
+    for (const url of attempts) {
+      try {
+        const res = await fetchWithTimeout(url, 6000);
+        if (!res.ok) continue;
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); } catch (e) { continue; }
+        if (data.results && data.results.length > 0) {
+          setMusicResults(data.results);
+          setMusicSearching(false);
+          return;
+        }
+      } catch (err) {
+        // try next fallback
+      }
+    }
+    setMusicError("No songs found for this search. Try a different name or spelling.");
     setMusicSearching(false);
   };
 
@@ -646,7 +731,11 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
           <div style={{ flex: 1, overflowY: "auto", padding: "0 16px" }}>
             {musicSearching && <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.5)" }}>Searching...</div>}
             {!musicSearching && musicResults.length === 0 && musicQuery && (
-              <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.5)" }}>No results found</div>
+              <div style={{ textAlign: "center", padding: 40 }}>
+                <div style={{ fontSize: 40, marginBottom: 10 }}>🔍</div>
+                <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 14, marginBottom: 14 }}>{musicError || "No results found"}</div>
+                <button style={{ ...S.btn(), padding: "8px 18px", fontSize: 13 }} onClick={() => searchMusic(musicQuery)}>Try Again</button>
+              </div>
             )}
             {!musicSearching && musicResults.length === 0 && !musicQuery && (
               <div style={{ textAlign: "center", padding: 40 }}>
@@ -691,19 +780,18 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
 
           {/* User info */}
           <div style={{ position: "absolute", top: 28, left: 0, right: 0, zIndex: 10, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 16px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => {
+              const story = viewingStory;
+              closeStory();
+              setViewingPublicProfile && setViewingPublicProfile({ uid: story.userId, displayName: story.userName, photoURL: story.userPhoto });
+              setPage && setPage("publicProfile");
+            }}>
               <div style={{ width: 40, height: 40, borderRadius: "50%", overflow: "hidden", border: "2px solid white" }}>
                 {viewingStory.imageUrl
                   ? <img src={viewingStory.imageUrl} alt={viewingStory.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   : <div style={{ height: "100%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>👤</div>}
               </div>
-              <div style={{ cursor: "pointer" }} onClick={() => {
-                closeStory();
-                if (viewingStory.userId && viewingStory.userId !== user?.uid) {
-                  setViewingPublicProfile && setViewingPublicProfile({ uid: viewingStory.userId, displayName: viewingStory.userName, photoURL: viewingStory.userPhoto });
-                  setPage && setPage("publicProfile");
-                }
-              }}>
+              <div>
                 <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{viewingStory.userName}</div>
                 <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>Tap to view profile</div>
               </div>
@@ -1014,7 +1102,7 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
 }
 
 // ── Order Tracking Page ────────────────────────────────────────
-function OrderTrackingPage({ user }) {
+function OrderTrackingPage({ user, startChat }) {
   const [orders, setOrders] = useState([]);
   const [sellerOrders, setSellerOrders] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1049,7 +1137,7 @@ function OrderTrackingPage({ user }) {
   const updateOrderStatus = async (orderId, newStatus, buyerId) => {
     await setDoc(doc(db, "orders", orderId), { status: newStatus, updatedAt: serverTimestamp() }, { merge: true });
     const statusInfo = getStatus(newStatus);
-    await sendNotification(buyerId, "order", `Your order status has been updated to: ${statusInfo.label} ${statusInfo.icon}`, "E-Connect");
+    await sendNotification(buyerId, "order", `Your order status has been updated to: ${statusInfo.label} ${statusInfo.icon}`, "E-Connect", { orderId });
     setSellerOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     if (selectedOrder?.id === orderId) setSelectedOrder(prev => ({ ...prev, status: newStatus }));
@@ -1215,6 +1303,28 @@ function OrderTrackingPage({ user }) {
             </div>
             <div style={{ fontSize: 13, color: C.greyDark, marginBottom: 4 }}>📞 {selectedOrder.customerPhone}</div>
             {selectedOrder.address && <div style={{ fontSize: 13, color: C.greyDark, marginBottom: 14 }}>📍 {selectedOrder.address}</div>}
+            {tab === "my-orders" && selectedOrder.items?.[0]?.sellerId && (
+              <button style={{ ...S.btn(), width: "100%", marginBottom: 10 }}
+                onClick={() => startChat && startChat({
+                  id: selectedOrder.items[0].sellerId,
+                  name: selectedOrder.items[0].seller || "Seller",
+                  productName: selectedOrder.items[0].name,
+                  orderId: selectedOrder.id,
+                })}>
+                💬 Message Seller about this Order
+              </button>
+            )}
+            {tab === "seller-orders" && selectedOrder.userId && (
+              <button style={{ ...S.btn(), width: "100%", marginBottom: 10 }}
+                onClick={() => startChat && startChat({
+                  id: selectedOrder.userId,
+                  name: selectedOrder.customerName || "Buyer",
+                  productName: selectedOrder.items?.[0]?.name,
+                  orderId: selectedOrder.id,
+                })}>
+                💬 Message Buyer about this Order
+              </button>
+            )}
             <button style={{ ...S.btn("outline"), width: "100%" }} onClick={() => setSelectedOrder(null)}>Close</button>
           </div>
         </div>
@@ -1224,7 +1334,7 @@ function OrderTrackingPage({ user }) {
 }
 
 // ── Notifications Page ─────────────────────────────────────────
-function NotificationsPage({ user }) {
+function NotificationsPage({ user, setPage, setChatSeller, setSelectedProduct, setViewingPublicProfile }) {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notifPermission, setNotifPermission] = useState(
@@ -1235,14 +1345,22 @@ function NotificationsPage({ user }) {
     if (!("Notification" in window)) { alert("Your browser does not support notifications."); return; }
     const result = await Notification.requestPermission();
     setNotifPermission(result);
-    if (result === "granted" && "serviceWorker" in navigator) {
-      navigator.serviceWorker.ready.then(reg => {
-        reg.showNotification("E-Connect 🔔", {
-          body: "Notifications enabled! You will now receive updates.",
-          icon: "https://res.cloudinary.com/dxmmsq0gq/image/upload/w_192,h_192,c_fill/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg",
-          vibrate: [200, 100, 200],
-        });
-      });
+    if (result === "granted") {
+      if ("serviceWorker" in navigator) {
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          reg.showNotification("E-Connect 🔔", {
+            body: "Notifications enabled! You will now receive updates.",
+            icon: "https://res.cloudinary.com/dxmmsq0gq/image/upload/w_192,h_192,c_fill/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg",
+            vibrate: [200, 100, 200],
+          });
+        } catch (e) {
+          // Service worker not ready - fall back to plain notification
+          new Notification("E-Connect 🔔", { body: "Notifications enabled! You will now receive updates." });
+        }
+      } else {
+        new Notification("E-Connect 🔔", { body: "Notifications enabled! You will now receive updates." });
+      }
     }
   };
 
@@ -1254,8 +1372,31 @@ function NotificationsPage({ user }) {
       orderBy("createdAt", "desc")
     );
     const unsub = onSnapshot(q, snap => {
-      setNotifications(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Deduplicate: collapse consecutive notifications with the same type+message+fromUserId
+      // (keeps the most recent, but counts how many were collapsed)
+      const deduped = [];
+      for (const n of all) {
+        const last = deduped[deduped.length - 1];
+        if (last && last.type === n.type && last.message === n.message && last.fromUserId === n.fromUserId) {
+          last._count = (last._count || 1) + 1;
+          // Keep the most recent createdAt and id, mark older duplicates for cleanup
+          last._dupIds = last._dupIds || [];
+          last._dupIds.push(n.id);
+        } else {
+          deduped.push({ ...n, _count: 1, _dupIds: [] });
+        }
+      }
+      setNotifications(deduped);
       setLoading(false);
+      // Clean up duplicate notification docs in the background (best-effort)
+      deduped.forEach(n => {
+        if (n._dupIds && n._dupIds.length > 0) {
+          n._dupIds.forEach(dupId => {
+            setDoc(doc(db, "notifications", dupId), { read: true, _duplicate: true }, { merge: true }).catch(() => {});
+          });
+        }
+      });
     }, () => setLoading(false));
     return unsub;
   }, [user]);
@@ -1265,10 +1406,49 @@ function NotificationsPage({ user }) {
     await Promise.all(unread.map(n => setDoc(doc(db, "notifications", n.id), { read: true }, { merge: true })));
   };
 
+  const handleNotificationClick = async (n) => {
+    await setDoc(doc(db, "notifications", n.id), { read: true }, { merge: true });
+    switch (n.type) {
+      case "message":
+        if (n.conversationId) {
+          setChatSeller && setChatSeller({ id: n.fromUserId, name: n.fromUserName, conversationId: n.conversationId });
+        }
+        setPage && setPage("messages");
+        break;
+      case "follow":
+      case "nudge":
+        if (n.fromUserId) {
+          setViewingPublicProfile && setViewingPublicProfile({ uid: n.fromUserId, displayName: n.fromUserName });
+          setPage && setPage("publicProfile");
+        }
+        break;
+      case "like":
+      case "comment":
+        if (n.productId) {
+          // Need full product data - navigate to discover/home where ProductDetail can be opened
+          setPage && setPage("home");
+        } else if (n.reelId) {
+          setPage && setPage("reels");
+        }
+        break;
+      case "order":
+        setPage && setPage("orders");
+        break;
+      case "premium":
+      case "verification":
+      case "ad_approved":
+      case "ad_rejected":
+        setPage && setPage("profile");
+        break;
+      default:
+        break;
+    }
+  };
+
   const getIcon = (type) => {
     const icons = {
-      like: "❤️", follow: "👤", order: "🛒", comment: "💬",
-      ad_approved: "⭐", ad_rejected: "❌", premium: "⭐", review: "⭐",
+      like: "❤️", follow: "👤", order: "🛒", comment: "💬", message: "✉️",
+      ad_approved: "⭐", ad_rejected: "❌", premium: "⭐", review: "⭐", nudge: "👋",
     };
     return icons[type] || "🔔";
   };
@@ -1330,12 +1510,15 @@ function NotificationsPage({ user }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 2, marginBottom: 80 }}>
           {notifications.map(n => (
             <div key={n.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, background: n.read ? C.white : `${C.primary}08`, borderLeft: n.read ? "none" : `3px solid ${C.primary}`, cursor: "pointer" }}
-              onClick={() => setDoc(doc(db, "notifications", n.id), { read: true }, { merge: true })}>
+              onClick={() => handleNotificationClick(n)}>
               <div style={{ width: 44, height: 44, borderRadius: "50%", background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22, flexShrink: 0 }}>
                 {getIcon(n.type)}
               </div>
               <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: n.read ? 500 : 700, color: C.text, lineHeight: 1.4 }}>{n.message}</div>
+                <div style={{ fontSize: 14, fontWeight: n.read ? 500 : 700, color: C.text, lineHeight: 1.4 }}>
+                  {n.message}
+                  {n._count > 1 && <span style={{ color: C.greyDark, fontWeight: 600 }}> ({n._count}x)</span>}
+                </div>
                 <div style={{ fontSize: 12, color: C.greyDark, marginTop: 3 }}>{getTimeAgo(n.createdAt)}</div>
               </div>
               {!n.read && <div style={{ width: 8, height: 8, borderRadius: "50%", background: C.primary, flexShrink: 0 }} />}
@@ -1399,15 +1582,15 @@ function ProductPlaceholder({ name, category, size = "100%" }) {
 }
 
 // ── Send Notification Helper ────────────────────────────────────
-async function sendNotification(toUserId, type, message, fromUserName) {
+async function sendNotification(toUserId, type, message, fromUserName, meta = {}) {
   if (!toUserId) return;
   try {
     await addDoc(collection(db, "notifications"), {
       toUserId, type, message, fromUserName: fromUserName || "",
-      read: false, createdAt: serverTimestamp(),
+      read: false, createdAt: serverTimestamp(), ...meta,
     });
     if ("Notification" in window && Notification.permission === "granted" && "serviceWorker" in navigator) {
-      const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", ad_approved: "⭐", premium: "⭐", review: "⭐" };
+      const icons = { like: "❤️", follow: "👤", order: "🛒", comment: "💬", message: "✉️", ad_approved: "⭐", premium: "⭐", review: "⭐", nudge: "👋" };
       const icon = icons[type] || "🔔";
       navigator.serviceWorker.ready.then(reg => {
         reg.showNotification("E-Connect " + icon, {
@@ -1424,46 +1607,139 @@ async function sendNotification(toUserId, type, message, fromUserName) {
 }
 
 // ── Approved Ads Banner ────────────────────────────────────────
-function ApprovedAdsBanner() {
+function ApprovedAdsBanner({ setViewingPublicProfile, setPage, setChatSeller }) {
   const [ads, setAds] = useState([]);
   const [current, setCurrent] = useState(0);
+  const [selectedAd, setSelectedAd] = useState(null);
+  const [isVisible, setIsVisible] = useState(true);
+  const [showSponsoredTip, setShowSponsoredTip] = useState(false);
+  const containerRef = useRef(null);
 
   useEffect(() => {
     getDocs(query(collection(db, "ads"), where("status", "==", "approved"))).then(snap => {
       setAds(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
+    // Show the "Sponsored" tooltip once per device, on first encounter
+    try {
+      if (!localStorage.getItem("econnect-sponsored-tip-seen")) {
+        setShowSponsoredTip(true);
+      }
+    } catch (e) {}
+  }, []);
+
+  // Pause auto-rotate when the banner scrolls out of view
+  useEffect(() => {
+    if (!containerRef.current || !("IntersectionObserver" in window)) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => setIsVisible(entry.isIntersecting),
+      { threshold: 0.3 }
+    );
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
   }, []);
 
   useEffect(() => {
-    if (ads.length <= 1) return;
+    if (ads.length <= 1 || selectedAd || !isVisible) return;
     const timer = setInterval(() => setCurrent(prev => (prev + 1) % ads.length), 4000);
     return () => clearInterval(timer);
-  }, [ads]);
+  }, [ads, selectedAd, isVisible]);
+
+  const dismissSponsoredTip = () => {
+    setShowSponsoredTip(false);
+    try { localStorage.setItem("econnect-sponsored-tip-seen", "true"); } catch (e) {}
+  };
 
   if (ads.length === 0) return null;
 
   const ad = ads[current];
+
   return (
-    <div style={{ borderRadius: 14, overflow: "hidden", marginBottom: 16, position: "relative", cursor: "pointer" }}>
-      {ad.adType === "video" ? (
-        <video src={ad.mediaUrl || ad.imageUrl} style={{ width: "100%", height: 200, objectFit: "cover" }} autoPlay muted loop playsInline poster={ad.imageUrl} />
-      ) : (
-        <img src={ad.imageUrl} alt={ad.businessName} style={{ width: "100%", height: 160, objectFit: "cover" }} />
-      )}
-      <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "linear-gradient(transparent, rgba(0,0,0,0.7))", padding: "20px 16px 12px" }}>
-        <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{ad.title || ad.businessName}</div>
-        <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 12 }}>{ad.description}</div>
+    <>
+      <div ref={containerRef} style={{ ...S.card, overflow: "hidden", marginBottom: 16, cursor: "pointer", position: "relative" }} onClick={() => setSelectedAd(ad)}>
+        <div style={{ position: "relative" }}>
+          {ad.adType === "video" ? (
+            <video src={ad.mediaUrl || ad.imageUrl} style={{ width: "100%", height: 180, objectFit: "cover", display: "block" }} autoPlay muted loop playsInline poster={ad.imageUrl} />
+          ) : (
+            <img src={ad.imageUrl} alt={ad.businessName} style={{ width: "100%", height: 180, objectFit: "cover", display: "block" }} />
+          )}
+          <div style={{ position: "absolute", top: 10, right: 10, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}
+            onClick={(e) => { if (showSponsoredTip) { e.stopPropagation(); dismissSponsoredTip(); } }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+            Promoted
+          </div>
+          {showSponsoredTip && (
+            <div style={{ position: "absolute", top: 42, right: 10, background: "rgba(20,20,20,0.92)", color: "white", borderRadius: 10, padding: "10px 12px", fontSize: 11, maxWidth: 200, zIndex: 5, lineHeight: 1.4 }}
+              onClick={(e) => { e.stopPropagation(); dismissSponsoredTip(); }}>
+              <div style={{ position: "absolute", top: -5, right: 16, width: 10, height: 10, background: "rgba(20,20,20,0.92)", transform: "rotate(45deg)" }} />
+              "Promoted" means a seller paid to feature this here. Tap to dismiss.
+            </div>
+          )}
+          {ads.length > 1 && (
+            <div style={{ position: "absolute", bottom: 8, right: 12, display: "flex", gap: 4 }}>
+              {ads.map((_, i) => <div key={i} style={{ width: i === current ? 16 : 6, height: 6, borderRadius: 3, background: i === current ? "white" : "rgba(255,255,255,0.6)", transition: "width 0.3s" }} />)}
+            </div>
+          )}
+        </div>
+        <div style={{ padding: "10px 14px" }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: C.text, marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ad.title || ad.businessName}</div>
+          {ad.description && <div style={{ color: C.greyDark, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ad.description}</div>}
+        </div>
       </div>
-      <div style={{ position: "absolute", top: 10, right: 10, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
-        Promoted
-      </div>
-      {ads.length > 1 && (
-        <div style={{ position: "absolute", bottom: 8, right: 12, display: "flex", gap: 4 }}>
-          {ads.map((_, i) => <div key={i} style={{ width: i === current ? 16 : 6, height: 6, borderRadius: 3, background: i === current ? "white" : "rgba(255,255,255,0.5)", transition: "width 0.3s" }} />)}
+
+      {/* Ad Detail Modal */}
+      {selectedAd && (
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.6)", zIndex: 300, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+          onClick={() => setSelectedAd(null)}>
+          <div style={{ background: C.white, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 0" }}>
+              <div style={{ width: 36, height: 4, borderRadius: 2, background: C.greyMid }} />
+            </div>
+            <div style={{ position: "relative" }}>
+              {selectedAd.adType === "video" ? (
+                <video src={selectedAd.mediaUrl || selectedAd.imageUrl} style={{ width: "100%", maxHeight: 320, objectFit: "cover", display: "block" }} controls autoPlay playsInline />
+              ) : (
+                <img src={selectedAd.imageUrl} alt={selectedAd.businessName} style={{ width: "100%", maxHeight: 320, objectFit: "cover", display: "block" }} />
+              )}
+              <div style={{ position: "absolute", top: 10, right: 10, background: "#FFD700", borderRadius: 20, padding: "4px 12px", fontSize: 11, fontWeight: 700, color: "#333", display: "flex", alignItems: "center", gap: 4 }}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="#333"><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/></svg>
+                Promoted
+              </div>
+            </div>
+            <div style={{ padding: 18 }}>
+              <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>{selectedAd.title || selectedAd.businessName}</div>
+              {selectedAd.description && <div style={{ color: C.greyDark, fontSize: 14, lineHeight: 1.5, marginBottom: 16 }}>{selectedAd.description}</div>}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, padding: 12, background: C.grey, borderRadius: 12 }}>
+                <div style={{ width: 40, height: 40, borderRadius: "50%", background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, color: C.primary, flexShrink: 0 }}>
+                  {(selectedAd.businessName || "?").charAt(0).toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{selectedAd.businessName}</div>
+                  <div style={{ fontSize: 12, color: C.greyDark }}>Posted this ad</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button style={{ ...S.btn("outline"), flex: 1 }}
+                  onClick={() => {
+                    setSelectedAd(null);
+                    setViewingPublicProfile && setViewingPublicProfile({ uid: selectedAd.userId, displayName: selectedAd.businessName });
+                    setPage && setPage("publicProfile");
+                  }}>
+                  👤 View Profile
+                </button>
+                <button style={{ ...S.btn(), flex: 1 }}
+                  onClick={() => {
+                    setSelectedAd(null);
+                    setChatSeller && setChatSeller({ id: selectedAd.userId, name: selectedAd.businessName, productName: selectedAd.title });
+                    setPage && setPage("messages");
+                  }}>
+                  💬 Chat
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -1557,161 +1833,113 @@ function PremiumCarousel({ products, setSelectedProduct, setPage }) {
 
 
 // ── Home Page ──────────────────────────────────────────────────
-// ── Promoted Image Carousel ───────────────────────────────────
-function PromotedImageCarousel({ ads }) {
-  const [idx, setIdx] = useState(0);
-  const timerRef = useRef(null);
-
-  useEffect(() => {
-    if (ads.length <= 1) return;
-    timerRef.current = setInterval(() => setIdx(prev => (prev + 1) % ads.length), 3500);
-    return () => clearInterval(timerRef.current);
-  }, [ads.length]);
-
-  if (!ads.length) return null;
-  const ad = ads[idx];
-
+// ── Product Card Skeleton (loading shimmer) ─────────────────────
+function ProductCardSkeleton() {
   return (
-    <div style={{ marginBottom: 20, borderRadius: 16, overflow: "hidden", position: "relative", height: 160, cursor: "pointer" }}>
-      <img src={ad.imageUrl} alt={ad.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(transparent 30%, rgba(0,0,0,0.65) 100%)" }} />
-      <div style={{ position: "absolute", bottom: 12, left: 14, right: 40 }}>
-        <div style={{ color: "white", fontWeight: 800, fontSize: 15, marginBottom: 2 }}>{ad.title || ad.businessName}</div>
-        {ad.description && <div style={{ color: "rgba(255,255,255,0.85)", fontSize: 12 }}>{ad.description}</div>}
-      </div>
-      {/* Dot indicators */}
-      {ads.length > 1 && (
-        <div style={{ position: "absolute", bottom: 12, right: 12, display: "flex", gap: 4 }}>
-          {ads.map((_, i) => (
-            <div key={i} onClick={() => setIdx(i)}
-              style={{ width: i === idx ? 16 : 6, height: 6, borderRadius: 3, background: i === idx ? "white" : "rgba(255,255,255,0.4)", transition: "width 0.3s", cursor: "pointer" }} />
-          ))}
-        </div>
-      )}
-      {/* Promoted badge */}
-      <div style={{ position: "absolute", top: 10, left: 10, background: "#FFD700", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 800, color: "#333" }}>
-        ⭐ Promoted
+    <div style={{ ...S.card, overflow: "hidden" }}>
+      <div className="skeleton-shimmer" style={{ height: 110, background: C.greyMid }} />
+      <div style={{ padding: 10 }}>
+        <div className="skeleton-shimmer" style={{ height: 13, width: "80%", borderRadius: 4, background: C.greyMid, marginBottom: 8 }} />
+        <div className="skeleton-shimmer" style={{ height: 11, width: "50%", borderRadius: 4, background: C.greyMid, marginBottom: 8 }} />
+        <div className="skeleton-shimmer" style={{ height: 14, width: "40%", borderRadius: 4, background: C.greyMid }} />
       </div>
     </div>
   );
 }
 
-// ── Shoppable Video Card ───────────────────────────────────────
-function ShoppableVideoCard({ ad, onPlay }) {
-  return (
-    <div style={{ minWidth: 150, width: 150, borderRadius: 14, overflow: "hidden", background: "#111", flexShrink: 0, cursor: "pointer", position: "relative" }}
-      onClick={() => onPlay(ad)}>
-      {/* Thumbnail */}
-      <div style={{ height: 220, position: "relative", background: "#222" }}>
-        {ad.thumbnail || ad.adThumbnail || ad.imageUrl ? (
-          <img src={ad.thumbnail || ad.adThumbnail || ad.imageUrl} alt={ad.title}
-            style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        ) : (
-          <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.3)" strokeWidth="1.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          </div>
-        )}
-        {/* Dark overlay */}
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(transparent 40%, rgba(0,0,0,0.75) 100%)" }} />
-        {/* Play button */}
-        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -60%)", width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.25)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-        </div>
-        {/* Title */}
-        <div style={{ position: "absolute", bottom: 36, left: 8, right: 8 }}>
-          <div style={{ color: "white", fontWeight: 800, fontSize: 12, lineHeight: 1.3 }}>{ad.title || ad.adTitle || ad.businessName}</div>
-        </div>
-        {/* Shop Now button */}
-        <div style={{ position: "absolute", bottom: 8, left: 8, right: 8 }}>
-          <div style={{ background: C.primary, color: "white", borderRadius: 8, padding: "5px 0", textAlign: "center", fontSize: 11, fontWeight: 800 }}>Shop Now</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Video Player Bottom Sheet ──────────────────────────────────
-function VideoPlayerSheet({ ad, onClose, setPage, setViewingPublicProfile }) {
-  if (!ad) return null;
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 500, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
-      onClick={onClose}>
-      <div style={{ background: C.white, borderRadius: "20px 20px 0 0", width: "100%", maxWidth: 480, maxHeight: "88vh", overflow: "hidden", display: "flex", flexDirection: "column" }}
-        onClick={e => e.stopPropagation()}>
-        {/* Drag handle */}
-        <div style={{ width: 36, height: 4, background: C.border, borderRadius: 2, margin: "12px auto 0" }} />
-        {/* Video player */}
-        <div style={{ background: "#000", position: "relative" }}>
-          {ad.mediaUrl || ad.adMediaUrl ? (
-            <video src={ad.mediaUrl || ad.adMediaUrl} controls style={{ width: "100%", maxHeight: 240, objectFit: "contain", display: "block" }} />
-          ) : (
-            <img src={ad.imageUrl} alt={ad.title} style={{ width: "100%", height: 200, objectFit: "cover", display: "block" }} />
-          )}
-        </div>
-        {/* Info */}
-        <div style={{ padding: "16px 20px", overflowY: "auto", flex: 1 }}>
-          <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 6 }}>{ad.title || ad.adTitle}</div>
-          <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 14, lineHeight: 1.5 }}>{ad.description || ad.adDescription}</div>
-          {/* Vendor info */}
-          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderTop: `1px solid ${C.border}`, borderBottom: `1px solid ${C.border}`, marginBottom: 14 }}>
-            <div style={{ width: 44, height: 44, borderRadius: "50%", background: C.grey, overflow: "hidden", flexShrink: 0 }}>
-              {ad.sellerPhoto ? <img src={ad.sellerPhoto} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>🏪</div>}
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 15 }}>{ad.sellerName || ad.businessName}</div>
-              <div style={{ color: C.greyDark, fontSize: 12 }}>Seller</div>
-            </div>
-            <button style={{ ...S.btn("outline"), padding: "8px 14px", fontSize: 12 }}
-              onClick={() => { onClose(); if (setViewingPublicProfile && ad.sellerId) { setViewingPublicProfile({ uid: ad.sellerId, displayName: ad.sellerName, photoURL: ad.sellerPhoto }); setPage("publicProfile"); } }}>
-              View Profile
-            </button>
-          </div>
-          {/* Action buttons */}
-          <div style={{ display: "flex", gap: 10 }}>
-            <button style={{ ...S.btn(), flex: 1, padding: 12 }}
-              onClick={() => { onClose(); if (ad.sellerId) { /* trigger chat */ } }}>
-              💬 Chat Seller
-            </button>
-            <button style={{ ...S.btn("outline"), flex: 1, padding: 12 }} onClick={onClose}>Close</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPublicProfile }) {
+function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPublicProfile, setChatSeller }) {
   const [products, setProducts] = useState([]);
   const [activeCategory, setActiveCategory] = useState("All");
   const [search, setSearch] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [cartMsg, setCartMsg] = useState(false);
   const [loading, setLoading] = useState(true);
-  // Separate image ads and video ads
-  const [imageAds, setImageAds] = useState([]);
-  const [videoAds, setVideoAds] = useState([]);
-  const [playingVideo, setPlayingVideo] = useState(null);
+  const [showSearchPanel, setShowSearchPanel] = useState(false);
+  const [searchHistory, setSearchHistory] = useState([]);
+  const [trendingSearches, setTrendingSearches] = useState([]);
 
-  const fetchProducts = async () => {
-    setLoading(true);
-    const [prodSnap, adSnap] = await Promise.all([
-      getDocs(query(collection(db, "products"), orderBy("createdAt", "desc"))),
-      getDocs(query(collection(db, "ads"), where("status", "==", "approved"))),
-    ]);
-    setProducts(prodSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted));
-    const ads = adSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    setImageAds(ads.filter(a => a.adType === "image" || !a.adType));
-    setVideoAds(ads.filter(a => a.adType === "video"));
+  const fetchProducts = async (isBackground = false) => {
+    if (!isBackground) setLoading(true);
+    try {
+      const snap = await getDocs(query(collection(db, "products"), orderBy("createdAt", "desc")));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted);
+      setProducts(list);
+      try { localStorage.setItem("econnect-products-cache", JSON.stringify({ data: list, cachedAt: Date.now() })); } catch (e) {}
+    } catch (e) { console.error("Failed to fetch products:", e); }
     setLoading(false);
   };
 
-  useEffect(() => { fetchProducts(); }, []);
+  useEffect(() => {
+    // Load cached products instantly for fast first paint
+    try {
+      const cached = JSON.parse(localStorage.getItem("econnect-products-cache") || "null");
+      if (cached?.data?.length) {
+        setProducts(cached.data);
+        setLoading(false);
+        // Refresh in the background
+        fetchProducts(true);
+        return;
+      }
+    } catch (e) {}
+    fetchProducts();
+  }, []);
+
+  // Load search history from localStorage
+  useEffect(() => {
+    try {
+      const hist = JSON.parse(localStorage.getItem("econnect-search-history") || "[]");
+      setSearchHistory(hist);
+    } catch (e) {}
+    // Load trending searches from Firestore
+    getDocs(query(collection(db, "searchQueries"), orderBy("count", "desc"), limit(8)))
+      .then(snap => setTrendingSearches(snap.docs.map(d => ({ id: d.id, ...d.data() }))))
+      .catch(() => {});
+  }, []);
+
+
+  const saveSearchTerm = async (term) => {
+    const t = term.trim();
+    if (!t) return;
+    // Update local history (max 8, no duplicates, most recent first)
+    const updated = [t, ...searchHistory.filter(h => h.toLowerCase() !== t.toLowerCase())].slice(0, 8);
+    setSearchHistory(updated);
+    try { localStorage.setItem("econnect-search-history", JSON.stringify(updated)); } catch (e) {}
+    // Increment global trending counter
+    const key = t.toLowerCase();
+    try {
+      const ref = doc(db, "searchQueries", key);
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        await setDoc(ref, { term: t, count: (snap.data().count || 0) + 1, updatedAt: serverTimestamp() }, { merge: true });
+      } else {
+        await setDoc(ref, { term: t, count: 1, updatedAt: serverTimestamp() });
+      }
+    } catch (e) {}
+  };
+
+  const removeSearchHistoryItem = (term) => {
+    const updated = searchHistory.filter(h => h !== term);
+    setSearchHistory(updated);
+    try { localStorage.setItem("econnect-search-history", JSON.stringify(updated)); } catch (e) {}
+  };
+
+  const clearSearchHistory = () => {
+    setSearchHistory([]);
+    try { localStorage.removeItem("econnect-search-history"); } catch (e) {}
+  };
+
+  const applySearch = (term) => {
+    setSearch(term);
+    setShowSearchPanel(false);
+    saveSearchTerm(term);
+  };
 
   const filtered = products.filter(p => {
     const matchCat = activeCategory === "All" || p.category === activeCategory;
     const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
     return matchCat && matchSearch;
   });
+
 
   const addToCart = (p) => {
     setCart(prev => { const ex = prev.find(i => i.id === p.id); if (ex) return prev.map(i => i.id === p.id ? { ...i, qty: i.qty + 1 } : i); return [...prev, { ...p, qty: 1 }]; });
@@ -1722,27 +1950,62 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
     <div style={S.page}>
       {cartMsg && <div style={{ position: "fixed", top: 70, right: 20, background: C.success, color: "white", borderRadius: 10, padding: "10px 18px", zIndex: 200, fontWeight: 700, fontSize: 13 }}>✅ Added to cart!</div>}
 
-      {/* Video Player Bottom Sheet */}
-      {playingVideo && (
-        <VideoPlayerSheet
-          ad={playingVideo}
-          onClose={() => setPlayingVideo(null)}
-          setPage={setPage}
-          setViewingPublicProfile={setViewingPublicProfile}
-        />
-      )}
-
-      {/* Search Bar */}
       <div style={{ position: "relative", marginBottom: 16 }}>
         <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", fontSize: 16 }}>🔍</span>
-        <input style={{ ...S.input, paddingLeft: 38 }} placeholder="Search products..." value={search} onChange={e => setSearch(e.target.value)} />
+        <input
+          style={{ ...S.input, paddingLeft: 38 }}
+          placeholder="Search products..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          onFocus={() => setShowSearchPanel(true)}
+          onBlur={() => setTimeout(() => setShowSearchPanel(false), 150)}
+          onKeyDown={e => { if (e.key === "Enter" && search.trim()) { saveSearchTerm(search); setShowSearchPanel(false); } }}
+        />
+        {search && (
+          <button style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", fontSize: 16, color: C.greyDark, cursor: "pointer" }}
+            onClick={() => setSearch("")}>✕</button>
+        )}
+
+        {/* Search History & Trending Panel */}
+        {showSearchPanel && (searchHistory.length > 0 || trendingSearches.length > 0) && (
+          <div style={{ position: "absolute", top: "100%", left: 0, right: 0, marginTop: 6, background: C.white, borderRadius: 12, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", zIndex: 50, padding: 14, maxHeight: 320, overflowY: "auto" }}>
+            {searchHistory.length > 0 && (
+              <div style={{ marginBottom: trendingSearches.length > 0 ? 14 : 0 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: C.greyDark }}>🕐 Recent Searches</span>
+                  <span style={{ fontSize: 12, color: C.primary, cursor: "pointer", fontWeight: 600 }} onMouseDown={e => { e.preventDefault(); clearSearchHistory(); }}>Clear</span>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {searchHistory.map(term => (
+                    <div key={term} style={{ display: "flex", alignItems: "center", gap: 6, background: C.grey, borderRadius: 20, padding: "6px 10px 6px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+                      onMouseDown={e => { e.preventDefault(); applySearch(term); }}>
+                      {term}
+                      <span style={{ color: C.greyDark, fontSize: 13, lineHeight: 1 }} onMouseDown={e => { e.preventDefault(); e.stopPropagation(); removeSearchHistoryItem(term); }}>✕</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {trendingSearches.length > 0 && (
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13, color: C.greyDark, marginBottom: 8 }}>🔥 Trending Searches</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {trendingSearches.map(t => (
+                    <div key={t.id} style={{ background: `${C.primary}12`, color: C.primary, borderRadius: 20, padding: "6px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}
+                      onMouseDown={e => { e.preventDefault(); applySearch(t.term); }}>
+                      {t.term}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {/* Stories */}
       <StoriesBar user={user} setPage={setPage} setViewingPublicProfile={setViewingPublicProfile} />
 
-      {/* 1. WELCOME BANNER */}
-      <div style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})`, borderRadius: 14, padding: "18px 20px", marginBottom: 20, color: "white", position: "relative", overflow: "hidden" }}>
+      <div style={{ background: `linear-gradient(135deg, ${C.primary}, ${C.primaryDark})`, borderRadius: 14, padding: "18px 20px", marginBottom: 16, color: "white", position: "relative", overflow: "hidden" }}>
         <div style={{ position: "absolute", right: -20, top: -20, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.1)" }} />
         <div style={{ fontSize: 11, fontWeight: 700, opacity: 0.8, marginBottom: 4, textTransform: "uppercase", letterSpacing: 1 }}>Welcome to E-Connect</div>
         <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>Ghana's Social Commerce Platform</div>
@@ -1750,10 +2013,8 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
         <button style={{ background: "white", color: C.primary, border: "none", borderRadius: 8, padding: "8px 18px", fontWeight: 700, fontSize: 13, cursor: "pointer" }} onClick={() => setPage("discover")}>Discover Sellers</button>
       </div>
 
-      {/* 2. PROMOTED IMAGE CAROUSEL — image ads only, no videos */}
-      {imageAds.length > 0 && <PromotedImageCarousel ads={imageAds} />}
+      <ApprovedAdsBanner setViewingPublicProfile={setViewingPublicProfile} setPage={setPage} setChatSeller={setChatSeller} />
 
-      {/* 3. CATEGORY PILLS */}
       <div style={{ display: "flex", gap: 8, overflowX: "auto", marginBottom: 20, paddingBottom: 4 }}>
         {CATEGORIES.map(cat => (
           <button key={cat} style={{ ...S.btn(activeCategory === cat ? "primary" : "grey"), padding: "8px 16px", whiteSpace: "nowrap", flexShrink: 0 }}
@@ -1761,12 +2022,12 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
         ))}
       </div>
 
-      {/* 4. PREMIUM STORES — large auto-flipping banner */}
+      {/* ── TIER 1: PREMIUM (Large Banner) ── */}
       {filtered.some(p => p.sellerPremium) && (
         <PremiumCarousel products={filtered.filter(p => p.sellerPremium)} setSelectedProduct={setSelectedProduct} setPage={setPage} />
       )}
 
-      {/* VERIFIED STORES — medium horizontal scroll */}
+      {/* ── TIER 2: VERIFIED (Medium Cards horizontal scroll) ── */}
       {filtered.some(p => p.sellerVerified && !p.sellerPremium) && (
         <div style={{ marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
@@ -1796,22 +2057,9 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
         </div>
       )}
 
-      {/* 5. TRENDING SHOPPABLE VIDEOS — video ads only, no autoplay */}
-      {videoAds.length > 0 && (
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <span style={{ fontSize: 18 }}>🎬</span>
-            <span style={{ fontWeight: 800, fontSize: 16 }}>Trending Shoppable Videos</span>
-          </div>
-          <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8 }}>
-            {videoAds.map(ad => (
-              <ShoppableVideoCard key={ad.id} ad={ad} onPlay={setPlayingVideo} />
-            ))}
-          </div>
-        </div>
-      )}
 
-      {/* TRENDING PRODUCTS — small cards grid */}
+
+      {/* ── TIER 3: NEW/TRENDING (Small Cards) ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <TrendingBadge />
@@ -1822,7 +2070,29 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
       </div>
 
       {loading ? (
-        <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading products...</div>
+        <>
+          <style>{`
+            .skeleton-shimmer {
+              position: relative;
+              overflow: hidden;
+              background-color: ${C.greyMid};
+            }
+            .skeleton-shimmer::after {
+              content: "";
+              position: absolute;
+              top: 0; left: 0; right: 0; bottom: 0;
+              background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
+              animation: shimmer 1.4s infinite;
+            }
+            @keyframes shimmer {
+              0% { transform: translateX(-100%); }
+              100% { transform: translateX(100%); }
+            }
+          `}</style>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
+            {Array.from({ length: 6 }).map((_, i) => <ProductCardSkeleton key={i} />)}
+          </div>
+        </>
       ) : filtered.filter(p => !p.sellerPremium && !p.sellerVerified).length === 0 ? (
         <div style={{ textAlign: "center", padding: 40 }}>
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
@@ -1846,7 +2116,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
                       onClick={async (e) => {
                         e.stopPropagation();
                         await setDoc(doc(db, "productLikes", p.id + "_" + (user?.uid || "guest")), { productId: p.id, userId: user?.uid, createdAt: serverTimestamp() }, { merge: true });
-                      if (p.sellerId && p.sellerId !== user?.uid) await sendNotification(p.sellerId, "like", `${user?.displayName || "Someone"} liked your product "${p.name}"`, user?.displayName);
+                      if (p.sellerId && p.sellerId !== user?.uid) await sendNotification(p.sellerId, "like", `${user?.displayName || "Someone"} liked your product "${p.name}"`, user?.displayName, { productId: p.id, fromUserId: user?.uid || null });
                       }}>
                       ♥ Like
                     </button>
@@ -1895,6 +2165,12 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
     getDoc(doc(db, "users", product.sellerId)).then(d => {
       if (d.exists()) setSellerData(d.data());
     }).catch(() => {});
+    // Track recently viewed in localStorage (most recent first, max 20, no duplicates)
+    try {
+      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
+      const updated = [product.id, ...rv.filter(id => id !== product.id)].slice(0, 20);
+      localStorage.setItem("econnect-recently-viewed", JSON.stringify(updated));
+    } catch (e) {}
   }, [product?.id]);
 
   // Attach sellerData to product for rendering
@@ -1917,7 +2193,9 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
       <button style={{ ...S.btn("grey"), marginBottom: 16, color: C.text }} onClick={() => setPage("home")}>← Back</button>
       <div style={S.card}>
         <div style={{ height: 260, overflow: "hidden", borderRadius: "14px 14px 0 0", background: C.grey }}>
-          {product.image ? <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
+          {product.images && product.images.length > 1
+            ? <ProductImageCarousel images={product.images} height={260} autoRotate={false} />
+            : product.image ? <img src={product.image} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
         </div>
         <div style={{ padding: 20 }}>
           <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 4 }}>{product.category}</div>
@@ -2614,9 +2892,27 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     if (diff < -60 && currentIndex > 0) setCurrentIndex(p => p - 1);
   };
 
+  const handleDeleteReel = async (reel) => {
+    if (!user || reel.userId !== user.uid) return;
+    if (!window.confirm("Delete this reel? This cannot be undone.")) return;
+    try {
+      await setDoc(doc(db, "reels", reel.id), { deleted: true, deletedAt: serverTimestamp() }, { merge: true });
+      setReels(prev => {
+        const updated = prev.filter(r => r.id !== reel.id);
+        // Adjust current index if needed so we don't go out of bounds
+        if (currentIndex >= updated.length && updated.length > 0) {
+          setCurrentIndex(updated.length - 1);
+        }
+        return updated;
+      });
+    } catch (err) {
+      console.error("Failed to delete reel:", err);
+      alert("Failed to delete reel. Please try again.");
+    }
+  };
+
   const handleLike = async (reel) => {
     if (!user) return;
-    const isLiked = liked[reel.id];
     setLiked(prev => ({ ...prev, [reel.id]: !isLiked }));
     setReels(prev => prev.map(r => r.id === reel.id ? { ...r, likes: (r.likes || 0) + (isLiked ? -1 : 1) } : r));
     // Save full user info permanently in reelLikes subcollection
@@ -2634,7 +2930,7 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     }
     await setDoc(doc(db, "reels", reel.id), { likes: (reel.likes || 0) + (isLiked ? -1 : 1) }, { merge: true });
     if (!isLiked && reel.userId && reel.userId !== user?.uid) {
-      await sendNotification(reel.userId, "like", `❤️ ${user.displayName || "Someone"} liked your reel`, user.displayName);
+      await sendNotification(reel.userId, "like", `❤️ ${user.displayName || "Someone"} liked your reel`, user.displayName, { fromUserId: user.uid, reelId: reel.id });
     }
   };
 
@@ -2649,13 +2945,23 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     setShowLikes(true);
   };
 
+  const [followProcessing, setFollowProcessing] = useState({});
+
   const handleFollow = async (reel) => {
-    if (!user) return;
+    if (!user || followProcessing[reel.userId]) return;
+    setFollowProcessing(prev => ({ ...prev, [reel.userId]: true }));
     const isF = following[reel.userId];
     setFollowing(prev => ({ ...prev, [reel.userId]: !isF }));
-    if (!isF) {
-      await setDoc(doc(db, "users", user.uid, "following", reel.userId), { name: reel.userName, followedAt: serverTimestamp() });
-      await setDoc(doc(db, "users", reel.userId, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
+    try {
+      if (!isF) {
+        await setDoc(doc(db, "users", user.uid, "following", reel.userId), { name: reel.userName, followedAt: serverTimestamp(), unfollowed: false });
+        await setDoc(doc(db, "users", reel.userId, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
+        await sendNotification(reel.userId, "follow", `${user.displayName || "Someone"} started following you`, user.displayName, { fromUserId: user.uid });
+      } else {
+        await setDoc(doc(db, "users", user.uid, "following", reel.userId), { unfollowed: true }, { merge: true });
+      }
+    } finally {
+      setFollowProcessing(prev => ({ ...prev, [reel.userId]: false }));
     }
   };
 
@@ -2669,6 +2975,18 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     const snap = await getDocs(query(collection(db, "reels", reelId, "comments"), orderBy("createdAt")));
     setComments(snap.docs.map(d => ({ id: d.id, ...d.data() })));
   };
+
+  // Load existing follow state for current user on mount
+  useEffect(() => {
+    if (!user || reels.length === 0) return;
+    const uniqueUserIds = [...new Set(reels.map(r => r.userId).filter(id => id && id !== user.uid))];
+    uniqueUserIds.forEach(async uid => {
+      const followSnap = await getDoc(doc(db, "users", user.uid, "following", uid)).catch(() => null);
+      if (followSnap?.exists() && !followSnap.data().unfollowed) {
+        setFollowing(prev => ({ ...prev, [uid]: true }));
+      }
+    });
+  }, [reels.length, user?.uid]);
 
   // Load existing likes for current user on mount
   useEffect(() => {
@@ -2697,7 +3015,7 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     await setDoc(doc(db, "reels", reelId), { comments: (reels.find(r => r.id === reelId)?.comments || 0) + 1 }, { merge: true });
     const reelData = reels.find(r => r.id === reelId);
     if (reelData?.userId && reelData.userId !== user.uid) {
-      await sendNotification(reelData.userId, "comment", `💬 ${user.displayName || "Someone"} commented on your reel: "${commentText.slice(0, 40)}"`, user.displayName);
+      await sendNotification(reelData.userId, "comment", `💬 ${user.displayName || "Someone"} commented on your reel: "${commentText.slice(0, 40)}"`, user.displayName, { fromUserId: user.uid, reelId: reelId });
     }
   };
 
@@ -2842,7 +3160,10 @@ function ReelsPage({ user, setPage, setViewingUser }) {
 
       {/* Comments Panel */}
       {showComments && (
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(15,15,15,0.97)", borderRadius: "20px 20px 0 0", maxHeight: "55vh", zIndex: 20, display: "flex", flexDirection: "column" }}>
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(15,15,15,0.97)", borderRadius: "20px 20px 0 0", height: "65vh", maxHeight: "65vh", zIndex: 20, display: "flex", flexDirection: "column" }}>
+          <div style={{ display: "flex", justifyContent: "center", padding: "8px 0 0" }}>
+            <div style={{ width: 36, height: 4, borderRadius: 2, background: "rgba(255,255,255,0.25)" }} />
+          </div>
           <div style={{ padding: "14px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ color: "white", fontWeight: 700, fontSize: 15 }}>Comments · {reel.comments || 0}</span>
             <button style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", fontSize: 18, cursor: "pointer" }} onClick={() => setShowComments(false)}>✕</button>
@@ -2927,6 +3248,19 @@ function Messages({ user, chatSeller, onChatStarted }) {
   const [newChat, setNewChat] = useState(false);
   const [recipientEmail, setRecipientEmail] = useState("");
   const [loadingChat, setLoadingChat] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [uploadingVoice, setUploadingVoice] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordTimerRef = useRef(null);
+  const playingAudioRef = useRef(null);
+  const [playingId, setPlayingId] = useState(null);
+  const [contextMenuMsg, setContextMenuMsg] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [forwardingMsg, setForwardingMsg] = useState(null);
+  const [copyToast, setCopyToast] = useState(false);
+  const longPressTimer = useRef(null);
 
   useEffect(() => {
     if (!user) return;
@@ -2934,17 +3268,35 @@ function Messages({ user, chatSeller, onChatStarted }) {
     const unsub = onSnapshot(q, snap => {
       const convos = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       setConversations(convos);
-      // Auto-open chat with seller if coming from product page
+      // Auto-open chat with seller if coming from product page or order page
       if (chatSeller && !loadingChat) {
         setLoadingChat(true);
-        const existing = convos.find(c => c.participants?.includes(chatSeller.id) && c.participants?.includes(user.uid));
+        // If we have a direct conversationId (from a notification click), open it directly
+        if (chatSeller.conversationId) {
+          const direct = convos.find(c => c.id === chatSeller.conversationId);
+          if (direct) {
+            setSelected(direct);
+          } else {
+            getDoc(doc(db, "conversations", chatSeller.conversationId)).then(d => {
+              if (d.exists()) setSelected({ id: d.id, ...d.data() });
+            });
+          }
+          onChatStarted && onChatStarted();
+          return;
+        }
+        let existing;
+        if (chatSeller.orderId) {
+          existing = convos.find(c => c.orderId === chatSeller.orderId && c.participants?.includes(chatSeller.id) && c.participants?.includes(user.uid));
+        } else {
+          existing = convos.find(c => c.participants?.includes(chatSeller.id) && c.participants?.includes(user.uid) && !c.orderId);
+        }
         if (existing) {
           setSelected(existing);
           if (chatSeller.productName && !existing.lastMessage) {
             // Send automatic first message
             addDoc(collection(db, "conversations", existing.id, "messages"), {
               text: `Hi! I have a question about "${chatSeller.productName}". Is it still available?`,
-              senderId: user.uid, senderName: user.displayName, createdAt: serverTimestamp(),
+              senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp(),
             });
             setDoc(doc(db, "conversations", existing.id), { lastMessage: `Hi! I have a question about "${chatSeller.productName}".`, lastMessageAt: serverTimestamp() }, { merge: true });
           }
@@ -2958,24 +3310,29 @@ function Messages({ user, chatSeller, onChatStarted }) {
   }, [user, chatSeller]);
 
   const startSellerChat = async (seller, existingConvos) => {
-    const existing = existingConvos?.find(c => c.participants?.includes(seller.id));
+    const existing = seller.orderId
+      ? existingConvos?.find(c => c.orderId === seller.orderId && c.participants?.includes(seller.id))
+      : existingConvos?.find(c => c.participants?.includes(seller.id) && !c.orderId);
     if (existing) { setSelected(existing); onChatStarted && onChatStarted(); return; }
     const convoRef = await addDoc(collection(db, "conversations"), {
       participants: [user.uid, seller.id],
       participantNames: [user.displayName, seller.name],
-      lastMessage: seller.productName ? `Hi! About "${seller.productName}"` : "Hello!",
+      lastMessage: seller.orderId ? `Order chat started` : (seller.productName ? `Hi! About "${seller.productName}"` : "Hello!"),
       lastMessageAt: serverTimestamp(),
       productId: seller.productId || null,
       productName: seller.productName || null,
+      orderId: seller.orderId || null,
     });
-    const firstMsg = seller.productName
-      ? `Hi! I have a question about "${seller.productName}". Is it still available?`
-      : "Hello!";
+    const firstMsg = seller.orderId
+      ? `Hi! I'd like to discuss my order${seller.productName ? ` for "${seller.productName}"` : ""}.`
+      : seller.productName
+        ? `Hi! I have a question about "${seller.productName}". Is it still available?`
+        : "Hello!";
     await addDoc(collection(db, "conversations", convoRef.id, "messages"), {
-      text: firstMsg, senderId: user.uid, senderName: user.displayName, createdAt: serverTimestamp(),
+      text: firstMsg, senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp(),
     });
-    await sendNotification(seller.id, "comment", `💬 ${user.displayName} wants to ask about "${seller.productName || "your product"}"`, user.displayName);
-    setSelected({ id: convoRef.id, participants: [user.uid, seller.id], participantNames: [user.displayName, seller.name], productName: seller.productName });
+    await sendNotification(seller.id, "message", `💬 ${user.displayName} sent you a message${seller.orderId ? " about an order" : ""}`, user.displayName, { fromUserId: user.uid, conversationId: convoRef.id });
+    setSelected({ id: convoRef.id, participants: [user.uid, seller.id], participantNames: [user.displayName, seller.name], productName: seller.productName, orderId: seller.orderId || null });
     onChatStarted && onChatStarted();
   };
 
@@ -2990,14 +3347,160 @@ function Messages({ user, chatSeller, onChatStarted }) {
 
   const sendMessage = async () => {
     if (!newMsg.trim() || !selected) return;
-    await addDoc(collection(db, "conversations", selected.id, "messages"), {
-      text: newMsg, senderId: user.uid, senderName: user.displayName, createdAt: serverTimestamp()
-    });
+    const text = newMsg;
     setNewMsg("");
+    const msgData = {
+      text, senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp()
+    };
+    if (replyingTo) {
+      msgData.replyTo = {
+        id: replyingTo.id,
+        text: replyingTo.type === "audio" ? "🎤 Voice message" : (replyingTo.text || ""),
+        senderName: replyingTo.senderId === user.uid ? "You" : (selected.participantNames?.find(n => n !== user.displayName) || "them"),
+      };
+      setReplyingTo(null);
+    }
+    await addDoc(collection(db, "conversations", selected.id, "messages"), msgData);
+    await setDoc(doc(db, "conversations", selected.id), { lastMessage: text, lastMessageAt: serverTimestamp() }, { merge: true });
+    // Notify the other participant
+    const recipientId = selected.participants?.find(id => id !== user.uid);
+    if (recipientId) {
+      await sendNotification(recipientId, "message", `💬 ${user.displayName || "Someone"}: ${text.length > 40 ? text.slice(0, 40) + "…" : text}`, user.displayName, { fromUserId: user.uid, conversationId: selected.id });
+    }
+  };
+
+  const copyMessage = (msg) => {
+    if (msg.type === "audio") return;
+    navigator.clipboard?.writeText(msg.text || "");
+    setCopyToast(true);
+    setTimeout(() => setCopyToast(false), 1500);
+    setContextMenuMsg(null);
+  };
+
+  const deleteMessage = async (msg) => {
+    if (!selected) return;
+    if (!window.confirm("Delete this message?")) return;
+    await setDoc(doc(db, "conversations", selected.id, "messages", msg.id), { deleted: true, text: "", audioUrl: null }, { merge: true });
+    setContextMenuMsg(null);
+  };
+
+  const startReply = (msg) => {
+    setReplyingTo(msg);
+    setContextMenuMsg(null);
+  };
+
+  const forwardMessage = async (targetConvo) => {
+    if (!forwardingMsg) return;
+    const msgData = {
+      senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp(),
+      forwarded: true,
+    };
+    if (forwardingMsg.type === "audio") {
+      msgData.type = "audio";
+      msgData.audioUrl = forwardingMsg.audioUrl;
+      msgData.audioDuration = forwardingMsg.audioDuration;
+    } else {
+      msgData.text = forwardingMsg.text || "";
+    }
+    await addDoc(collection(db, "conversations", targetConvo.id, "messages"), msgData);
+    await setDoc(doc(db, "conversations", targetConvo.id), { lastMessage: forwardingMsg.type === "audio" ? "🎤 Voice message (forwarded)" : forwardingMsg.text, lastMessageAt: serverTimestamp() }, { merge: true });
+    const recipientId = targetConvo.participants?.find(id => id !== user.uid);
+    if (recipientId) {
+      await sendNotification(recipientId, "message", `💬 ${user.displayName || "Someone"} forwarded a message`, user.displayName, { fromUserId: user.uid, conversationId: targetConvo.id });
+    }
+    setForwardingMsg(null);
+    setContextMenuMsg(null);
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
+      const recorder = new MediaRecorder(stream, { mimeType });
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      recorder.onstop = () => {
+        stream.getTracks().forEach(t => t.stop());
+        clearInterval(recordTimerRef.current);
+        const blob = new Blob(audioChunksRef.current, { type: mimeType });
+        if (recordSeconds >= 1) uploadVoiceMessage(blob, mimeType);
+        setRecordSeconds(0);
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+      setRecordSeconds(0);
+      recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+    } catch (err) {
+      console.error("Mic access error:", err);
+      alert("Couldn't access microphone. Please allow microphone permission and try again.");
+    }
+  };
+
+  const stopRecording = (cancel) => {
+    if (!mediaRecorderRef.current) return;
+    if (cancel) audioChunksRef.current = [];
+    mediaRecorderRef.current.stop();
+    setIsRecording(false);
+  };
+
+  const uploadVoiceMessage = async (blob, mimeType) => {
+    if (!selected) return;
+    setUploadingVoice(true);
+    try {
+      const ext = mimeType.includes("webm") ? "webm" : "m4a";
+      const data = new FormData();
+      data.append("file", blob, `voice.${ext}`);
+      data.append("upload_preset", "Econnect");
+      data.append("cloud_name", "dxmmsq0gq");
+      const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/video/upload", { method: "POST", body: data });
+      const result = await res.json();
+      if (result.secure_url) {
+        const duration = result.duration ? Math.round(result.duration) : recordSeconds;
+        await addDoc(collection(db, "conversations", selected.id, "messages"), {
+          audioUrl: result.secure_url, audioDuration: duration, type: "audio",
+          senderId: user.uid, senderName: user.displayName, senderPhoto: user.photoURL || "", createdAt: serverTimestamp(),
+        });
+        await setDoc(doc(db, "conversations", selected.id), { lastMessage: "🎤 Voice message", lastMessageAt: serverTimestamp() }, { merge: true });
+        const recipientId = selected.participants?.find(id => id !== user.uid);
+        if (recipientId) {
+          await sendNotification(recipientId, "message", `🎤 ${user.displayName || "Someone"} sent a voice message`, user.displayName, { fromUserId: user.uid, conversationId: selected.id });
+        }
+      }
+    } catch (err) { console.error("Voice upload error:", err); alert("Failed to send voice message. Please try again."); }
+    setUploadingVoice(false);
+  };
+
+  const toggleAudioPlayback = (msg) => {
+    if (playingId === msg.id) {
+      playingAudioRef.current?.pause();
+      setPlayingId(null);
+      return;
+    }
+    playingAudioRef.current?.pause();
+    const audio = new Audio(msg.audioUrl);
+    audio.play().catch(() => {});
+    audio.onended = () => setPlayingId(null);
+    playingAudioRef.current = audio;
+    setPlayingId(msg.id);
+  };
+
+  const formatDuration = (sec) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
+
+  const handlePressStart = (msg) => {
+    longPressTimer.current = setTimeout(() => setContextMenuMsg(msg), 450);
+  };
+  const handlePressEnd = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
   };
 
   return (
     <div style={S.page}>
+      <style>{`@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }`}</style>
       {!selected ? (
         <>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
@@ -3012,9 +3515,12 @@ function Messages({ user, chatSeller, onChatStarted }) {
           ) : conversations.map(c => (
             <div key={c.id} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 12, marginBottom: 8, cursor: "pointer" }} onClick={() => setSelected(c)}>
               <div style={{ ...S.avatar(48), background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700 }}>{c.participantNames?.filter(n => n !== user.displayName).join(", ") || "Chat"}</div>
-                <div style={{ color: C.greyDark, fontSize: 13 }}>{c.lastMessage || "No messages yet"}</div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                  {c.participantNames?.filter(n => n !== user.displayName).join(", ") || "Chat"}
+                  {c.orderId && <span style={{ background: `${C.primary}15`, color: C.primary, fontSize: 10, fontWeight: 700, borderRadius: 8, padding: "2px 6px" }}>🛒 Order</span>}
+                </div>
+                <div style={{ color: C.greyDark, fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.lastMessage || "No messages yet"}</div>
               </div>
             </div>
           ))}
@@ -3023,18 +3529,160 @@ function Messages({ user, chatSeller, onChatStarted }) {
         <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 140px)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
             <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 20 }} onClick={() => setSelected(null)}>←</button>
-            <span style={{ fontWeight: 700 }}>{selected.participantNames?.filter(n => n !== user.displayName).join(", ")}</span>
+            <div>
+              <span style={{ fontWeight: 700 }}>{selected.participantNames?.filter(n => n !== user.displayName).join(", ")}</span>
+              {selected.orderId && <div style={{ fontSize: 11, color: C.primary, fontWeight: 700 }}>🛒 About order {selected.orderId.slice(0, 6)}…{selected.productName ? ` · ${selected.productName}` : ""}</div>}
+            </div>
           </div>
           <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
             {messages.map(m => (
               <div key={m.id} style={{ display: "flex", justifyContent: m.senderId === user.uid ? "flex-end" : "flex-start" }}>
-                <div style={{ background: m.senderId === user.uid ? C.primary : C.grey, color: m.senderId === user.uid ? "white" : C.text, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", fontSize: 13 }}>{m.text}</div>
+                {m.deleted ? (
+                  <div style={{ background: C.grey, color: C.greyDark, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", fontSize: 12, fontStyle: "italic" }}>🚫 This message was deleted</div>
+                ) : m.type === "audio" ? (
+                  <div style={{ background: m.senderId === user.uid ? C.primary : C.grey, color: m.senderId === user.uid ? "white" : C.text, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", userSelect: "none", cursor: "pointer" }}
+                    onMouseDown={() => handlePressStart(m)} onMouseUp={handlePressEnd} onMouseLeave={handlePressEnd}
+                    onTouchStart={() => handlePressStart(m)} onTouchEnd={handlePressEnd}>
+                    {m.forwarded && <div style={{ fontSize: 10, opacity: 0.7, marginBottom: 4, fontStyle: "italic" }}>↪ Forwarded</div>}
+                    {m.replyTo && (
+                      <div style={{ background: "rgba(255,255,255,0.15)", borderLeft: "3px solid currentColor", borderRadius: 6, padding: "4px 8px", marginBottom: 6, fontSize: 11, opacity: 0.85 }}>
+                        <div style={{ fontWeight: 700 }}>{m.replyTo.senderName}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.replyTo.text}</div>
+                      </div>
+                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 160 }}>
+                      <button style={{ background: "rgba(255,255,255,0.25)", border: "none", borderRadius: "50%", width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "inherit", fontSize: 14, flexShrink: 0 }}
+                        onClick={(e) => { e.stopPropagation(); toggleAudioPlayback(m); }}>
+                        {playingId === m.id ? "⏸" : "▶"}
+                      </button>
+                      <div style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.3)", borderRadius: 2, position: "relative" }}>
+                        <div style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: playingId === m.id ? "100%" : "0%", background: "currentColor", borderRadius: 2, transition: playingId === m.id ? `width ${m.audioDuration || 1}s linear` : "none" }} />
+                      </div>
+                      <span style={{ fontSize: 11, fontWeight: 600, flexShrink: 0 }}>🎤 {formatDuration(m.audioDuration || 0)}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ background: m.senderId === user.uid ? C.primary : C.grey, color: m.senderId === user.uid ? "white" : C.text, borderRadius: 14, padding: "10px 14px", maxWidth: "70%", fontSize: 13, userSelect: "none", cursor: "pointer" }}
+                    onMouseDown={() => handlePressStart(m)} onMouseUp={handlePressEnd} onMouseLeave={handlePressEnd}
+                    onTouchStart={() => handlePressStart(m)} onTouchEnd={handlePressEnd}>
+                    {m.forwarded && <div style={{ fontSize: 10, opacity: 0.7, marginBottom: 4, fontStyle: "italic" }}>↪ Forwarded</div>}
+                    {m.replyTo && (
+                      <div style={{ background: "rgba(255,255,255,0.15)", borderLeft: "3px solid currentColor", borderRadius: 6, padding: "4px 8px", marginBottom: 6, fontSize: 11, opacity: 0.85 }}>
+                        <div style={{ fontWeight: 700 }}>{m.replyTo.senderName}</div>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.replyTo.text}</div>
+                      </div>
+                    )}
+                    {m.text}
+                  </div>
+                )}
               </div>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 10 }}>
-            <input style={{ ...S.input, flex: 1 }} placeholder="Type a message..." value={newMsg} onChange={e => setNewMsg(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMessage()} />
-            <button style={{ ...S.btn(), padding: "10px 18px" }} onClick={sendMessage}>Send</button>
+
+          {/* Reply preview bar */}
+          {replyingTo && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.grey, borderRadius: 10, padding: "8px 12px", marginBottom: 8 }}>
+              <div style={{ flex: 1, borderLeft: `3px solid ${C.primary}`, paddingLeft: 8, minWidth: 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.primary }}>Replying to {replyingTo.senderId === user.uid ? "yourself" : selected.participantNames?.find(n => n !== user.displayName)}</div>
+                <div style={{ fontSize: 12, color: C.greyDark, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{replyingTo.type === "audio" ? "🎤 Voice message" : replyingTo.text}</div>
+              </div>
+              <button style={{ background: "none", border: "none", fontSize: 16, color: C.greyDark, cursor: "pointer" }} onClick={() => setReplyingTo(null)}>✕</button>
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            {isRecording ? (
+              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 10, background: C.grey, borderRadius: 24, padding: "8px 14px" }}>
+                <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#EF4444", animation: "pulse 1s infinite" }} />
+                <span style={{ fontSize: 13, fontWeight: 700, flex: 1 }}>Recording... {formatDuration(recordSeconds)}</span>
+                <button style={{ background: "none", border: "none", color: C.greyDark, fontWeight: 700, fontSize: 13, cursor: "pointer" }} onClick={() => stopRecording(true)}>Cancel</button>
+                <button style={{ background: C.primary, border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, fontSize: 14, cursor: "pointer" }} onClick={() => stopRecording(false)}>✓</button>
+              </div>
+            ) : (
+              <>
+                <input style={{ ...S.input, flex: 1 }} placeholder="Type a message..." value={newMsg} onChange={e => setNewMsg(e.target.value)} onKeyDown={e => e.key === "Enter" && sendMessage()} />
+                {newMsg.trim() ? (
+                  <button style={{ ...S.btn(), padding: "10px 18px" }} onClick={sendMessage}>Send</button>
+                ) : (
+                  <button style={{ ...S.btn(), padding: "10px 14px", opacity: uploadingVoice ? 0.6 : 1 }} disabled={uploadingVoice} onClick={startRecording}>
+                    {uploadingVoice ? "..." : "🎤"}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Copy toast */}
+      {copyToast && (
+        <div style={{ position: "fixed", bottom: 90, left: "50%", transform: "translateX(-50%)", background: "rgba(20,20,20,0.9)", color: "white", borderRadius: 20, padding: "8px 18px", fontSize: 13, fontWeight: 600, zIndex: 500 }}>
+          ✓ Copied to clipboard
+        </div>
+      )}
+
+      {/* Message context menu (Reply / Forward / Copy / Delete) */}
+      {contextMenuMsg && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+          onClick={() => setContextMenuMsg(null)}>
+          <div style={{ background: C.white, borderRadius: "16px 16px 0 0", width: "100%", maxWidth: 480, paddingBottom: 20 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}>
+              <div style={{ width: 36, height: 4, borderRadius: 2, background: C.greyMid }} />
+            </div>
+            {!contextMenuMsg.deleted && (
+              <div style={{ padding: "0 14px 10px", color: C.greyDark, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {contextMenuMsg.type === "audio" ? "🎤 Voice message" : contextMenuMsg.text}
+              </div>
+            )}
+            {!contextMenuMsg.deleted && (
+              <>
+                <button style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "14px 18px", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", gap: 12, cursor: "pointer", borderTop: `1px solid ${C.border}` }}
+                  onClick={() => startReply(contextMenuMsg)}>
+                  ↩️ Reply
+                </button>
+                <button style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "14px 18px", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", gap: 12, cursor: "pointer", borderTop: `1px solid ${C.border}` }}
+                  onClick={() => { setForwardingMsg(contextMenuMsg); setContextMenuMsg(null); }}>
+                  ↪️ Forward
+                </button>
+                {contextMenuMsg.type !== "audio" && (
+                  <button style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "14px 18px", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", gap: 12, cursor: "pointer", borderTop: `1px solid ${C.border}` }}
+                    onClick={() => copyMessage(contextMenuMsg)}>
+                    📋 Copy
+                  </button>
+                )}
+              </>
+            )}
+            {contextMenuMsg.senderId === user.uid && !contextMenuMsg.deleted && (
+              <button style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "14px 18px", fontSize: 15, fontWeight: 600, display: "flex", alignItems: "center", gap: 12, cursor: "pointer", borderTop: `1px solid ${C.border}`, color: "#EF4444" }}
+                onClick={() => deleteMessage(contextMenuMsg)}>
+                🗑️ Delete
+              </button>
+            )}
+            <button style={{ width: "100%", textAlign: "left", background: "none", border: "none", padding: "14px 18px", fontSize: 15, fontWeight: 600, cursor: "pointer", borderTop: `1px solid ${C.border}`, color: C.greyDark }}
+              onClick={() => setContextMenuMsg(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Forward picker modal */}
+      {forwardingMsg && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 400, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
+          onClick={() => setForwardingMsg(null)}>
+          <div style={{ background: C.white, borderRadius: "16px 16px 0 0", width: "100%", maxWidth: 480, maxHeight: "70vh", overflowY: "auto", paddingBottom: 20 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "center", padding: "10px 0" }}>
+              <div style={{ width: 36, height: 4, borderRadius: 2, background: C.greyMid }} />
+            </div>
+            <div style={{ padding: "0 18px 14px", fontWeight: 800, fontSize: 16 }}>Forward to...</div>
+            {conversations.length === 0 ? (
+              <div style={{ padding: "0 18px 18px", color: C.greyDark, fontSize: 13 }}>No conversations to forward to.</div>
+            ) : conversations.map(c => (
+              <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 18px", cursor: "pointer" }} onClick={() => forwardMessage(c)}>
+                <div style={{ ...S.avatar(40), background: `${C.primary}15`, display: "flex", alignItems: "center", justifyContent: "center" }}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={C.primary} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{c.participantNames?.filter(n => n !== user.displayName).join(", ") || "Chat"}</div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -3042,17 +3690,15 @@ function Messages({ user, chatSeller, onChatStarted }) {
   );
 }
 
-// ── Profile ────────────────────────────────────────────────────
-
 // ── Public Profile Page ─────────────────────────────────────────
-function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct }) {
+function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct, previousPage }) {
   const [profile, setProfile] = useState(null);
   const [products, setProducts] = useState([]);
   const [isFollowing, setIsFollowing] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!profileUser?.uid) return;
+    if (!profileUser?.uid) { setLoading(false); return; }
     getDoc(doc(db, "users", profileUser.uid)).then(d => {
       if (d.exists()) setProfile({ uid: profileUser.uid, ...d.data() });
       setLoading(false);
@@ -3062,6 +3708,15 @@ function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct }
     });
     if (currentUser) {
       getDoc(doc(db, "users", currentUser.uid, "following", profileUser.uid)).then(d => setIsFollowing(d.exists()));
+      // Record this profile view (only if viewing someone else's profile)
+      if (currentUser.uid !== profileUser.uid) {
+        setDoc(doc(db, "users", profileUser.uid, "profileViews", currentUser.uid), {
+          uid: currentUser.uid,
+          name: currentUser.displayName || "User",
+          photoURL: currentUser.photoURL || "",
+          viewedAt: serverTimestamp(),
+        }).catch(() => {});
+      }
     }
   }, [profileUser?.uid]);
 
@@ -3072,19 +3727,32 @@ function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct }
       setIsFollowing(false);
     } else {
       await setDoc(doc(db, "users", currentUser.uid, "following", profileUser.uid), { name: profile?.name || profileUser.displayName, followedAt: serverTimestamp() });
-      await sendNotification(profileUser.uid, "follow", `${currentUser.displayName} started following you`, currentUser.displayName);
+      await sendNotification(profileUser.uid, "follow", `${currentUser.displayName} started following you`, currentUser.displayName, { fromUserId: currentUser.uid });
       setIsFollowing(true);
     }
   };
 
   if (loading) return <div style={{ textAlign: "center", padding: 60, color: C.greyDark }}>Loading...</div>;
-  if (!profile) return <div style={{ textAlign: "center", padding: 60, color: C.greyDark }}>User not found.</div>;
+  if (!profileUser?.uid || !profile) {
+    return (
+      <div style={S.page}>
+        <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage(previousPage || "home")}>
+          ← Back
+        </button>
+        <div style={{ textAlign: "center", padding: 60 }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>👤</div>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Profile not available</div>
+          <div style={{ color: C.greyDark, fontSize: 13 }}>{profileUser?.displayName ? `We couldn't load ${profileUser.displayName}'s profile.` : "We couldn't load this profile."}</div>
+        </div>
+      </div>
+    );
+  }
 
   const photoURL = profile.photoURL || profileUser?.photoURL || "";
 
   return (
     <div style={S.page}>
-      <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage("reels")}>
+      <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage(previousPage || "home")}>
         ← Back
       </button>
       <div style={{ ...S.card, padding: 20, marginBottom: 16, textAlign: "center" }}>
@@ -3285,7 +3953,191 @@ function SellerAnalytics({ user }) {
 }
 
 
-// ── Wallet Page ────────────────────────────────────────────────
+// ── Profile Views Page ──────────────────────────────────────────
+// ── Recently Viewed Page (TikTok-style history) ─────────────────
+function RecentlyViewedPage({ setPage, setSelectedProduct }) {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
+      if (rv.length === 0) { setItems([]); setLoading(false); return; }
+      const results = await Promise.all(rv.map(async id => {
+        try {
+          const snap = await getDoc(doc(db, "products", id));
+          return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+        } catch (e) { return null; }
+      }));
+      setItems(results.filter(p => p && !p.deleted));
+    } catch (e) {}
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const clearHistory = () => {
+    try { localStorage.removeItem("econnect-recently-viewed"); } catch (e) {}
+    setItems([]);
+  };
+
+  const removeItem = (id) => {
+    try {
+      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
+      const updated = rv.filter(x => x !== id);
+      localStorage.setItem("econnect-recently-viewed", JSON.stringify(updated));
+    } catch (e) {}
+    setItems(prev => prev.filter(p => p.id !== id));
+  };
+
+  return (
+    <div style={S.page}>
+      <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage("profile")}>
+        ← Back
+      </button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <div style={S.sectionTitle}>Recently Viewed</div>
+        {items.length > 0 && (
+          <span style={{ fontSize: 13, color: C.primary, fontWeight: 700, cursor: "pointer" }} onClick={clearHistory}>Clear All</span>
+        )}
+      </div>
+      <p style={S.sectionSub}>Products you've recently looked at</p>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading...</div>
+      ) : items.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 60 }}>
+          <div style={{ fontSize: 56, marginBottom: 12 }}>🕐</div>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>No viewing history yet</div>
+          <div style={{ color: C.greyDark, fontSize: 13 }}>Products you view will show up here so you can find them again easily.</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 80 }}>
+          {items.map(p => (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer" }}
+              onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+              <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
+                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                <div style={{ color: C.primary, fontWeight: 800, fontSize: 14 }}>GH₵{p.price}</div>
+                {p.seller && <div style={{ fontSize: 12, color: C.greyDark }}>{p.seller}</div>}
+              </div>
+              <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: C.greyDark, padding: 6 }}
+                onClick={(e) => { e.stopPropagation(); removeItem(p.id); }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ── Profile Views Page ──────────────────────────────────────────
+function ProfileViewsPage({ user, setPage, setViewingPublicProfile }) {
+  const [views, setViews] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [following, setFollowing] = useState({});
+  const [nudged, setNudged] = useState({});
+
+  useEffect(() => {
+    if (!user) return;
+    const load = async () => {
+      setLoading(true);
+      const snap = await getDocs(query(collection(db, "users", user.uid, "profileViews"), orderBy("viewedAt", "desc")));
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setViews(list);
+      // Check following status for each viewer
+      const followMap = {};
+      await Promise.all(list.map(async v => {
+        const fDoc = await getDoc(doc(db, "users", user.uid, "following", v.uid)).catch(() => null);
+        followMap[v.uid] = fDoc?.exists() && !fDoc.data().unfollowed;
+      }));
+      setFollowing(followMap);
+      setLoading(false);
+    };
+    load();
+  }, [user]);
+
+  const toggleFollow = async (viewer) => {
+    if (!user) return;
+    const isF = following[viewer.uid];
+    setFollowing(prev => ({ ...prev, [viewer.uid]: !isF }));
+    if (!isF) {
+      await setDoc(doc(db, "users", user.uid, "following", viewer.uid), { name: viewer.name, followedAt: serverTimestamp(), unfollowed: false });
+      await setDoc(doc(db, "users", viewer.uid, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
+      await sendNotification(viewer.uid, "follow", `${user.displayName || "Someone"} started following you`, user.displayName, { fromUserId: user.uid });
+    } else {
+      await setDoc(doc(db, "users", user.uid, "following", viewer.uid), { unfollowed: true }, { merge: true });
+    }
+  };
+
+  const nudge = async (viewer) => {
+    setNudged(prev => ({ ...prev, [viewer.uid]: true }));
+    await sendNotification(viewer.uid, "nudge", `👋 ${user.displayName || "Someone"} nudged you — check out their profile!`, user.displayName, { fromUserId: user.uid });
+  };
+
+  const getTimeAgo = (ts) => {
+    if (!ts) return "";
+    const now = Date.now();
+    const time = ts.toMillis ? ts.toMillis() : new Date(ts).getTime();
+    const diff = Math.floor((now - time) / 60000);
+    if (diff < 60) return `${diff}m ago`;
+    if (diff < 1440) return `${Math.floor(diff / 60)}h ago`;
+    return `${Math.floor(diff / 1440)}d ago`;
+  };
+
+  return (
+    <div style={S.page}>
+      <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage("profile")}>
+        ← Back
+      </button>
+      <div style={S.sectionTitle}>Profile Views</div>
+      <p style={S.sectionSub}>{views.length} {views.length === 1 ? "person" : "people"} viewed your profile</p>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>Loading...</div>
+      ) : views.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 60 }}>
+          <div style={{ fontSize: 56, marginBottom: 12 }}>👁️</div>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>No profile views yet</div>
+          <div style={{ color: C.greyDark, fontSize: 13 }}>When someone views your profile, they'll show up here.</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 80 }}>
+          {views.map(v => (
+            <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer" }}
+              onClick={() => setViewingPublicProfile && setViewingPublicProfile({ uid: v.uid, displayName: v.name, photoURL: v.photoURL })}>
+              <div style={{ width: 50, height: 50, borderRadius: "50%", overflow: "hidden", background: C.grey, flexShrink: 0, border: `2px solid ${C.border}` }}>
+                {v.photoURL ? <img src={v.photoURL} alt={v.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.name}</div>
+                {v.viewedAt && <div style={{ fontSize: 12, color: C.greyDark }}>Viewed {getTimeAgo(v.viewedAt)}</div>}
+              </div>
+              {following[v.uid] ? (
+                <button style={{ ...S.btn("grey"), padding: "8px 18px", fontSize: 13, fontWeight: 700, borderRadius: 20 }}
+                  onClick={(e) => { e.stopPropagation(); toggleFollow(v); }}>Following</button>
+              ) : nudged[v.uid] ? (
+                <button style={{ ...S.btn("grey"), padding: "8px 18px", fontSize: 13, fontWeight: 700, borderRadius: 20 }} disabled>👋 Nudged</button>
+              ) : (
+                <button style={{ ...S.btn(), padding: "8px 18px", fontSize: 13, fontWeight: 700, borderRadius: 20 }}
+                  onClick={(e) => { e.stopPropagation(); toggleFollow(v); }}>Follow</button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+
+// ── Profile ────────────────────────────────────────────────────
 function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [profile, setProfile] = useState(null);
   const [orders, setOrders] = useState([]);
@@ -3301,6 +4153,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
   const [storeSaved, setStoreSaved] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [profileViewsCount, setProfileViewsCount] = useState(0);
 
   useEffect(() => {
     if (!user) return;
@@ -3329,6 +4182,7 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
     getDocs(collection(db, "users", user.uid, "followers")).then(snap => setFollowers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users", user.uid, "following")).then(snap => setFollowing(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users", user.uid, "friends")).then(snap => setFriends(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(collection(db, "users", user.uid, "profileViews")).then(snap => setProfileViewsCount(snap.size));
   }, [user]);
 
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -3416,8 +4270,8 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
             </div>
             <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8 }}>{user?.email}</div>
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              {[{ num: myProducts.length, label: "Products" }, { num: orders.length, label: "Orders" }, { num: followers.length, label: "Followers" }, { num: following.length, label: "Following" }, { num: friends.length, label: "Friends" }].map(s => (
-                <div key={s.label} style={{ textAlign: "center" }}>
+              {[{ num: myProducts.length, label: "Products" }, { num: orders.length, label: "Orders" }, { num: followers.length, label: "Followers" }, { num: following.length, label: "Following" }, { num: friends.length, label: "Friends" }, { num: profileViewsCount, label: "Profile Views", action: () => setPage("profileViews") }, { num: "🕐", label: "History", action: () => setPage("recentlyViewed") }].map(s => (
+                <div key={s.label} style={{ textAlign: "center", cursor: s.action ? "pointer" : "default" }} onClick={s.action}>
                   <div style={{ fontWeight: 800, color: C.primary }}>{s.num}</div>
                   <div style={{ fontSize: 11, color: C.greyDark }}>{s.label}</div>
                 </div>
@@ -4088,7 +4942,7 @@ function Discover({ setPage, setSelectedProduct, user }) {
       newFollowing[sellerId] = true;
       await setDoc(doc(db, "users", user.uid, "following", sellerId), { name: sellerName, followedAt: serverTimestamp() });
       await setDoc(doc(db, "users", sellerId, "followers", user.uid), { name: user.displayName, followedAt: serverTimestamp() });
-      await sendNotification(sellerId, "follow", `${user.displayName || "Someone"} started following you`, user.displayName);
+      await sendNotification(sellerId, "follow", `${user.displayName || "Someone"} started following you`, user.displayName, { fromUserId: user.uid });
     }
     setFollowing(newFollowing);
   };
@@ -4112,6 +4966,7 @@ function Discover({ setPage, setSelectedProduct, user }) {
 
   return (
     <div style={S.page}>
+      <ApprovedAdsBanner />
       <div style={S.sectionTitle}>Discover</div>
       <p style={S.sectionSub}>Find products, sellers and connect with people</p>
       <div style={{ position: "relative", marginBottom: 16 }}>
@@ -4233,6 +5088,7 @@ export default function App() {
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [chatSeller, setChatSeller] = useState(null);
   const [viewingPublicProfile, setViewingPublicProfile] = useState(null);
+  const [previousPage, setPreviousPage] = useState("home");
   const [currentUserPhoto, setCurrentUserPhoto] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
   const [theme, setTheme] = useState(() => {
@@ -4336,23 +5192,36 @@ export default function App() {
     { id: "cart", label: "Cart", badge: cart.length },
   ];
 
+  const goToPublicProfile = (u) => {
+    if (!u || !u.uid) {
+      // No identifying info available - let the user know instead of silently doing nothing
+      alert("This profile isn't available.");
+      return;
+    }
+    setPreviousPage(page);
+    setViewingPublicProfile(u);
+    setPage("publicProfile");
+  };
+
   const renderPage = () => {
     switch (page) {
-      case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={setViewingPublicProfile} />;
+      case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
       case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} user={user} />;
       case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
-      case "reels": return <ReelsPage user={user} setPage={setPage} setViewingUser={(u) => { setViewingPublicProfile(u); setPage("publicProfile"); }} />;
+      case "reels": return <ReelsPage user={user} setPage={setPage} setViewingUser={goToPublicProfile} />;
       case "live": return <LivePage user={user} setPage={setPage} setCart={setCart} />;
-      case "notifications": return <NotificationsPage user={user} />;
-      case "orders": return <OrderTrackingPage user={user} />;
+      case "notifications": return <NotificationsPage user={user} setPage={setPage} setChatSeller={setChatSeller} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} />;
+      case "orders": return <OrderTrackingPage user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "location": return <LocationPage user={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "messages": return <Messages user={user} chatSeller={chatSeller} onChatStarted={() => setChatSeller(null)} />;
       case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
+      case "profileViews": return <ProfileViewsPage user={user} setPage={setPage} setViewingPublicProfile={goToPublicProfile} />;
+      case "recentlyViewed": return <RecentlyViewedPage setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "analytics": return <SellerAnalytics user={user} />;
-      case "publicProfile": return <PublicProfile profileUser={viewingPublicProfile} currentUser={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
-      case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
-      default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
+      case "publicProfile": return <PublicProfile profileUser={viewingPublicProfile} currentUser={user} setPage={setPage} setSelectedProduct={setSelectedProduct} previousPage={previousPage} />;
+      case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
+      default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
     }
   };
 
