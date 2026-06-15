@@ -2260,6 +2260,10 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
   const [reviews, setReviews] = useState([]);
   const [submitted, setSubmitted] = useState(false);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
+  // Tracked separately from currentImageIndex per spec, but kept in sync
+  // by default: tapping a dot/thumbnail/variant chip updates both, so the
+  // "variant" the buyer sees always matches the image they're looking at.
+  const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
 
   useEffect(() => {
     if (!product) return;
@@ -2289,10 +2293,19 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
     } catch (e) {}
   }, [product?.id]);
 
-  // Reset to the first image whenever a different product is opened
+  // Reset to the first image/variant whenever a different product is opened
   useEffect(() => {
     setCurrentImageIndex(0);
+    setSelectedVariantIndex(0);
   }, [product?.id]);
+
+  // Helper: update both the carousel position AND the selected variant
+  // together, so swiping the carousel, tapping a thumbnail, or tapping a
+  // dot all keep the variant picker in sync (and vice versa).
+  const selectImageAndVariant = (i) => {
+    setCurrentImageIndex(i);
+    setSelectedVariantIndex(i);
+  };
 
   // Attach sellerData to product for rendering
   const productWithSeller = { ...product, sellerData };
@@ -2313,16 +2326,18 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
     const cartItem = {
       ...product,
       qty: 1,
-      // ── DATA STATE RETENTION: remember exactly which photo/variant
-      // the buyer was viewing when they tapped Add to Cart. ──
+      // ── DATA STATE RETENTION: capture the exact image AND variant the
+      // buyer had selected at the moment they tapped Add to Cart. ──
+      currentImageIndex,
+      selectedVariantIndex,
       selectedImageIndex: currentImageIndex,
       selectedImage: productImages[currentImageIndex] || product.image,
-      selectedVariant: variantLabels[currentImageIndex] || null,
+      selectedVariant: variantLabels[selectedVariantIndex] || null,
     };
     setCart(prev => {
       // Treat different variants of the same product as distinct cart lines
-      const ex = prev.find(i => i.id === product.id && i.selectedImageIndex === currentImageIndex);
-      if (ex) return prev.map(i => (i.id === product.id && i.selectedImageIndex === currentImageIndex) ? { ...i, qty: i.qty + 1 } : i);
+      const ex = prev.find(i => i.id === product.id && i.selectedVariantIndex === selectedVariantIndex);
+      if (ex) return prev.map(i => (i.id === product.id && i.selectedVariantIndex === selectedVariantIndex) ? { ...i, qty: i.qty + 1 } : i);
       return [...prev, cartItem];
     });
     setPage("cart");
@@ -2341,7 +2356,7 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
       <div style={S.card}>
         <div style={{ height: 260, overflow: "hidden", borderRadius: "14px 14px 0 0", background: C.grey }}>
           {productImages.length > 1
-            ? <ProductImageCarousel images={productImages} height={260} autoRotate={false} activeIndex={currentImageIndex} onIndexChange={setCurrentImageIndex} />
+            ? <ProductImageCarousel images={productImages} height={260} autoRotate={false} activeIndex={currentImageIndex} onIndexChange={selectImageAndVariant} />
             : productImages[0] ? <img src={productImages[0]} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
         </div>
 
@@ -2349,7 +2364,7 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
         {productImages.length > 1 && (
           <div style={{ display: "flex", gap: 8, padding: "10px 14px 0", overflowX: "auto" }}>
             {productImages.map((img, i) => (
-              <div key={i} onClick={() => setCurrentImageIndex(i)}
+              <div key={i} onClick={() => selectImageAndVariant(i)}
                 style={{ width: 52, height: 52, borderRadius: 8, overflow: "hidden", flexShrink: 0, cursor: "pointer", border: i === currentImageIndex ? `2px solid ${C.primary}` : `2px solid transparent`, opacity: i === currentImageIndex ? 1 : 0.6, transition: "opacity 0.2s, border-color 0.2s" }}>
                 <img src={img} alt={`Photo ${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
               </div>
@@ -2388,16 +2403,16 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
           {productImages.length > 1 && (
             <div style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: C.greyDark, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                Selected: {variantLabels[currentImageIndex]}
+                Selected: {variantLabels[selectedVariantIndex]}
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 {variantLabels.map((label, i) => (
-                  <button key={i} onClick={() => setCurrentImageIndex(i)}
+                  <button key={i} onClick={() => selectImageAndVariant(i)}
                     style={{
                       padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: "pointer",
-                      border: i === currentImageIndex ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
-                      background: i === currentImageIndex ? `${C.primary}12` : C.white,
-                      color: i === currentImageIndex ? C.primary : C.text,
+                      border: i === selectedVariantIndex ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+                      background: i === selectedVariantIndex ? `${C.primary}12` : C.white,
+                      color: i === selectedVariantIndex ? C.primary : C.text,
                     }}>
                     {label}
                   </button>
@@ -2496,7 +2511,7 @@ function Cart({ cart, setCart, setPage, user }) {
         <>
           {cart.map((item, idx) => {
             const displayImage = item.selectedImage || item.image;
-            const cartKey = `${item.id}-${item.selectedImageIndex ?? 0}-${idx}`;
+            const cartKey = `${item.id}-${item.selectedVariantIndex ?? 0}-${idx}`;
             return (
               <div key={cartKey} style={{ ...S.card, padding: 14, display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
                 <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
@@ -2508,7 +2523,7 @@ function Cart({ cart, setCart, setPage, user }) {
                   <div style={{ color: C.primary, fontWeight: 800 }}>GH₵{item.price} × {item.qty}</div>
                 </div>
                 <button style={{ background: "none", border: "none", color: C.error, cursor: "pointer", fontSize: 20 }}
-                  onClick={() => setCart(prev => prev.filter((i, iIdx) => !(i.id === item.id && (i.selectedImageIndex ?? 0) === (item.selectedImageIndex ?? 0) && iIdx === idx)))}>✕</button>
+                  onClick={() => setCart(prev => prev.filter((i, iIdx) => !(i.id === item.id && (i.selectedVariantIndex ?? 0) === (item.selectedVariantIndex ?? 0) && iIdx === idx)))}>✕</button>
               </div>
             );
           })}
@@ -3927,6 +3942,8 @@ function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct, 
   const [products, setProducts] = useState([]);
   const [isFollowing, setIsFollowing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [uploadingCover, setUploadingCover] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   useEffect(() => {
     if (!profileUser?.uid) { setLoading(false); return; }
@@ -3963,6 +3980,31 @@ function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct, 
     }
   };
 
+  // ── DYNAMIC IMAGE UPLOADS: banner (cover) and profile picture ──
+  // Only the store owner can edit their own storefront images.
+  const isOwner = currentUser?.uid === profileUser?.uid;
+
+  const uploadStoreImage = async (file, field, setUploadingFlag) => {
+    if (!file) return;
+    setUploadingFlag(true);
+    try {
+      const data = new FormData();
+      data.append("file", file);
+      data.append("upload_preset", "Econnect");
+      data.append("cloud_name", "dxmmsq0gq");
+      const res = await fetch("https://api.cloudinary.com/v1_1/dxmmsq0gq/image/upload", { method: "POST", body: data });
+      const result = await res.json();
+      if (result.secure_url) {
+        await setDoc(doc(db, "users", currentUser.uid), { [field]: result.secure_url }, { merge: true });
+        setProfile(prev => ({ ...prev, [field]: result.secure_url }));
+      }
+    } catch (err) {
+      console.error(`Failed to upload ${field}:`, err);
+      alert("Upload failed. Please try again.");
+    }
+    setUploadingFlag(false);
+  };
+
   if (loading) return <div style={{ textAlign: "center", padding: 60, color: C.greyDark }}>Loading...</div>;
   if (!profileUser?.uid || !profile) {
     return (
@@ -3986,10 +4028,46 @@ function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct, 
       <button style={{ background: "none", border: "none", cursor: "pointer", marginBottom: 16, display: "flex", alignItems: "center", gap: 6, color: C.primary, fontWeight: 700 }} onClick={() => setPage(previousPage || "home")}>
         ← Back
       </button>
-      <div style={{ ...S.card, padding: 20, marginBottom: 16, textAlign: "center" }}>
-        <div style={{ width: 80, height: 80, borderRadius: "50%", overflow: "hidden", background: C.grey, margin: "0 auto 12px", border: `3px solid ${C.primary}` }}>
-          {photoURL ? <img src={photoURL} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>👤</div>}
+      {/* ── HEADER: wide banner (≈16:9) with overlapping circular profile picture ── */}
+      <div style={{ position: "relative", marginBottom: 56 }}>
+        {/* Background banner */}
+        <div style={{ width: "100%", aspectRatio: "16 / 9", maxHeight: 220, borderRadius: 14, overflow: "hidden", background: `linear-gradient(135deg, ${C.primary}22, ${C.primaryDark}33)`, position: "relative" }}>
+          {profile.coverUrl
+            ? <img src={profile.coverUrl} alt="Store banner" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 40, color: `${C.primary}55` }}>🏪</div>}
+
+          {/* Camera/edit icon for banner (owner only) */}
+          {isOwner && (
+            <>
+              <label htmlFor="storeBannerInput" style={{ position: "absolute", top: 10, right: 10, width: 34, height: 34, borderRadius: "50%", background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                {uploadingCover ? <span style={{ fontSize: 11, color: "white" }}>...</span> : <span style={{ fontSize: 16 }}>📷</span>}
+              </label>
+              <input id="storeBannerInput" type="file" accept="image/*" style={{ display: "none" }}
+                onChange={e => uploadStoreImage(e.target.files[0], "coverUrl", setUploadingCover)} />
+            </>
+          )}
         </div>
+
+        {/* Circular profile picture, overlapping bottom-left of the banner */}
+        <div style={{ position: "absolute", left: 16, bottom: -40, width: 88, height: 88, borderRadius: "50%", border: `4px solid ${C.white}`, background: C.grey, overflow: "hidden", boxShadow: "0 2px 8px rgba(0,0,0,0.15)" }}>
+          {photoURL
+            ? <img src={photoURL} alt={profile.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+            : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32 }}>👤</div>}
+
+          {/* Camera/edit icon for profile picture (owner only) */}
+          {isOwner && (
+            <>
+              <label htmlFor="storeAvatarInput" style={{ position: "absolute", bottom: 0, right: 0, width: 26, height: 26, borderRadius: "50%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", border: `2px solid ${C.white}` }}>
+                {uploadingAvatar ? <span style={{ fontSize: 9, color: "white" }}>...</span> : <span style={{ fontSize: 12 }}>📷</span>}
+              </label>
+              <input id="storeAvatarInput" type="file" accept="image/*" style={{ display: "none" }}
+                onChange={e => uploadStoreImage(e.target.files[0], "photoURL", setUploadingAvatar)} />
+            </>
+          )}
+        </div>
+      </div>
+
+      <div style={{ ...S.card, padding: 20, marginBottom: 16, textAlign: "center" }}>
         <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>{profile.name || profileUser.displayName}</div>
         {profile.bio && <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 12 }}>{profile.bio}</div>}
         {profile.isSeller && profile.businessName && (
@@ -4369,7 +4447,7 @@ function ProfileViewsPage({ user, setPage, setViewingPublicProfile }) {
 
 
 // ── Profile ────────────────────────────────────────────────────
-function Profile({ user, setPage, setUser, theme, setTheme }) {
+function Profile({ user, setPage, setUser, theme, setTheme, setViewingPublicProfile }) {
   const [profile, setProfile] = useState(null);
   const [orders, setOrders] = useState([]);
   const [tab, setTab] = useState("orders");
@@ -4527,6 +4605,10 @@ function Profile({ user, setPage, setUser, theme, setTheme }) {
           </button>
           <button style={{ ...S.btn("outline"), padding: "12px 10px", fontSize: 13, fontWeight: 700, borderRadius: 12 }} onClick={() => setPage("analytics")}>
             📊 Analytics
+          </button>
+          <button style={{ ...S.btn("outline"), padding: "12px 10px", fontSize: 13, fontWeight: 700, borderRadius: 12 }}
+            onClick={() => setViewingPublicProfile && setViewingPublicProfile({ uid: user.uid, displayName: user.displayName, photoURL: user.photoURL })}>
+            👁️ View Storefront
           </button>
         </div>
       </div>
@@ -5465,7 +5547,7 @@ export default function App() {
       case "orders": return <OrderTrackingPage user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "location": return <LocationPage user={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "messages": return <Messages user={user} chatSeller={chatSeller} onChatStarted={() => setChatSeller(null)} />;
-      case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} />;
+      case "profile": return <Profile user={user} setPage={setPage} setUser={setUser} theme={theme} setTheme={setTheme} setViewingPublicProfile={goToPublicProfile} />;
       case "profileViews": return <ProfileViewsPage user={user} setPage={setPage} setViewingPublicProfile={goToPublicProfile} />;
       case "recentlyViewed": return <RecentlyViewedPage setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "analytics": return <SellerAnalytics user={user} />;
