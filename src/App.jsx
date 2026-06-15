@@ -383,11 +383,27 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
   const [musicSearching, setMusicSearching] = useState(false);
   const [musicError, setMusicError] = useState(null);
   const [selectedMusicPreview, setSelectedMusicPreview] = useState(null);
+  const [selectedSongMeta, setSelectedSongMeta] = useState(null);
   const [progress, setProgress] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const [previewingTrackId, setPreviewingTrackId] = useState(null);
   const progressRef = useRef(null);
   const audioRef = useRef(null);
   const videoRef = useRef(null);
+  const previewAudioRef = useRef(null);
+  const previewTimeoutRef = useRef(null);
+  const startTimeRef = useRef(0);
+  const pauseStartRef = useRef(0);
+  const isPausedRef = useRef(false);
+  const pressTimerRef = useRef(null);
+  const pressXRef = useRef(0);
+  const longPressTriggeredRef = useRef(false);
   const STORY_DURATION = 5000;
+  const PRESS_HOLD_MS = 200;
+
+  // Popular GH/Naija artists offered as quick search suggestions when a
+  // search returns no results.
+  const SUGGESTED_ARTISTS = ["Shatta Wale", "Stonebwoy", "Sarkodie", "Black Sherif", "Burna Boy", "Davido", "Wizkid", "King Promise"];
 
   const fetchStories = async () => {
     const snap = await getDocs(collection(db, "stories"));
@@ -402,14 +418,18 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
 
   useEffect(() => { fetchStories(); }, []);
 
-  // Auto-advance story progress
+  // ── Progress bar: drives auto-advance for IMAGE stories. ──
+  // Uses startTimeRef (mutable) instead of a captured local `start`
+  // constant so press-and-hold pause/resume can shift it without
+  // restarting (and resetting) this effect.
   useEffect(() => {
     if (!viewingStory) { setProgress(0); return; }
-    if (viewingStory.mediaType === "video") return; // video controls its own progress
+    if (viewingStory.mediaType === "video") return; // video drives its own progress via onTimeUpdate
     setProgress(0);
-    const start = Date.now();
+    startTimeRef.current = Date.now();
     progressRef.current = setInterval(() => {
-      const elapsed = Date.now() - start;
+      if (isPausedRef.current) return; // frozen while press-and-hold is active
+      const elapsed = Date.now() - startTimeRef.current;
       const pct = Math.min((elapsed / STORY_DURATION) * 100, 100);
       setProgress(pct);
       if (pct >= 100) {
@@ -418,7 +438,21 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
       }
     }, 50);
     return () => clearInterval(progressRef.current);
-  }, [viewingStory, viewingIndex]);
+  }, [viewingStory?.id, viewingIndex]);
+
+  // ── Background music: (re)synced on EVERY story change, not just the
+  // first one - so the audio for story N+1 starts the moment it becomes
+  // active, in step with its image/video. ──
+  useEffect(() => {
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    if (!viewingStory) return;
+    if (viewingStory.songUrl) {
+      const audio = new Audio(viewingStory.songUrl);
+      audio.loop = true;
+      if (!isPausedRef.current) audio.play().catch(() => {});
+      audioRef.current = audio;
+    }
+  }, [viewingStory?.id]);
 
   const goNextStory = () => {
     if (viewingIndex < stories.length - 1) {
@@ -433,26 +467,101 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
     if (viewingIndex > 0) {
       setViewingIndex(i => i - 1);
       setViewingStory(stories[viewingIndex - 1]);
+    } else {
+      // First segment: restart it instead of doing nothing
+      restartCurrentStory();
     }
+  };
+
+  // ── Restart the CURRENT story from the beginning (used when the user
+  // taps "previous" while already on the first segment). ──
+  const restartCurrentStory = () => {
+    if (viewingStory?.mediaType === "video" && videoRef.current) {
+      videoRef.current.currentTime = 0;
+      videoRef.current.play().catch(() => {});
+    }
+    if (audioRef.current) {
+      audioRef.current.currentTime = 0;
+      if (!isPausedRef.current) audioRef.current.play().catch(() => {});
+    }
+    startTimeRef.current = Date.now();
+    setProgress(0);
+  };
+
+  // ── Press-and-Hold to Pause: freezes the progress bar AND pauses both
+  // the video/audio playback. Released -> everything resumes in sync. ──
+  const pausePlayback = () => {
+    if (isPausedRef.current) return;
+    isPausedRef.current = true;
+    setIsPaused(true);
+    pauseStartRef.current = Date.now();
+    if (videoRef.current) videoRef.current.pause();
+    if (audioRef.current) audioRef.current.pause();
+  };
+
+  const resumePlayback = () => {
+    if (!isPausedRef.current) return;
+    isPausedRef.current = false;
+    setIsPaused(false);
+    // Shift the progress-bar clock forward by however long we were paused,
+    // so the bar doesn't "jump" to account for the paused duration.
+    const pausedDuration = Date.now() - pauseStartRef.current;
+    startTimeRef.current += pausedDuration;
+    if (videoRef.current) videoRef.current.play().catch(() => {});
+    if (audioRef.current) audioRef.current.play().catch(() => {});
+  };
+
+  // ── Tap-to-Navigate vs Press-and-Hold-to-Pause, on the same surface ──
+  const handlePressStart = (e) => {
+    const x = e.touches ? e.touches[0].clientX : e.clientX;
+    pressXRef.current = x;
+    longPressTriggeredRef.current = false;
+    pressTimerRef.current = setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      pausePlayback();
+    }, PRESS_HOLD_MS);
+  };
+
+  const handlePressEnd = () => {
+    clearTimeout(pressTimerRef.current);
+    if (longPressTriggeredRef.current) {
+      // This was a hold-and-release -> resume, don't navigate
+      resumePlayback();
+      return;
+    }
+    // Quick tap -> navigate. Right 70% = next, left 30% = previous.
+    const w = window.innerWidth;
+    if (pressXRef.current < w * 0.3) goPrevStory();
+    else goNextStory();
   };
 
   const closeStory = () => {
     clearInterval(progressRef.current);
+    clearTimeout(pressTimerRef.current);
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    isPausedRef.current = false;
+    setIsPaused(false);
     setViewingStory(null);
     setViewingIndex(0);
     setProgress(0);
   };
 
+  // Clean up on unmount to avoid lingering audio/intervals
+  useEffect(() => {
+    return () => {
+      clearInterval(progressRef.current);
+      clearTimeout(pressTimerRef.current);
+      clearTimeout(previewTimeoutRef.current);
+      if (audioRef.current) audioRef.current.pause();
+      if (previewAudioRef.current) previewAudioRef.current.pause();
+    };
+  }, []);
+
   const openStory = (s, idx) => {
+    isPausedRef.current = false;
+    setIsPaused(false);
     setViewingStory(s);
     setViewingIndex(idx);
-    if (s.songUrl) {
-      const audio = new Audio(s.songUrl);
-      audio.loop = true;
-      audio.play().catch(() => {});
-      audioRef.current = audio;
-    }
   };
 
   const fetchWithTimeout = async (url, ms = 6000) => {
@@ -491,8 +600,11 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
     setMusicSearching(true);
     setMusicError(null);
     setMusicResults([]);
-    const term = encodeURIComponent(q);
+    const term = encodeURIComponent(q.trim());
     const directUrls = [
+      // Ghana & Nigeria storefronts surface local/Afrobeats catalog better
+      `https://itunes.apple.com/search?term=${term}&media=music&entity=song&limit=20&country=GH`,
+      `https://itunes.apple.com/search?term=${term}&media=music&entity=song&limit=20&country=NG`,
       `https://itunes.apple.com/search?term=${term}&media=music&entity=song&limit=20&country=US`,
       `https://itunes.apple.com/search?term=${term}&media=music&limit=20`,
     ];
@@ -540,10 +652,45 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
     setMusicSearching(false);
   };
 
+  // ── 15-second background preview, triggered by tapping a track row
+  // or its trailing play icon. Tapping the same track again pauses it. ──
+  const togglePreview = (track) => {
+    const trackId = track.trackId || track.previewUrl;
+    clearTimeout(previewTimeoutRef.current);
+    if (previewingTrackId === trackId) {
+      previewAudioRef.current?.pause();
+      setPreviewingTrackId(null);
+      return;
+    }
+    previewAudioRef.current?.pause();
+    if (!track.previewUrl) return;
+    const audio = new Audio(track.previewUrl);
+    audio.play().catch(() => {});
+    audio.onended = () => setPreviewingTrackId(prev => (prev === trackId ? null : prev));
+    previewAudioRef.current = audio;
+    setPreviewingTrackId(trackId);
+    // Cap the preview at 15 seconds even if the source clip is longer
+    previewTimeoutRef.current = setTimeout(() => {
+      audio.pause();
+      setPreviewingTrackId(prev => (prev === trackId ? null : prev));
+    }, 15000);
+  };
+
+  // ── Confirms the song selection and hands its metadata back to the
+  // Post Story modal (songId, title, artistName, previewUrl). ──
   const selectMusicTrack = (track) => {
+    previewAudioRef.current?.pause();
+    clearTimeout(previewTimeoutRef.current);
+    setPreviewingTrackId(null);
     setSongUrl(track.previewUrl || "");
     setSongName(`${track.trackName} - ${track.artistName}`);
     setSelectedMusicPreview(track.previewUrl);
+    setSelectedSongMeta({
+      songId: track.trackId,
+      title: track.trackName,
+      artistName: track.artistName,
+      previewUrl: track.previewUrl,
+    });
     setShowMusicSearch(false);
     setMusicResults([]);
     setMusicQuery("");
@@ -559,8 +706,8 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
       const vid = document.createElement("video");
       vid.src = url;
       vid.onloadedmetadata = () => {
-        if (vid.duration > 60) {
-          alert("Video must be 1 minute or less.");
+        if (vid.duration > 30) {
+          alert("Video must be 30 seconds or less.");
           return;
         }
         setSelectedFile(file);
@@ -626,6 +773,8 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
         userPhoto: user?.photoURL || "",
         songUrl: uploadedSongUrl,
         songName: songName || "",
+        songId: selectedSongMeta?.songId || null,
+        songArtist: selectedSongMeta?.artistName || null,
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         createdAt: serverTimestamp(),
       });
@@ -634,6 +783,7 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
       setPreviewUrl("");
       setSongUrl("");
       setSongName("");
+      setSelectedSongMeta(null);
       fetchStories();
     } catch (err) { console.error(err); alert("Upload failed. Try again."); }
     setUploading(false);
@@ -744,10 +894,19 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
           <div style={{ flex: 1, overflowY: "auto", padding: "0 16px" }}>
             {musicSearching && <div style={{ textAlign: "center", padding: 40, color: "rgba(255,255,255,0.5)" }}>Searching...</div>}
             {!musicSearching && musicResults.length === 0 && musicQuery && (
-              <div style={{ textAlign: "center", padding: 40 }}>
+              <div style={{ textAlign: "center", padding: "40px 0 20px" }}>
                 <div style={{ fontSize: 40, marginBottom: 10 }}>🔍</div>
                 <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 14, marginBottom: 14 }}>{musicError || "No results found"}</div>
-                <button style={{ ...S.btn(), padding: "8px 18px", fontSize: 13 }} onClick={() => searchMusic(musicQuery)}>Try Again</button>
+                <button style={{ ...S.btn(), padding: "8px 18px", fontSize: 13, marginBottom: 20 }} onClick={() => searchMusic(musicQuery)}>Try Again</button>
+                <div style={{ color: "rgba(255,255,255,0.45)", fontSize: 12, marginBottom: 10 }}>Or try a popular artist:</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+                  {SUGGESTED_ARTISTS.map(name => (
+                    <button key={name} onClick={() => { setMusicQuery(name); searchMusic(name); }}
+                      style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.15)", color: "white", borderRadius: 16, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+                      {name}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
             {!musicSearching && musicResults.length === 0 && !musicQuery && (
@@ -756,21 +915,33 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
                 <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Search for any song or artist</div>
               </div>
             )}
-            {musicResults.map((track, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.06)", cursor: "pointer" }}
-                onClick={() => selectMusicTrack(track)}>
-                <div style={{ width: 52, height: 52, borderRadius: 8, overflow: "hidden", background: "#333", flexShrink: 0 }}>
-                  {track.artworkUrl60 ? <img src={track.artworkUrl60} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🎵</div>}
+            {musicResults.map((track, i) => {
+              const trackId = track.trackId || track.previewUrl || i;
+              const isPreviewing = previewingTrackId === trackId;
+              return (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                  {/* Tap artwork or row to preview 15s */}
+                  <div style={{ width: 52, height: 52, borderRadius: 8, overflow: "hidden", background: "#333", flexShrink: 0, position: "relative", cursor: "pointer" }}
+                    onClick={() => togglePreview(track)}>
+                    {track.artworkUrl60 ? <img src={track.artworkUrl60} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🎵</div>}
+                    <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      {isPreviewing
+                        ? <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                        : <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>}
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => togglePreview(track)}>
+                    <div style={{ fontWeight: 700, color: "white", fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.trackName}</div>
+                    <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 2 }}>{track.artistName} · {Math.floor((track.trackTimeMillis || 0) / 60000)}:{String(Math.floor(((track.trackTimeMillis || 0) % 60000) / 1000)).padStart(2, "0")}</div>
+                    {isPreviewing && <div style={{ color: C.primary, fontSize: 11, marginTop: 2, fontWeight: 700 }}>▶ Playing 15s preview…</div>}
+                  </div>
+                  {/* Confirm selection - returns metadata to Post Story modal */}
+                  <button style={{ ...S.btn(), padding: "8px 14px", fontSize: 12, flexShrink: 0, borderRadius: 16 }} onClick={() => selectMusicTrack(track)}>
+                    Select
+                  </button>
                 </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, color: "white", fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{track.trackName}</div>
-                  <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 12, marginTop: 2 }}>{track.artistName} · {Math.floor((track.trackTimeMillis || 0) / 60000)}:{String(Math.floor(((track.trackTimeMillis || 0) % 60000) / 1000)).padStart(2, "0")}</div>
-                </div>
-                <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: "50%", width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -812,14 +983,21 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
             <button style={{ background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={closeStory}>✕</button>
           </div>
 
-          {/* Media content */}
-          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}
-            onClick={(e) => {
-              const x = e.clientX;
-              const w = window.innerWidth;
-              if (x < w / 3) goPrevStory();
-              else if (x > (w * 2) / 3) goNextStory();
-            }}>
+          {/* Media content - unified gesture surface:
+              - Quick tap on right 70% -> next segment
+              - Quick tap on left 30% -> previous segment (or restart if first)
+              - Press-and-hold anywhere -> pause video/audio + freeze progress
+              - Release after hold -> resume, no navigation */}
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
+            onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
+            onMouseLeave={() => {
+              clearTimeout(pressTimerRef.current);
+              if (longPressTriggeredRef.current) {
+                resumePlayback();
+                longPressTriggeredRef.current = false;
+              }
+            }}
+            onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}>
             {viewingStory.mediaType === "video"
               ? <video
                   ref={videoRef}
@@ -834,19 +1012,32 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
                   }}
                 />
               : <img src={viewingStory.mediaUrl || viewingStory.imageUrl} alt="story" style={{ width: "100%", height: "100vh", objectFit: "contain" }} />}
+
+            {/* Press-and-hold pause indicator */}
+            {isPaused && (
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+                <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <svg width="26" height="26" viewBox="0 0 24 24" fill="white"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                </div>
+              </div>
+            )}
           </div>
+
+          {/* ── Prefetch the NEXT story's media in the background so the
+              transition is instant. Hidden, never shown to the user. ── */}
+          {stories[viewingIndex + 1] && (
+            stories[viewingIndex + 1].mediaType === "video"
+              ? <video src={stories[viewingIndex + 1].mediaUrl || stories[viewingIndex + 1].imageUrl} preload="auto" muted style={{ display: "none" }} />
+              : <img src={stories[viewingIndex + 1].mediaUrl || stories[viewingIndex + 1].imageUrl} alt="" style={{ display: "none" }} />
+          )}
 
           {/* Song info */}
           {viewingStory.songName && (
-            <div style={{ position: "absolute", bottom: 30, left: 16, right: 16, zIndex: 10, display: "flex", alignItems: "center", gap: 8, background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "8px 14px" }}>
+            <div style={{ position: "absolute", bottom: 30, left: 16, right: 16, zIndex: 10, display: "flex", alignItems: "center", gap: 8, background: "rgba(0,0,0,0.5)", borderRadius: 20, padding: "8px 14px", pointerEvents: "none" }}>
               <span style={{ fontSize: 16 }}>🎵</span>
               <span style={{ color: "white", fontSize: 13, fontWeight: 600 }}>{viewingStory.songName}</span>
             </div>
           )}
-
-          {/* Tap hints */}
-          <div style={{ position: "absolute", top: "50%", left: 0, width: "33%", height: "40%", transform: "translateY(-50%)", zIndex: 9 }} onClick={goPrevStory} />
-          <div style={{ position: "absolute", top: "50%", right: 0, width: "33%", height: "40%", transform: "translateY(-50%)", zIndex: 9 }} onClick={goNextStory} />
         </div>
       )}
     </>
@@ -2397,7 +2588,10 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
           <div style={{ color: C.primary, fontWeight: 800, fontSize: 28, marginBottom: 12 }}>GH₵{product.price}</div>
           {product.description && <p style={{ color: C.text, fontSize: 14, lineHeight: 1.6, marginBottom: 16 }}>{product.description}</p>}
           <div style={{ background: C.grey, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.greyDark }}>
-            📦 {product.stock || 0} items in stock · 📞 Contact: +233 54 194 0967
+            📦 {product.stock || 0} items in stock
+            {sellerData?.storeContact && (
+              <> · 📞 Contact: <a href={`tel:${sellerData.storeContact}`} style={{ color: C.greyDark, textDecoration: "underline" }}>{sellerData.storeContact}</a></>
+            )}
           </div>
           {/* ── Variant Selection: mirrors the currently-active image/thumbnail ── */}
           {productImages.length > 1 && (
