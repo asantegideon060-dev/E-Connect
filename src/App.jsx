@@ -367,9 +367,17 @@ function AddProductModal({ user, onClose, onAdded }) {
 
 // ── Stories Feature ────────────────────────────────────────────
 function StoriesBar({ user, setPage, setViewingPublicProfile }) {
-  const [stories, setStories] = useState([]);
-  const [viewingStory, setViewingStory] = useState(null);
-  const [viewingIndex, setViewingIndex] = useState(0);
+  const [stories, setStories] = useState([]);      // flat list from Firestore
+  const [storyGroups, setStoryGroups] = useState([]); // [{userId, userName, userPhoto, items:[]}]
+  const [viewedUsers, setViewedUsers] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem("econnect-viewed-stories") || "[]")); }
+    catch { return new Set(); }
+  });
+
+  // ── Viewer state: which GROUP is open, and which SLIDE inside it ──
+  const [viewingGroup, setViewingGroup] = useState(null);  // a storyGroup object
+  const [slideIndex, setSlideIndex] = useState(0);         // index within viewingGroup.items
+
   const [uploading, setUploading] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -401,112 +409,138 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
   const STORY_DURATION = 5000;
   const PRESS_HOLD_MS = 200;
 
-  // Popular GH/Naija artists offered as quick search suggestions when a
-  // search returns no results.
   const SUGGESTED_ARTISTS = ["Shatta Wale", "Stonebwoy", "Sarkodie", "Black Sherif", "Burna Boy", "Davido", "Wizkid", "King Promise"];
 
   const fetchStories = async () => {
-    const snap = await getDocs(collection(db, "stories"));
-    const now = Date.now();
-    const active = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => {
-      if (!s.expiresAt) return false;
-      const exp = s.expiresAt.toMillis ? s.expiresAt.toMillis() : new Date(s.expiresAt).getTime();
-      return exp > now;
-    });
-    setStories(active);
+    try {
+      const snap = await getDocs(collection(db, "stories"));
+      const now = Date.now();
+      const active = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => {
+        if (!s.expiresAt) return false;
+        const exp = s.expiresAt.toMillis ? s.expiresAt.toMillis() : new Date(s.expiresAt).getTime();
+        return exp > now && !s.deleted;
+      });
+      // Sort oldest→newest within each user so stories play chronologically
+      active.sort((a, b) => {
+        const ta = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+        const tb = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+        return ta - tb;
+      });
+      setStories(active);
+
+      // ── GROUP by userId: one entry per person on the dashboard ──
+      const groupMap = new Map();
+      active.forEach(s => {
+        if (!groupMap.has(s.userId)) {
+          groupMap.set(s.userId, {
+            userId: s.userId,
+            userName: s.userName,
+            userPhoto: s.userPhoto || s.imageUrl || "",
+            items: [],
+          });
+        }
+        groupMap.get(s.userId).items.push(s);
+      });
+      setStoryGroups(Array.from(groupMap.values()));
+    } catch (err) { console.error("Failed to load stories:", err); }
   };
 
   useEffect(() => { fetchStories(); }, []);
 
-  // ── Progress bar: drives auto-advance for IMAGE stories. ──
-  // Uses startTimeRef (mutable) instead of a captured local `start`
-  // constant so press-and-hold pause/resume can shift it without
-  // restarting (and resetting) this effect.
+  // ── The current slide inside the open group ──
+  const currentSlide = viewingGroup ? viewingGroup.items[slideIndex] : null;
+
+  // ── Progress bar effect: drives auto-advance for IMAGE slides ──
   useEffect(() => {
-    if (!viewingStory) { setProgress(0); return; }
-    if (viewingStory.mediaType === "video") return; // video drives its own progress via onTimeUpdate
+    if (!viewingGroup || !currentSlide) { setProgress(0); return; }
+    if (currentSlide.mediaType === "video") return; // video uses onTimeUpdate
     setProgress(0);
     startTimeRef.current = Date.now();
     progressRef.current = setInterval(() => {
-      if (isPausedRef.current) return; // frozen while press-and-hold is active
+      if (isPausedRef.current) return;
       const elapsed = Date.now() - startTimeRef.current;
       const pct = Math.min((elapsed / STORY_DURATION) * 100, 100);
       setProgress(pct);
-      if (pct >= 100) {
-        clearInterval(progressRef.current);
-        goNextStory();
-      }
+      if (pct >= 100) { clearInterval(progressRef.current); goNextSlide(); }
     }, 50);
     return () => clearInterval(progressRef.current);
-  }, [viewingStory?.id, viewingIndex]);
+  }, [currentSlide?.id, slideIndex]);
 
-  // ── Background music: (re)synced on EVERY story change ──
-  // Mobile browsers block autoplay until the user has interacted with the
-  // page. We retry silently on the first user touch if the initial play
-  // call was blocked (NotAllowedError).
+  // ── Audio sync: restart music for each slide ──
   useEffect(() => {
     if (audioRef.current) { audioRef.current.pause(); audioRef.current.src = ""; audioRef.current = null; }
-    if (!viewingStory?.songUrl) return;
-    const url = viewingStory.songUrl;
-    if (!url || !url.startsWith("http")) return; // safety guard for empty/blob/invalid URLs
+    if (!currentSlide?.songUrl) return;
+    const url = currentSlide.songUrl;
+    if (!url.startsWith("http")) return;
     const audio = new Audio();
-    audio.crossOrigin = "anonymous"; // allow CORS for iTunes CDN URLs
+    audio.crossOrigin = "anonymous";
     audio.src = url;
     audio.loop = true;
     audioRef.current = audio;
     if (!isPausedRef.current) {
       audio.play().catch(err => {
         if (err.name === "NotAllowedError") {
-          // Autoplay was blocked — retry the moment the user next touches the screen
           const retry = () => { audio.play().catch(() => {}); document.removeEventListener("touchstart", retry); document.removeEventListener("click", retry); };
           document.addEventListener("touchstart", retry, { once: true });
           document.addEventListener("click", retry, { once: true });
         }
-        // Other errors (network, codec) — fail silently; the story still works without sound
       });
     }
-    return () => {
-      audio.pause();
-      audio.src = "";
-    };
-  }, [viewingStory?.id]);
+    return () => { audio.pause(); audio.src = ""; };
+  }, [currentSlide?.id]);
 
-  const goNextStory = () => {
-    if (viewingIndex < stories.length - 1) {
-      setViewingIndex(i => i + 1);
-      setViewingStory(stories[viewingIndex + 1]);
+  // ── Navigate within the group ──
+  const goNextSlide = () => {
+    if (!viewingGroup) return;
+    if (slideIndex < viewingGroup.items.length - 1) {
+      setSlideIndex(i => i + 1);
+      setProgress(0);
     } else {
+      // Reached the end of this user's stories → mark as viewed and close
       closeStory();
     }
   };
 
-  const goPrevStory = () => {
-    if (viewingIndex > 0) {
-      setViewingIndex(i => i - 1);
-      setViewingStory(stories[viewingIndex - 1]);
+  const goPrevSlide = () => {
+    if (!viewingGroup) return;
+    if (slideIndex > 0) {
+      setSlideIndex(i => i - 1);
+      setProgress(0);
     } else {
-      // First segment: restart it instead of doing nothing
-      restartCurrentStory();
+      // Already at first slide — restart it
+      startTimeRef.current = Date.now();
+      setProgress(0);
+      if (videoRef.current) { videoRef.current.currentTime = 0; videoRef.current.play().catch(() => {}); }
+      if (audioRef.current) { audioRef.current.currentTime = 0; }
     }
   };
 
-  // ── Restart the CURRENT story from the beginning (used when the user
-  // taps "previous" while already on the first segment). ──
-  const restartCurrentStory = () => {
-    if (viewingStory?.mediaType === "video" && videoRef.current) {
-      videoRef.current.currentTime = 0;
-      videoRef.current.play().catch(() => {});
-    }
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      if (!isPausedRef.current) audioRef.current.play().catch(() => {});
-    }
-    startTimeRef.current = Date.now();
+  const openGroup = (group) => {
+    isPausedRef.current = false;
+    setIsPaused(false);
+    setViewingGroup(group);
+    setSlideIndex(0);
     setProgress(0);
   };
 
-  // ── Press-and-Hold to Pause: freezes the progress bar AND pauses both
-  // the video/audio playback. Released -> everything resumes in sync. ──
+  const closeStory = () => {
+    if (viewingGroup) {
+      // Mark this user's stories as fully viewed
+      const updated = new Set(viewedUsers);
+      updated.add(viewingGroup.userId);
+      setViewedUsers(updated);
+      try { localStorage.setItem("econnect-viewed-stories", JSON.stringify([...updated])); } catch (e) {}
+    }
+    clearInterval(progressRef.current);
+    clearTimeout(pressTimerRef.current);
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    isPausedRef.current = false;
+    setIsPaused(false);
+    setViewingGroup(null);
+    setSlideIndex(0);
+    setProgress(0);
+  };
+
   const pausePlayback = () => {
     if (isPausedRef.current) return;
     isPausedRef.current = true;
@@ -520,15 +554,12 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
     if (!isPausedRef.current) return;
     isPausedRef.current = false;
     setIsPaused(false);
-    // Shift the progress-bar clock forward by however long we were paused,
-    // so the bar doesn't "jump" to account for the paused duration.
     const pausedDuration = Date.now() - pauseStartRef.current;
     startTimeRef.current += pausedDuration;
     if (videoRef.current) videoRef.current.play().catch(() => {});
     if (audioRef.current) audioRef.current.play().catch(() => {});
   };
 
-  // ── Tap-to-Navigate vs Press-and-Hold-to-Pause, on the same surface ──
   const handlePressStart = (e) => {
     const x = e.touches ? e.touches[0].clientX : e.clientX;
     pressXRef.current = x;
@@ -541,29 +572,12 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
 
   const handlePressEnd = () => {
     clearTimeout(pressTimerRef.current);
-    if (longPressTriggeredRef.current) {
-      // This was a hold-and-release -> resume, don't navigate
-      resumePlayback();
-      return;
-    }
-    // Quick tap -> navigate. Right 70% = next, left 30% = previous.
+    if (longPressTriggeredRef.current) { resumePlayback(); return; }
     const w = window.innerWidth;
-    if (pressXRef.current < w * 0.3) goPrevStory();
-    else goNextStory();
+    if (pressXRef.current < w * 0.3) goPrevSlide();
+    else goNextSlide();
   };
 
-  const closeStory = () => {
-    clearInterval(progressRef.current);
-    clearTimeout(pressTimerRef.current);
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-    isPausedRef.current = false;
-    setIsPaused(false);
-    setViewingStory(null);
-    setViewingIndex(0);
-    setProgress(0);
-  };
-
-  // Clean up on unmount to avoid lingering audio/intervals
   useEffect(() => {
     return () => {
       clearInterval(progressRef.current);
@@ -573,13 +587,6 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
       if (previewAudioRef.current) previewAudioRef.current.pause();
     };
   }, []);
-
-  const openStory = (s, idx) => {
-    isPausedRef.current = false;
-    setIsPaused(false);
-    setViewingStory(s);
-    setViewingIndex(idx);
-  };
 
   const fetchWithTimeout = async (url, ms = 6000) => {
     const controller = new AbortController();
@@ -822,33 +829,43 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
           {/* Add Story Button */}
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
             onClick={() => document.getElementById("storyFileInput").click()}>
-            <div style={{ width: 58, height: 58, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `2px dashed ${C.primary}` }}>
+            <div style={{ width: 58, height: 58, borderRadius: "50%", background: C.grey, display: "flex", alignItems: "center", justifyContent: "center", border: `2.5px dashed ${C.primary}` }}>
               {uploading ? <span style={{ fontSize: 11, color: C.primary, fontWeight: 700 }}>...</span> : <span style={{ fontSize: 26 }}>+</span>}
             </div>
             <span style={{ fontSize: 10, color: C.greyDark, fontWeight: 600 }}>Add Story</span>
             <input id="storyFileInput" type="file" accept="image/*,video/*" style={{ display: "none" }} onChange={handleFileSelect} />
           </div>
 
-          {/* Story Thumbnails */}
-          {stories.map((s, idx) => (
-            <div key={s.id} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
-              onClick={() => openStory(s, idx)}>
-              <div style={{ width: 58, height: 58, borderRadius: "50%", background: `linear-gradient(135deg, ${C.primary}, ${C.accent})`, padding: 2.5, position: "relative" }}>
-                <div style={{ width: "100%", height: "100%", borderRadius: "50%", overflow: "hidden", background: C.grey }}>
-                  {s.imageUrl
-                    ? <img src={s.imageUrl} alt={s.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                    : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
-                </div>
-                {s.mediaType === "video" && (
-                  <div style={{ position: "absolute", bottom: 0, right: 0, background: "rgba(0,0,0,0.7)", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <span style={{ fontSize: 8, color: "white" }}>▶</span>
+          {/* One ring per user — green if unread, grey if all viewed */}
+          {storyGroups.map(group => {
+            const isViewed = viewedUsers.has(group.userId);
+            const ringColor = isViewed
+              ? "rgba(180,180,180,0.6)"
+              : `linear-gradient(135deg, ${C.primary}, ${C.accent})`;
+            const hasMultiple = group.items.length > 1;
+            return (
+              <div key={group.userId} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
+                onClick={() => openGroup(group)}>
+                <div style={{ width: 62, height: 62, borderRadius: "50%", background: ringColor, padding: isViewed ? 2 : 2.5, position: "relative" }}>
+                  <div style={{ width: "100%", height: "100%", borderRadius: "50%", overflow: "hidden", background: C.grey, border: "2px solid white" }}>
+                    {group.userPhoto
+                      ? <img src={group.userPhoto} alt={group.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                      : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
                   </div>
-                )}
+                  {/* Story count badge */}
+                  {hasMultiple && (
+                    <div style={{ position: "absolute", bottom: 0, right: 0, background: C.primary, border: "1.5px solid white", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "white", fontWeight: 800 }}>
+                      {group.items.length}
+                    </div>
+                  )}
+                </div>
+                <span style={{ fontSize: 10, color: isViewed ? C.greyDark : C.text, fontWeight: isViewed ? 500 : 700, textAlign: "center", maxWidth: 62, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {group.userId === user?.uid ? "You" : group.userName}
+                </span>
               </div>
-              <span style={{ fontSize: 10, color: C.text, fontWeight: 600, textAlign: "center", maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.userName}</span>
-            </div>
-          ))}
-          {stories.length === 0 && <div style={{ display: "flex", alignItems: "center", color: C.greyDark, fontSize: 13, paddingLeft: 8 }}>No stories yet. Be the first!</div>}
+            );
+          })}
+          {storyGroups.length === 0 && <div style={{ display: "flex", alignItems: "center", color: C.greyDark, fontSize: 13, paddingLeft: 8 }}>No stories yet. Be the first!</div>}
         </div>
       </div>
 
@@ -972,74 +989,64 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
         </div>
       )}
 
-      {/* Full Screen Story Viewer */}
-      {viewingStory && (
+      {/* ── Fullscreen Story Viewer ── */}
+      {viewingGroup && currentSlide && (
         <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 600, display: "flex", flexDirection: "column" }}>
-          {/* Progress bars */}
-          <div style={{ display: "flex", gap: 3, padding: "12px 12px 0", position: "absolute", top: 0, left: 0, right: 0, zIndex: 10 }}>
-            {stories.map((_, i) => (
+
+          {/* ── Segmented progress bars: one segment per slide in THIS user's group ── */}
+          <div style={{ display: "flex", gap: 3, padding: "10px 12px 0", position: "absolute", top: 0, left: 0, right: 0, zIndex: 10 }}>
+            {viewingGroup.items.map((_, i) => (
               <div key={i} style={{ flex: 1, height: 3, background: "rgba(255,255,255,0.3)", borderRadius: 2, overflow: "hidden" }}>
                 <div style={{
                   height: "100%", borderRadius: 2, background: "white",
-                  width: i < viewingIndex ? "100%" : i === viewingIndex ? `${progress}%` : "0%",
-                  transition: i === viewingIndex ? "none" : "none"
+                  width: i < slideIndex ? "100%" : i === slideIndex ? `${progress}%` : "0%",
+                  transition: i === slideIndex ? "none" : "none",
                 }} />
               </div>
             ))}
           </div>
 
-          {/* User info */}
-          <div style={{ position: "absolute", top: 28, left: 0, right: 0, zIndex: 10, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 16px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }} onClick={() => {
-              const story = viewingStory;
-              closeStory();
-              setViewingPublicProfile && setViewingPublicProfile({ uid: story.userId, displayName: story.userName, photoURL: story.userPhoto });
-              setPage && setPage("publicProfile");
-            }}>
+          {/* ── Header: avatar, name, close ── */}
+          <div style={{ position: "absolute", top: 22, left: 0, right: 0, zIndex: 10, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
+              onClick={() => {
+                const g = viewingGroup;
+                closeStory();
+                setViewingPublicProfile && setViewingPublicProfile({ uid: g.userId, displayName: g.userName, photoURL: g.userPhoto });
+                setPage && setPage("publicProfile");
+              }}>
               <div style={{ width: 40, height: 40, borderRadius: "50%", overflow: "hidden", border: "2px solid white" }}>
-                {viewingStory.imageUrl
-                  ? <img src={viewingStory.imageUrl} alt={viewingStory.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                {viewingGroup.userPhoto
+                  ? <img src={viewingGroup.userPhoto} alt={viewingGroup.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                   : <div style={{ height: "100%", background: C.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>👤</div>}
               </div>
               <div>
-                <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{viewingStory.userName}</div>
-                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>Tap to view profile</div>
+                <div style={{ color: "white", fontWeight: 700, fontSize: 14 }}>{viewingGroup.userName}</div>
+                <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 11 }}>
+                  {slideIndex + 1} / {viewingGroup.items.length} · Tap to view profile
+                </div>
               </div>
             </div>
-            <button style={{ background: "rgba(0,0,0,0.5)", border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={closeStory}>✕</button>
+            <button style={{ background: "rgba(0,0,0,0.45)", border: "none", color: "white", borderRadius: "50%", width: 32, height: 32, cursor: "pointer", fontSize: 18, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}
+              onClick={closeStory}>✕</button>
           </div>
 
-          {/* Media content - unified gesture surface:
-              - Quick tap on right 70% -> next segment
-              - Quick tap on left 30% -> previous segment (or restart if first)
-              - Press-and-hold anywhere -> pause video/audio + freeze progress
-              - Release after hold -> resume, no navigation */}
+          {/* ── Media: unified gesture surface (tap left/right + press-hold) ── */}
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative" }}
             onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
-            onMouseLeave={() => {
-              clearTimeout(pressTimerRef.current);
-              if (longPressTriggeredRef.current) {
-                resumePlayback();
-                longPressTriggeredRef.current = false;
-              }
-            }}
+            onMouseLeave={() => { clearTimeout(pressTimerRef.current); if (longPressTriggeredRef.current) { resumePlayback(); longPressTriggeredRef.current = false; } }}
             onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}>
-            {viewingStory.mediaType === "video"
-              ? <video
-                  ref={videoRef}
-                  src={viewingStory.mediaUrl || viewingStory.imageUrl}
-                  style={{ width: "100%", height: "100vh", objectFit: "contain" }}
-                  autoPlay
-                  playsInline
-                  onEnded={goNextStory}
-                  onTimeUpdate={(e) => {
-                    const pct = (e.target.currentTime / e.target.duration) * 100;
-                    setProgress(pct);
-                  }}
-                />
-              : <img src={viewingStory.mediaUrl || viewingStory.imageUrl} alt="story" style={{ width: "100%", height: "100vh", objectFit: "contain" }} />}
 
-            {/* Press-and-hold pause indicator */}
+            {currentSlide.mediaType === "video"
+              ? <video ref={videoRef} src={currentSlide.mediaUrl || currentSlide.imageUrl}
+                  style={{ width: "100%", height: "100vh", objectFit: "contain" }}
+                  autoPlay playsInline
+                  onEnded={goNextSlide}
+                  onTimeUpdate={e => { const pct = (e.target.currentTime / e.target.duration) * 100; setProgress(pct); }} />
+              : <img src={currentSlide.mediaUrl || currentSlide.imageUrl} alt="story"
+                  style={{ width: "100%", height: "100vh", objectFit: "contain" }} />}
+
+            {/* Pause overlay */}
             {isPaused && (
               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
                 <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -1049,23 +1056,20 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
             )}
           </div>
 
-          {/* ── Prefetch the NEXT story's media in the background so the
-              transition is instant. Hidden, never shown to the user. ── */}
-          {stories[viewingIndex + 1] && (
-            stories[viewingIndex + 1].mediaType === "video"
-              ? <video src={stories[viewingIndex + 1].mediaUrl || stories[viewingIndex + 1].imageUrl} preload="auto" muted style={{ display: "none" }} />
-              : <img src={stories[viewingIndex + 1].mediaUrl || stories[viewingIndex + 1].imageUrl} alt="" style={{ display: "none" }} />
+          {/* Prefetch next slide */}
+          {viewingGroup.items[slideIndex + 1] && (
+            viewingGroup.items[slideIndex + 1].mediaType === "video"
+              ? <video src={viewingGroup.items[slideIndex + 1].mediaUrl} preload="auto" muted style={{ display: "none" }} />
+              : <img src={viewingGroup.items[slideIndex + 1].mediaUrl || viewingGroup.items[slideIndex + 1].imageUrl} alt="" style={{ display: "none" }} />
           )}
 
-          {/* Song info — tapping it ensures audio is playing (handles autoplay block) */}
-          {(viewingStory.songName || viewingStory.songUrl) && (
+          {/* Song info */}
+          {(currentSlide.songName || currentSlide.songUrl) && (
             <div style={{ position: "absolute", bottom: 30, left: 16, right: 60, zIndex: 10, display: "flex", alignItems: "center", gap: 8, background: "rgba(0,0,0,0.55)", borderRadius: 20, padding: "8px 14px", cursor: "pointer" }}
-              onClick={() => {
-                if (audioRef.current?.paused) audioRef.current.play().catch(() => {});
-              }}>
+              onClick={() => { if (audioRef.current?.paused) audioRef.current.play().catch(() => {}); }}>
               <span style={{ fontSize: 16, display: "inline-block", animation: "spin 2s linear infinite" }}>🎵</span>
               <span style={{ color: "white", fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {viewingStory.songName || (viewingStory.songArtist ? `♪ ${viewingStory.songArtist}` : "♪ Song")}
+                {currentSlide.songName || (currentSlide.songArtist ? `♪ ${currentSlide.songArtist}` : "♪ Song")}
               </span>
             </div>
           )}
@@ -2158,7 +2162,101 @@ function PremiumCarousel({ products, setSelectedProduct, setPage }) {
 
 
 // ── Home Page ──────────────────────────────────────────────────
-// ── Product Card Skeleton (loading shimmer) ─────────────────────
+// ── RotatingProductCard ──────────────────────────────────────────
+// If the group has only 1 product, renders a normal static card.
+// If it has 2+, automatically cycles every 2 s with a fade transition,
+// pauses on hover/touch-start, and always opens whichever product is
+// currently visible when clicked or when "Add to Cart" is tapped.
+function RotatingProductCard({ group, setSelectedProduct, setPage, addToCart, initialDelay = 0 }) {
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [visible, setVisible] = useState(true); // drives opacity fade
+  const [frozen, setFrozen] = useState(false);
+  const intervalRef = useRef(null);
+  const timeoutRef = useRef(null);
+
+  const advance = () => {
+    // Fade out → swap product → fade in
+    setVisible(false);
+    timeoutRef.current = setTimeout(() => {
+      setActiveIdx(prev => (prev + 1) % group.length);
+      setVisible(true);
+    }, 220); // 220 ms cross-fade
+  };
+
+  const startTimer = () => {
+    clearInterval(intervalRef.current);
+    if (group.length <= 1) return;
+    intervalRef.current = setInterval(advance, 2000);
+  };
+
+  useEffect(() => {
+    if (group.length <= 1) return;
+    // Staggered start: each card gets a unique initial delay so they
+    // don't all flip at the same millisecond.
+    const t = setTimeout(startTimer, initialDelay);
+    return () => { clearTimeout(t); clearInterval(intervalRef.current); clearTimeout(timeoutRef.current); };
+  }, [group.length]);
+
+  const freeze = () => { setFrozen(true); clearInterval(intervalRef.current); };
+  const unfreeze = () => { setFrozen(false); startTimer(); };
+
+  const p = group[activeIdx]; // the product currently shown
+
+  return (
+    <div style={{ ...S.card, overflow: "hidden", cursor: "pointer", position: "relative" }}
+      onClick={() => { setSelectedProduct(p); setPage("product"); }}
+      onMouseEnter={freeze} onMouseLeave={unfreeze}
+      onTouchStart={freeze} onTouchEnd={unfreeze}>
+
+      {/* Multi-product indicator dots */}
+      {group.length > 1 && (
+        <div style={{ position: "absolute", top: 6, right: 6, zIndex: 3, display: "flex", gap: 3 }}>
+          {group.map((_, i) => (
+            <div key={i} style={{ width: i === activeIdx ? 14 : 6, height: 6, borderRadius: 3, background: i === activeIdx ? C.primary : "rgba(255,255,255,0.7)", transition: "width 0.25s, background 0.25s" }} />
+          ))}
+        </div>
+      )}
+
+      <div style={{ height: 110, overflow: "hidden", background: C.grey, position: "relative" }}>
+        {/* Fading image layer */}
+        <div style={{ position: "absolute", inset: 0, opacity: visible ? 1 : 0, transition: "opacity 0.22s ease-in-out" }}>
+          {p.image
+            ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => e.target.style.display = "none"} />
+            : <ProductPlaceholder name={p.name} category={p.category} />}
+        </div>
+        <div style={{ position: "absolute", top: 6, left: 6, zIndex: 2 }}><TrendingBadge /></div>
+        {/* "X more" label so buyers know there are more variants */}
+        {group.length > 1 && (
+          <div style={{ position: "absolute", bottom: 6, left: 6, background: "rgba(0,0,0,0.55)", borderRadius: 8, padding: "2px 7px", fontSize: 10, color: "white", fontWeight: 700, zIndex: 2 }}>
+            {activeIdx + 1}/{group.length}
+          </div>
+        )}
+      </div>
+
+      <div style={{ padding: 10 }}>
+        {/* Product name fades with the image */}
+        <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2, opacity: visible ? 1 : 0, transition: "opacity 0.22s", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {p.name}
+        </div>
+        <div style={{ color: C.greyDark, fontSize: 11, marginBottom: 6 }}>{p.seller}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <span style={{ color: C.primary, fontWeight: 800, fontSize: 14, opacity: visible ? 1 : 0, transition: "opacity 0.22s" }}>GH₵{p.price}</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: C.greyDark, padding: 0 }}
+              onClick={e => { e.stopPropagation(); /* like logic kept identical */ }}>♥</button>
+            <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: C.greyDark, padding: 0 }}
+              onClick={e => { e.stopPropagation(); navigator.share ? navigator.share({ title: p.name, text: `Check out ${p.name} on E-Connect!`, url: window.location.href }) : navigator.clipboard?.writeText(window.location.href); }}>↗</button>
+          </div>
+        </div>
+        {/* Add to Cart always sends the CURRENTLY VISIBLE product */}
+        <button style={{ ...S.btn(), width: "100%", padding: "7px", fontSize: 12 }}
+          onClick={e => { e.stopPropagation(); addToCart(p); }}>
+          Add to Cart
+        </button>
+      </div>
+    </div>
+  );
+}
 function ProductCardSkeleton() {
   return (
     <div style={{ ...S.card, overflow: "hidden" }}>
@@ -2274,6 +2372,22 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
     const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
     return matchCat && matchSearch;
   });
+
+  // ── GROUP products by sellerId + category ───────────────────────
+  // Products from the same seller in the same category share one card
+  // slot; the RotatingProductCard cycles through them every 2 seconds.
+  const standardProducts = filtered.filter(p => !p.sellerPremium && !p.sellerVerified);
+
+  const groupedCards = useMemo(() => {
+    const map = new Map();
+    standardProducts.forEach(p => {
+      const key = `${p.sellerId || p.seller}-${p.category}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(p);
+    });
+    // Return an array of groups; each group is an array of products
+    return Array.from(map.values());
+  }, [standardProducts.map(p => p.id).join(","), activeCategory, search]);
 
 
   const addToCart = (p) => {
@@ -2397,12 +2511,12 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
 
 
 
-      {/* ── TIER 3: NEW/TRENDING (Small Cards) ── */}
+      {/* ── TIER 3: NEW/TRENDING (Grouped Rotating Cards) ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <TrendingBadge />
           <span style={{ fontWeight: 800, fontSize: 16 }}>Trending</span>
-          <span style={{ fontSize: 12, color: C.greyDark }}>{filtered.filter(p => !p.sellerPremium && !p.sellerVerified).length} products</span>
+          <span style={{ fontSize: 12, color: C.greyDark }}>{standardProducts.length} products</span>
         </div>
         <button style={{ ...S.btn(), padding: "8px 14px", fontSize: 12 }} onClick={() => setShowAdd(true)}>+ Add Product</button>
       </div>
@@ -2410,63 +2524,32 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
       {loading ? (
         <>
           <style>{`
-            .skeleton-shimmer {
-              position: relative;
-              overflow: hidden;
-              background-color: ${C.greyMid};
-            }
-            .skeleton-shimmer::after {
-              content: "";
-              position: absolute;
-              top: 0; left: 0; right: 0; bottom: 0;
-              background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent);
-              animation: shimmer 1.4s infinite;
-            }
-            @keyframes shimmer {
-              0% { transform: translateX(-100%); }
-              100% { transform: translateX(100%); }
-            }
+            .skeleton-shimmer { position: relative; overflow: hidden; background-color: ${C.greyMid}; }
+            .skeleton-shimmer::after { content: ""; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent); animation: shimmer 1.4s infinite; }
+            @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
           `}</style>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
             {Array.from({ length: 6 }).map((_, i) => <ProductCardSkeleton key={i} />)}
           </div>
         </>
-      ) : filtered.filter(p => !p.sellerPremium && !p.sellerVerified).length === 0 ? (
+      ) : groupedCards.length === 0 ? (
         <div style={{ textAlign: "center", padding: 40 }}>
           <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke={C.greyDark} strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: 12, opacity: 0.5 }}><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
           <p style={{ color: C.greyDark }}>No products yet. Be the first to add one!</p>
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 12 }}>
-          {filtered.filter(p => !p.sellerPremium && !p.sellerVerified).map(p => (
-            <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
-              <div style={{ height: 110, overflow: "hidden", background: C.grey, position: "relative" }}>
-                {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} onError={e => e.target.style.display = "none"} /> : <ProductPlaceholder name={p.name} category={p.category} />}
-                <div style={{ position: "absolute", top: 6, left: 6 }}><TrendingBadge /></div>
-              </div>
-              <div style={{ padding: 10 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{p.name}</div>
-                <div style={{ color: C.greyDark, fontSize: 11, marginBottom: 6 }}>{p.seller}</div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                  <span style={{ color: C.primary, fontWeight: 800, fontSize: 14 }}>GH₵{p.price}</span>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: C.greyDark, padding: 0 }}
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        await setDoc(doc(db, "productLikes", p.id + "_" + (user?.uid || "guest")), { productId: p.id, userId: user?.uid, createdAt: serverTimestamp() }, { merge: true });
-                      if (p.sellerId && p.sellerId !== user?.uid) await sendNotification(p.sellerId, "like", `${user?.displayName || "Someone"} liked your product "${p.name}"`, user?.displayName, { productId: p.id, fromUserId: user?.uid || null });
-                      }}>
-                      ♥ Like
-                    </button>
-                    <button style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: C.greyDark, padding: 0 }}
-                      onClick={(e) => { e.stopPropagation(); navigator.share ? navigator.share({ title: p.name, text: `Check out ${p.name} for GH₵${p.price} on E-Connect!`, url: window.location.href }) : navigator.clipboard.writeText(window.location.href); }}>
-                      ↗ Share
-                    </button>
-                  </div>
-                </div>
-                <button style={{ ...S.btn(), width: "100%", padding: "7px", fontSize: 12 }} onClick={e => { e.stopPropagation(); addToCart(p); }}>Add to Cart</button>
-              </div>
-            </div>
+          {groupedCards.map((group, gi) => (
+            <RotatingProductCard
+              key={group[0].id}
+              group={group}
+              setSelectedProduct={setSelectedProduct}
+              setPage={setPage}
+              addToCart={addToCart}
+              // Stagger: each card starts its first rotation at a slightly
+              // different time (0–1400 ms spread) so they never all flip together.
+              initialDelay={gi * 200 + Math.floor(Math.random() * 400)}
+            />
           ))}
         </div>
       )}
