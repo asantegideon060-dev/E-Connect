@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { auth, db } from "./firebase";
 import {
   createUserWithEmailAndPassword,
@@ -10,7 +10,7 @@ import {
 import {
   collection, addDoc, getDocs, doc, setDoc,
   getDoc, query, orderBy, onSnapshot, serverTimestamp,
-  where, limit
+  where, limit, deleteDoc
 } from "firebase/firestore";
 
 const THEMES = {
@@ -3277,6 +3277,30 @@ function LivePage({ user, setPage, setCart }) {
 }
 
 
+// ── Error Boundary: catches any uncaught render error in ReelsPage
+// and shows a recovery screen instead of a white crash. ──────────
+class ReelsErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false }; }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(err) { console.error("Reels crash:", err); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ height: "100vh", background: "#111", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
+          <div style={{ fontSize: 48 }}>🎬</div>
+          <div style={{ color: "white", fontWeight: 700, fontSize: 18 }}>Something went wrong</div>
+          <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 14 }}>Tap below to reload Reels</div>
+          <button style={{ background: "#14B8A6", border: "none", color: "white", borderRadius: 12, padding: "12px 28px", fontSize: 15, fontWeight: 700, cursor: "pointer" }}
+            onClick={() => this.setState({ hasError: false })}>
+            Try Again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function ReelsPage({ user, setPage, setViewingUser }) {
   const [reels, setReels] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -3290,10 +3314,15 @@ function ReelsPage({ user, setPage, setViewingUser }) {
   const [comments, setComments] = useState([]);
   const [newComment, setNewComment] = useState("");
   const [following, setFollowing] = useState({});
+  const [showLikes, setShowLikes] = useState(false);
+  const [reelLikes, setReelLikes] = useState([]);
+  const [likesReelId, setLikesReelId] = useState(null);
+  const [followProcessing, setFollowProcessing] = useState({});
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+
   const touchStartY = useRef(0);
   const videoRefs = useRef({});
-  const overlayOpenRef = useRef(false); // ref so touch handlers always read current value
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const overlayOpenRef = useRef(false);
   const REEL_CATEGORIES = ["Entertainment", "Fashion", "Food", "Tech", "Sports", "Beauty", "Business", "Music", "Comedy"];
 
   // Track on-screen keyboard so the Comments sheet can shrink and avoid
@@ -3309,8 +3338,12 @@ function ReelsPage({ user, setPage, setViewingUser }) {
 
   const fetchReels = async () => {
     setLoading(true);
-    const snap = await getDocs(query(collection(db, "reels"), orderBy("createdAt", "desc")));
-    setReels(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => !r.deleted));
+    try {
+      const snap = await getDocs(query(collection(db, "reels"), orderBy("createdAt", "desc")));
+      setReels(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => !r.deleted));
+    } catch (err) {
+      console.error("Failed to load reels:", err);
+    }
     setLoading(false);
   };
 
@@ -3392,9 +3425,6 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     }
   };
 
-  const [showLikes, setShowLikes] = useState(false);
-  const [reelLikes, setReelLikes] = useState([]);
-  const [likesReelId, setLikesReelId] = useState(null);
 
   const loadLikes = async (reelId) => {
     setLikesReelId(reelId);
@@ -3403,7 +3433,6 @@ function ReelsPage({ user, setPage, setViewingUser }) {
     setShowLikes(true);
   };
 
-  const [followProcessing, setFollowProcessing] = useState({});
 
   const handleFollow = async (reel) => {
     if (!user || followProcessing[reel.userId]) return;
@@ -3424,9 +3453,11 @@ function ReelsPage({ user, setPage, setViewingUser }) {
   };
 
   const handleShare = (reel) => {
-    if (navigator.share) navigator.share({ title: reel.description, text: `Watch on E-Connect!`, url: window.location.href });
-    else navigator.clipboard.writeText(window.location.href);
-    setReels(prev => prev.map(r => r.id === reel.id ? { ...r, shares: (r.shares || 0) + 1 } : r));
+    try {
+      if (navigator.share) navigator.share({ title: reel.description, text: `Watch on E-Connect!`, url: window.location.href });
+      else navigator.clipboard?.writeText(window.location.href);
+      setReels(prev => prev.map(r => r.id === reel.id ? { ...r, shares: (r.shares || 0) + 1 } : r));
+    } catch (err) { console.error("Share error:", err); }
   };
 
   const loadComments = async (reelId) => {
@@ -3530,14 +3561,29 @@ function ReelsPage({ user, setPage, setViewingUser }) {
 
   const reel = reels[currentIndex];
 
+  // Safety net: if the reel at the current index is undefined (e.g. after
+  // a deletion caused the list to shrink), clamp the index and render
+  // nothing until React re-renders with the corrected index.
+  if (!reel) {
+    if (reels.length > 0) setCurrentIndex(Math.max(0, reels.length - 1));
+    return <div style={{ height: "100vh", background: "#000", display: "flex", alignItems: "center", justifyContent: "center" }}><span style={{ color: "white", fontSize: 18 }}>Loading...</span></div>;
+  }
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000", zIndex: 50, fontFamily: FONT, overflow: "hidden" }}
       onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
 
-      <video key={reel.id} ref={el => videoRefs.current[currentIndex] = el}
-        src={reel.videoUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }}
-        loop muted={muted} playsInline autoPlay
-        onClick={() => { const v = videoRefs.current[currentIndex]; if (v) v.paused ? v.play() : v.pause(); }} />
+      {reel.videoUrl ? (
+        <video key={reel.id} ref={el => videoRefs.current[currentIndex] = el}
+          src={reel.videoUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }}
+          loop muted={muted} playsInline autoPlay
+          onClick={() => { const v = videoRefs.current[currentIndex]; if (v) v.paused ? v.play() : v.pause(); }}
+          onError={() => console.warn("Video failed to load:", reel.videoUrl)} />
+      ) : (
+        <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#111" }}>
+          <span style={{ color: "rgba(255,255,255,0.4)", fontSize: 40 }}>🎬</span>
+        </div>
+      )}
 
       <div style={{ position: "absolute", inset: 0, background: "linear-gradient(transparent 50%, rgba(0,0,0,0.75) 100%)", pointerEvents: "none" }} />
 
@@ -5016,6 +5062,58 @@ function Profile({ user, setPage, setUser, theme, setTheme, setViewingPublicProf
   const [isPremium, setIsPremium] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [profileViewsCount, setProfileViewsCount] = useState(0);
+  const [myReels, setMyReels] = useState([]);
+  const [myAds, setMyAds] = useState([]);
+  const [deletingId, setDeletingId] = useState(null); // tracks which item is being deleted
+
+  const fetchMyContent = async () => {
+    if (!user) return;
+    const [reelsSnap, adsSnap] = await Promise.all([
+      getDocs(query(collection(db, "reels"), where("userId", "==", user.uid), orderBy("createdAt", "desc"))),
+      getDocs(query(collection(db, "ads"), where("userId", "==", user.uid))),
+    ]);
+    setMyReels(reelsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => !r.deleted));
+    setMyAds(adsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(a => a.status !== "deleted"));
+  };
+
+  const handleDeleteProduct = async (p) => {
+    if (!window.confirm(`Permanently delete "${p.name}"? This cannot be undone.`)) return;
+    setDeletingId(p.id);
+    try {
+      await deleteDoc(doc(db, "products", p.id));
+      setMyProducts(prev => prev.filter(x => x.id !== p.id));
+    } catch (err) {
+      console.error(err);
+      alert("Failed to delete product. Please try again.");
+    }
+    setDeletingId(null);
+  };
+
+  const handleDeleteReel = async (r) => {
+    if (!window.confirm(`Permanently delete this reel? This cannot be undone.`)) return;
+    setDeletingId(r.id);
+    try {
+      await deleteDoc(doc(db, "reels", r.id));
+      setMyReels(prev => prev.filter(x => x.id !== r.id));
+    } catch (err) {
+      console.error(err);
+      alert("Failed to delete reel. Please try again.");
+    }
+    setDeletingId(null);
+  };
+
+  const handleDeleteAd = async (a) => {
+    if (!window.confirm(`Permanently delete this promoted ad? This cannot be undone.`)) return;
+    setDeletingId(a.id);
+    try {
+      await deleteDoc(doc(db, "ads", a.id));
+      setMyAds(prev => prev.filter(x => x.id !== a.id));
+    } catch (err) {
+      console.error(err);
+      alert("Failed to delete ad. Please try again.");
+    }
+    setDeletingId(null);
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -5040,11 +5138,12 @@ function Profile({ user, setPage, setUser, theme, setTheme, setViewingPublicProf
       }
     });
     getDocs(query(collection(db, "orders"), where("userId", "==", user.uid))).then(snap => setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid))).then(snap => setMyProducts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    getDocs(query(collection(db, "products"), where("sellerId", "==", user.uid))).then(snap => setMyProducts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(p => !p.deleted)));
     getDocs(collection(db, "users", user.uid, "followers")).then(snap => setFollowers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users", user.uid, "following")).then(snap => setFollowing(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users", user.uid, "friends")).then(snap => setFriends(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
     getDocs(collection(db, "users", user.uid, "profileViews")).then(snap => setProfileViewsCount(snap.size));
+    fetchMyContent();
   }, [user]);
 
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -5167,8 +5266,8 @@ function Profile({ user, setPage, setUser, theme, setTheme, setViewingPublicProf
       </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16, overflowX: "auto", paddingBottom: 4 }}>
-        {["orders", "products", "followers", "following", "friends"].map(t => (
-          <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 14px", textTransform: "capitalize", whiteSpace: "nowrap", flexShrink: 0 }} onClick={() => setTab(t)}>{t}</button>
+        {["orders", "products", "reels", "ads", "followers", "following", "friends"].map(t => (
+          <button key={t} style={{ ...S.btn(tab === t ? "primary" : "grey"), padding: "8px 14px", textTransform: "capitalize", whiteSpace: "nowrap", flexShrink: 0 }} onClick={() => setTab(t)}>{t === "ads" ? "My Ads" : t === "reels" ? "Reels" : t}</button>
         ))}
       </div>
 
@@ -5212,10 +5311,14 @@ function Profile({ user, setPage, setUser, theme, setTheme, setViewingPublicProf
             <div key={p.id} style={{ ...S.card, overflow: "hidden" }}>
               <div style={{ height: 120, background: C.grey, overflow: "hidden", position: "relative" }}>
                 {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
-                <button style={{ position: "absolute", top: 6, right: 6, background: C.white, border: "none", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", color: C.primary, boxShadow: "0 1px 4px rgba(0,0,0,0.15)" }}
-                  onClick={() => setEditingProduct(p)}>
-                  Edit
-                </button>
+                <div style={{ position: "absolute", top: 6, right: 6, display: "flex", gap: 4 }}>
+                  <button style={{ background: C.white, border: "none", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", color: C.primary, boxShadow: "0 1px 4px rgba(0,0,0,0.15)" }}
+                    onClick={() => setEditingProduct(p)}>Edit</button>
+                  <button style={{ background: "#EF4444", border: "none", borderRadius: 8, padding: "4px 8px", fontSize: 11, fontWeight: 700, cursor: "pointer", color: "white", boxShadow: "0 1px 4px rgba(0,0,0,0.15)", opacity: deletingId === p.id ? 0.5 : 1 }}
+                    disabled={deletingId === p.id} onClick={() => handleDeleteProduct(p)}>
+                    {deletingId === p.id ? "..." : "🗑️"}
+                  </button>
+                </div>
               </div>
               <div style={{ padding: 10 }}>
                 <div style={{ fontWeight: 700, fontSize: 13 }}>{p.name}</div>
@@ -5225,6 +5328,63 @@ function Profile({ user, setPage, setUser, theme, setTheme, setViewingPublicProf
             </div>
           ))}
         </div>
+      )}
+
+      {tab === "reels" && (
+        myReels.length === 0
+          ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>No reels yet. Upload one from the Reels tab!</div>
+          : <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 12 }}>
+            {myReels.map(r => (
+              <div key={r.id} style={{ ...S.card, overflow: "hidden", position: "relative" }}>
+                <div style={{ height: 180, background: "#000", overflow: "hidden", position: "relative" }}>
+                  <video src={r.videoUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted preload="metadata" />
+                  <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="white" opacity="0.85"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  </div>
+                  <div style={{ position: "absolute", bottom: 6, left: 6, right: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ color: "white", fontSize: 11, fontWeight: 600 }}>❤️ {r.likes || 0}</span>
+                    <button style={{ background: "#EF4444", border: "none", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer", color: "white", opacity: deletingId === r.id ? 0.5 : 1 }}
+                      disabled={deletingId === r.id} onClick={() => handleDeleteReel(r)}>
+                      {deletingId === r.id ? "..." : "🗑️ Delete"}
+                    </button>
+                  </div>
+                </div>
+                <div style={{ padding: 8 }}>
+                  <div style={{ fontWeight: 700, fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.caption || "No caption"}</div>
+                  <div style={{ fontSize: 11, color: C.greyDark }}>{r.category}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+      )}
+
+      {tab === "ads" && (
+        myAds.length === 0
+          ? <div style={{ textAlign: "center", padding: 40, color: C.greyDark }}>No promoted ads yet. Create one from My Store!</div>
+          : <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {myAds.map(a => (
+              <div key={a.id} style={{ ...S.card, overflow: "hidden", display: "flex", alignItems: "center", gap: 12, padding: 12 }}>
+                <div style={{ width: 64, height: 64, borderRadius: 10, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
+                  {a.imageUrl
+                    ? <img src={a.imageUrl} alt={a.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 }}>📢</div>}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 14, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.title || a.businessName}</div>
+                  <div style={{ fontSize: 12, color: C.greyDark, marginTop: 2 }}>{a.adType === "video" ? "🎥 Video ad" : "🖼️ Image ad"}</div>
+                  <div style={{ marginTop: 4 }}>
+                    <span style={{ background: a.status === "approved" ? "#dcfce7" : a.status === "pending" ? "#fef9c3" : "#fee2e2", color: a.status === "approved" ? "#16a34a" : a.status === "pending" ? "#ca8a04" : "#dc2626", fontSize: 10, fontWeight: 700, borderRadius: 6, padding: "2px 8px" }}>
+                      {a.status === "approved" ? "✅ Live" : a.status === "pending" ? "⏳ Pending" : a.status}
+                    </span>
+                  </div>
+                </div>
+                <button style={{ background: "#EF4444", border: "none", borderRadius: 10, padding: "8px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer", color: "white", flexShrink: 0, opacity: deletingId === a.id ? 0.5 : 1 }}
+                  disabled={deletingId === a.id} onClick={() => handleDeleteAd(a)}>
+                  {deletingId === a.id ? "..." : "🗑️ Delete"}
+                </button>
+              </div>
+            ))}
+          </div>
       )}
 
       {tab === "followers" && (
@@ -6099,7 +6259,7 @@ export default function App() {
       case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} user={user} />;
       case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
-      case "reels": return <ReelsPage user={user} setPage={setPage} setViewingUser={goToPublicProfile} />;
+      case "reels": return <ReelsErrorBoundary><ReelsPage user={user} setPage={setPage} setViewingUser={goToPublicProfile} /></ReelsErrorBoundary>;
       case "live": return <LivePage user={user} setPage={setPage} setCart={setCart} />;
       case "notifications": return <NotificationsPage user={user} setPage={setPage} setChatSeller={setChatSeller} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} />;
       case "orders": return <OrderTrackingPage user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
