@@ -88,6 +88,195 @@ const S = {
 };
 
 // ── Auth Page ──────────────────────────────────────────────────
+// ── Splash Screen ──────────────────────────────────────────────
+// Cinematic 4-second dark-premium intro. Sequence:
+// 0.0s  — Black screen
+// 0.3s  — Central glow pulse appears
+// 0.8s  — Logo fades + scales in
+// 1.6s  — Tagline types itself out
+// 2.4s  — Floating market icons drift upward
+// 3.2s  — Ghana-flag color wave sweeps across
+// 4.0s  — Whole screen zooms into centre (handled by auth state change)
+function SplashScreen() {
+  const [phase, setPhase] = useState(0); // 0=black, 1=glow, 2=logo, 3=tagline, 4=icons, 5=wave
+
+  useEffect(() => {
+    const timers = [
+      setTimeout(() => setPhase(1), 300),
+      setTimeout(() => setPhase(2), 800),
+      setTimeout(() => setPhase(3), 1600),
+      setTimeout(() => setPhase(4), 2400),
+      setTimeout(() => setPhase(5), 3200),
+    ];
+    return () => timers.forEach(clearTimeout);
+  }, []);
+
+  const TAGLINE = "Ghana's Social Commerce Platform";
+  const [typedChars, setTypedChars] = useState(0);
+
+  useEffect(() => {
+    if (phase < 3) return;
+    setTypedChars(0);
+    let i = 0;
+    const t = setInterval(() => {
+      i++;
+      setTypedChars(i);
+      if (i >= TAGLINE.length) clearInterval(t);
+    }, 45);
+    return () => clearInterval(t);
+  }, [phase]);
+
+  const ICONS = ["👗", "👟", "📱", "🛍️", "💍", "🎧", "👜", "⌚"];
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "#050a0a",
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      overflow: "hidden", fontFamily: FONT,
+      transition: phase >= 5 ? "transform 0.8s ease-in" : "none",
+    }}>
+      <style>{`
+        @keyframes glowPulse {
+          0%, 100% { opacity: 0.3; transform: scale(1); }
+          50% { opacity: 0.7; transform: scale(1.15); }
+        }
+        @keyframes floatUp {
+          0% { transform: translateY(120px) scale(0.6); opacity: 0; }
+          30% { opacity: 1; }
+          100% { transform: translateY(-80px) scale(1); opacity: 0; }
+        }
+        @keyframes waveSlide {
+          0% { transform: translateX(-110%); }
+          100% { transform: translateX(110%); }
+        }
+        @keyframes logoIn {
+          0% { opacity: 0; transform: scale(0.6); filter: blur(8px); }
+          100% { opacity: 1; transform: scale(1); filter: blur(0px); }
+        }
+        @keyframes ringPop {
+          0% { transform: scale(0.5); opacity: 0; }
+          60% { transform: scale(1.1); opacity: 1; }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes shimmerGold {
+          0% { left: -60%; }
+          100% { left: 160%; }
+        }
+        @keyframes cursorBlink {
+          0%, 100% { opacity: 1; } 50% { opacity: 0; }
+        }
+      `}</style>
+
+      {/* ── Radial glow behind logo ── */}
+      {phase >= 1 && (
+        <div style={{
+          position: "absolute", width: 340, height: 340, borderRadius: "50%",
+          background: `radial-gradient(circle, ${C.primary}35 0%, transparent 70%)`,
+          animation: "glowPulse 2s ease-in-out infinite",
+        }} />
+      )}
+
+      {/* ── Outer decorative rings ── */}
+      {phase >= 1 && (
+        <>
+          <div style={{ position: "absolute", width: 280, height: 280, borderRadius: "50%", border: `1px solid ${C.primary}18`, animation: "ringPop 0.6s ease-out forwards" }} />
+          <div style={{ position: "absolute", width: 360, height: 360, borderRadius: "50%", border: `1px solid ${C.primary}10`, animation: "ringPop 0.8s ease-out forwards" }} />
+          <div style={{ position: "absolute", width: 440, height: 440, borderRadius: "50%", border: `1px solid ${C.primary}08`, animation: "ringPop 1s ease-out forwards" }} />
+        </>
+      )}
+
+      {/* ── Logo ── */}
+      {phase >= 2 && (
+        <div style={{ zIndex: 10, display: "flex", flexDirection: "column", alignItems: "center", gap: 22 }}>
+          <div style={{ position: "relative", animation: "logoIn 0.7s cubic-bezier(0.34,1.56,0.64,1) forwards" }}>
+            <img
+              src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg"
+              alt="E-Connect"
+              style={{
+                width: 130, height: 130, borderRadius: 30,
+                boxShadow: `0 0 60px ${C.primary}60, 0 0 120px ${C.primary}25, 0 20px 40px rgba(0,0,0,0.5)`,
+                border: `1px solid ${C.primary}40`,
+              }}
+            />
+            {/* Gold shimmer sweep over logo */}
+            <div style={{
+              position: "absolute", inset: 0, borderRadius: 30, overflow: "hidden", pointerEvents: "none"
+            }}>
+              <div style={{
+                position: "absolute", top: 0, bottom: 0, width: "60%",
+                background: "linear-gradient(90deg, transparent, rgba(255,220,80,0.25), transparent)",
+                animation: "shimmerGold 2s ease-in-out 1s infinite",
+              }} />
+            </div>
+          </div>
+
+          {/* Brand name */}
+          <div style={{ textAlign: "center" }}>
+            <div style={{ color: "white", fontWeight: 900, fontSize: 32, letterSpacing: 2, textShadow: `0 0 20px ${C.primary}80` }}>
+              E-Connect
+            </div>
+            <div style={{ color: `${C.primary}`, fontWeight: 500, fontSize: 11, letterSpacing: 4, textTransform: "uppercase", marginTop: 4, opacity: 0.8 }}>
+              Easy Connect
+            </div>
+          </div>
+
+          {/* Tagline typewriter */}
+          {phase >= 3 && (
+            <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 13, letterSpacing: 0.5, minHeight: 20, textAlign: "center" }}>
+              {TAGLINE.slice(0, typedChars)}
+              <span style={{ animation: "cursorBlink 0.8s infinite", color: C.primary, fontWeight: 700 }}>|</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Floating market icons drifting up ── */}
+      {phase >= 4 && ICONS.map((icon, i) => (
+        <div key={i} style={{
+          position: "absolute",
+          left: `${10 + i * 11}%`,
+          bottom: 0,
+          fontSize: 22,
+          animation: `floatUp ${1.2 + i * 0.15}s ease-out ${i * 0.12}s forwards`,
+          zIndex: 5,
+          pointerEvents: "none",
+        }}>
+          {icon}
+        </div>
+      ))}
+
+      {/* ── Ghana flag colour wave ── */}
+      {phase >= 5 && (
+        <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden", zIndex: 8 }}>
+          {[
+            { color: "#006B3F", delay: "0s" },     // Green
+            { color: "#FCD116", delay: "0.15s" },  // Gold
+            { color: "#CE1126", delay: "0.3s" },   // Red
+          ].map((stripe, i) => (
+            <div key={i} style={{
+              position: "absolute",
+              top: 0, bottom: 0,
+              width: "55%",
+              background: `${stripe.color}18`,
+              animation: `waveSlide 1s ease-in-out ${stripe.delay} forwards`,
+            }} />
+          ))}
+        </div>
+      )}
+
+      {/* ── Bottom tagline bar ── */}
+      <div style={{
+        position: "absolute", bottom: 48, textAlign: "center",
+        opacity: phase >= 2 ? 1 : 0, transition: "opacity 1s",
+      }}>
+        <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 11, letterSpacing: 2 }}>
+          BUY · SELL · CONNECT
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Auth({ setUser }) {
   const [isLogin, setIsLogin] = useState(true);
   const [form, setForm] = useState({ name: "", email: "", password: "", phone: "" });
@@ -2167,7 +2356,7 @@ function PremiumCarousel({ products, setSelectedProduct, setPage }) {
 // If it has 2+, automatically cycles every 2 s with a fade transition,
 // pauses on hover/touch-start, and always opens whichever product is
 // currently visible when clicked or when "Add to Cart" is tapped.
-function RotatingProductCard({ group, setSelectedProduct, setPage, addToCart, initialDelay = 0 }) {
+function RotatingProductCard({ group, setSelectedProduct, setSelectedProductGroup, setPage, addToCart, initialDelay = 0 }) {
   const [activeIdx, setActiveIdx] = useState(0);
   const [visible, setVisible] = useState(true); // drives opacity fade
   const [frozen, setFrozen] = useState(false);
@@ -2204,7 +2393,7 @@ function RotatingProductCard({ group, setSelectedProduct, setPage, addToCart, in
 
   return (
     <div style={{ ...S.card, overflow: "hidden", cursor: "pointer", position: "relative" }}
-      onClick={() => { setSelectedProduct(p); setPage("product"); }}
+      onClick={() => { setSelectedProduct(p); setSelectedProductGroup(group.length > 1 ? group : null); setPage("product"); }}
       onMouseEnter={freeze} onMouseLeave={unfreeze}
       onTouchStart={freeze} onTouchEnd={unfreeze}>
 
@@ -2270,7 +2459,7 @@ function ProductCardSkeleton() {
   );
 }
 
-function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPublicProfile, setChatSeller }) {
+function Home({ user, cart, setCart, setPage, setSelectedProduct, setSelectedProductGroup, setViewingPublicProfile, setChatSeller }) {
   const [products, setProducts] = useState([]);
   const [activeCategory, setActiveCategory] = useState("All");
   const [search, setSearch] = useState("");
@@ -2544,10 +2733,9 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
               key={group[0].id}
               group={group}
               setSelectedProduct={setSelectedProduct}
+              setSelectedProductGroup={setSelectedProductGroup}
               setPage={setPage}
               addToCart={addToCart}
-              // Stagger: each card starts its first rotation at a slightly
-              // different time (0–1400 ms spread) so they never all flip together.
               initialDelay={gi * 200 + Math.floor(Math.random() * 400)}
             />
           ))}
@@ -2560,90 +2748,73 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setViewingPubl
 }
 
 // ── Product Detail ─────────────────────────────────────────────
-function ProductDetail({ product, setCart, setPage, user, startChat }) {
+function ProductDetail({ product, productGroup, setCart, setPage, user, startChat }) {
+  // ── Active group index: which product in the group is being viewed ──
+  // When a single product is opened (no group), we treat it as a group of 1.
+  const group = (productGroup && productGroup.length > 1) ? productGroup : [product];
+  const initialIdx = productGroup ? productGroup.findIndex(p => p.id === product.id) : 0;
+
+  const [activeIdx, setActiveIdx] = useState(Math.max(0, initialIdx));
   const [review, setReview] = useState("");
   const [rating, setRating] = useState(5);
   const [reviews, setReviews] = useState([]);
   const [submitted, setSubmitted] = useState(false);
-  const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  // Tracked separately from currentImageIndex per spec, but kept in sync
-  // by default: tapping a dot/thumbnail/variant chip updates both, so the
-  // "variant" the buyer sees always matches the image they're looking at.
-  const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);
-
-  useEffect(() => {
-    if (!product) return;
-    const q = query(collection(db, "reviews"), where("productId", "==", product.id));
-    getDocs(q).then(snap => setReviews(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-  }, [product]);
-
-  if (!product) return null;
-
   const [sellerData, setSellerData] = useState(null);
+  const pageTopRef = useRef(null);
 
-  // Track product view & load seller data
-  useEffect(() => {
-    if (!product?.id || !product?.sellerId) return;
-    addDoc(collection(db, "productViews"), {
-      productId: product.id, sellerId: product.sellerId,
-      viewedAt: serverTimestamp(),
-    }).catch(() => {});
-    getDoc(doc(db, "users", product.sellerId)).then(d => {
-      if (d.exists()) setSellerData(d.data());
-    }).catch(() => {});
-    // Track recently viewed in localStorage (most recent first, max 20, no duplicates)
-    try {
-      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
-      const updated = [product.id, ...rv.filter(id => id !== product.id)].slice(0, 20);
-      localStorage.setItem("econnect-recently-viewed", JSON.stringify(updated));
-    } catch (e) {}
-  }, [product?.id]);
+  // The product that all detail text, price, and actions are bound to
+  const activeProduct = group[activeIdx] || group[0];
 
-  // Reset to the first image/variant whenever a different product is opened
-  useEffect(() => {
-    setCurrentImageIndex(0);
-    setSelectedVariantIndex(0);
-  }, [product?.id]);
-
-  // Helper: update both the carousel position AND the selected variant
-  // together, so swiping the carousel, tapping a thumbnail, or tapping a
-  // dot all keep the variant picker in sync (and vice versa).
-  const selectImageAndVariant = (i) => {
-    setCurrentImageIndex(i);
-    setSelectedVariantIndex(i);
+  const selectProduct = (i) => {
+    setActiveIdx(i);
+    // Scroll to top so the image change is immediately visible
+    pageTopRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // Attach sellerData to product for rendering
-  const productWithSeller = { ...product, sellerData };
+  useEffect(() => {
+    if (!activeProduct?.id) return;
+    const q = query(collection(db, "reviews"), where("productId", "==", activeProduct.id));
+    getDocs(q).then(snap => setReviews(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(() => {});
+  }, [activeProduct?.id]);
 
-  // ── Slider data: all images for this product, falling back to the
-  // single legacy `image` field for older listings. ──
-  const productImages = (product.images && product.images.length > 0)
-    ? product.images
-    : (product.image ? [product.image] : []);
+  useEffect(() => {
+    if (!activeProduct?.id || !activeProduct?.sellerId) return;
+    addDoc(collection(db, "productViews"), {
+      productId: activeProduct.id, sellerId: activeProduct.sellerId, viewedAt: serverTimestamp(),
+    }).catch(() => {});
+    getDoc(doc(db, "users", activeProduct.sellerId)).then(d => {
+      if (d.exists()) setSellerData(d.data());
+    }).catch(() => {});
+    try {
+      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
+      const updated = [activeProduct.id, ...rv.filter(id => id !== activeProduct.id)].slice(0, 20);
+      localStorage.setItem("econnect-recently-viewed", JSON.stringify(updated));
+    } catch (e) {}
+  }, [activeProduct?.id]);
 
-  // ── Variant labels tied 1:1 to each image. Sellers can optionally
-  // provide `product.variantLabels` (array of strings, same length as
-  // images, e.g. ["Red", "Black", "Blue"]). If not provided, we fall
-  // back to generic "Option N" labels so the picker still works. ──
-  const variantLabels = productImages.map((_, i) => product.variantLabels?.[i] || `Option ${i + 1}`);
+  // Reset to initial product if the product prop changes (navigating from elsewhere)
+  useEffect(() => {
+    const idx = productGroup ? productGroup.findIndex(p => p.id === product?.id) : 0;
+    setActiveIdx(Math.max(0, idx));
+  }, [product?.id]);
+
+  if (!activeProduct) return null;
+
+  // ── Images: use the active product's images array, or its single image ──
+  const productImages = (activeProduct.images && activeProduct.images.length > 0)
+    ? activeProduct.images
+    : (activeProduct.image ? [activeProduct.image] : []);
 
   const addToCart = () => {
     const cartItem = {
-      ...product,
+      ...activeProduct,
       qty: 1,
-      // ── DATA STATE RETENTION: capture the exact image AND variant the
-      // buyer had selected at the moment they tapped Add to Cart. ──
-      currentImageIndex,
-      selectedVariantIndex,
-      selectedImageIndex: currentImageIndex,
-      selectedImage: productImages[currentImageIndex] || product.image,
-      selectedVariant: variantLabels[selectedVariantIndex] || null,
+      selectedImage: productImages[0] || activeProduct.image,
+      selectedVariant: activeProduct.name,
     };
     setCart(prev => {
-      // Treat different variants of the same product as distinct cart lines
-      const ex = prev.find(i => i.id === product.id && i.selectedVariantIndex === selectedVariantIndex);
-      if (ex) return prev.map(i => (i.id === product.id && i.selectedVariantIndex === selectedVariantIndex) ? { ...i, qty: i.qty + 1 } : i);
+      const ex = prev.find(i => i.id === activeProduct.id);
+      if (ex) return prev.map(i => i.id === activeProduct.id ? { ...i, qty: i.qty + 1 } : i);
       return [...prev, cartItem];
     });
     setPage("cart");
@@ -2651,88 +2822,119 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
 
   const submitReview = async () => {
     if (!review.trim()) return;
-    await addDoc(collection(db, "reviews"), { productId: product.id, text: review, rating, createdAt: serverTimestamp() });
+    await addDoc(collection(db, "reviews"), { productId: activeProduct.id, text: review, rating, createdAt: serverTimestamp() });
     setSubmitted(true);
     setReview("");
   };
 
+  const shopStatus = sellerData ? getShopStatus({ ...activeProduct, ...sellerData }) : null;
+
   return (
-    <div style={S.page}>
+    <div style={S.page} ref={pageTopRef}>
       <button style={{ ...S.btn("grey"), marginBottom: 16, color: C.text }} onClick={() => setPage("home")}>← Back</button>
       <div style={S.card}>
-        <div style={{ height: 260, overflow: "hidden", borderRadius: "14px 14px 0 0", background: C.grey }}>
+
+        {/* ── Main image: carousel if the active product has multiple images ── */}
+        <div style={{ height: 280, overflow: "hidden", borderRadius: "14px 14px 0 0", background: C.grey, position: "relative" }}>
           {productImages.length > 1
-            ? <ProductImageCarousel images={productImages} height={260} autoRotate={false} activeIndex={currentImageIndex} onIndexChange={selectImageAndVariant} />
-            : productImages[0] ? <img src={productImages[0]} alt={product.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={product.name} category={product.category} />}
+            ? <ProductImageCarousel images={productImages} height={280} autoRotate={false} />
+            : productImages[0]
+              ? <img src={productImages[0]} alt={activeProduct.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              : <ProductPlaceholder name={activeProduct.name} category={activeProduct.category} />}
+          {group.length > 1 && (
+            <div style={{ position: "absolute", top: 10, right: 10, background: "rgba(0,0,0,0.55)", borderRadius: 12, padding: "4px 10px", fontSize: 11, color: "white", fontWeight: 700 }}>
+              {activeIdx + 1} / {group.length} items
+            </div>
+          )}
         </div>
 
-        {/* ── Thumbnail row: tap any thumbnail to jump the carousel to that image ── */}
-        {productImages.length > 1 && (
-          <div style={{ display: "flex", gap: 8, padding: "10px 14px 0", overflowX: "auto" }}>
-            {productImages.map((img, i) => (
-              <div key={i} onClick={() => selectImageAndVariant(i)}
-                style={{ width: 52, height: 52, borderRadius: 8, overflow: "hidden", flexShrink: 0, cursor: "pointer", border: i === currentImageIndex ? `2px solid ${C.primary}` : `2px solid transparent`, opacity: i === currentImageIndex ? 1 : 0.6, transition: "opacity 0.2s, border-color 0.2s" }}>
-                <img src={img} alt={`Photo ${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-              </div>
-            ))}
+        {/* ── Thumbnail row: one thumb per PRODUCT in the group ── */}
+        {group.length > 1 && (
+          <div style={{ display: "flex", gap: 8, padding: "12px 14px 0", overflowX: "auto" }}>
+            {group.map((p, i) => {
+              const thumb = (p.images && p.images[0]) || p.image;
+              return (
+                <div key={p.id} onClick={() => selectProduct(i)}
+                  style={{ flexShrink: 0, cursor: "pointer", textAlign: "center", width: 60 }}>
+                  <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", border: i === activeIdx ? `2.5px solid ${C.primary}` : `2px solid transparent`, opacity: i === activeIdx ? 1 : 0.55, transition: "all 0.2s", marginBottom: 4 }}>
+                    {thumb
+                      ? <img src={thumb} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      : <ProductPlaceholder name={p.name} category={p.category} />}
+                  </div>
+                  <div style={{ fontSize: 9, fontWeight: i === activeIdx ? 800 : 500, color: i === activeIdx ? C.primary : C.greyDark, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {p.name.split(" ").slice(0, 2).join(" ")}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
+
         <div style={{ padding: 20 }}>
-          <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 4 }}>{product.category}</div>
-          <h2 style={{ fontWeight: 800, fontSize: 22, margin: "0 0 4px" }}>{product.name}</h2>
+          {/* ── All text dynamically bound to activeProduct ── */}
+          <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 4 }}>{activeProduct.category}</div>
+          <h2 style={{ fontWeight: 800, fontSize: 22, margin: "0 0 4px" }}>{activeProduct.name}</h2>
           <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
-            By {product.seller}
-            {product.sellerPremium && <PremiumBadge size={18} />}
-            {!product.sellerPremium && product.sellerVerified && <VerifiedBadge size={15} />}
-            {!product.sellerPremium && !product.sellerVerified && product.isSeller && <TrendingBadge />}
+            By {activeProduct.seller}
+            {activeProduct.sellerPremium && <PremiumBadge size={18} />}
+            {!activeProduct.sellerPremium && activeProduct.sellerVerified && <VerifiedBadge size={15} />}
           </div>
-          {productWithSeller.sellerData && (() => {
-            const status = getShopStatus(product.sellerData);
-            if (!status.label) return null;
-            return (
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: status.isOpen ? "#e6faf8" : "#FEE2E2", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 600, color: status.isOpen ? C.success : C.error, marginBottom: 12 }}>
-                {status.label}
-              </div>
-            );
-          })()}
-          {productWithSeller.sellerData && !getShopStatus(productWithSeller.sellerData).isOpen && (
+          {shopStatus?.label && (
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: shopStatus.isOpen ? "#e6faf8" : "#FEE2E2", borderRadius: 20, padding: "4px 12px", fontSize: 12, fontWeight: 600, color: shopStatus.isOpen ? C.success : C.error, marginBottom: 12 }}>
+              {shopStatus.label}
+            </div>
+          )}
+          {shopStatus && !shopStatus.isOpen && (
             <div style={{ background: "#FEE2E2", border: "1px solid #FECACA", borderRadius: 10, padding: "10px 14px", marginBottom: 12, fontSize: 13, color: C.error, fontWeight: 600 }}>
               ⚠️ This shop is currently closed. You can still add to cart but the seller may not respond until they reopen.
             </div>
           )}
-          <div style={{ color: C.primary, fontWeight: 800, fontSize: 28, marginBottom: 12 }}>GH₵{product.price}</div>
-          {product.description && <p style={{ color: C.text, fontSize: 14, lineHeight: 1.6, marginBottom: 16 }}>{product.description}</p>}
+          <div style={{ color: C.primary, fontWeight: 800, fontSize: 28, marginBottom: 12 }}>GH₵{activeProduct.price}</div>
+          {activeProduct.description && (
+            <p style={{ color: C.text, fontSize: 14, lineHeight: 1.6, marginBottom: 16 }}>{activeProduct.description}</p>
+          )}
           <div style={{ background: C.grey, borderRadius: 10, padding: "10px 14px", marginBottom: 16, fontSize: 13, color: C.greyDark }}>
-            📦 {product.stock || 0} items in stock
+            📦 {activeProduct.stock || 0} items in stock
             {sellerData?.storeContact && (
               <> · 📞 Contact: <a href={`tel:${sellerData.storeContact}`} style={{ color: C.greyDark, textDecoration: "underline" }}>{sellerData.storeContact}</a></>
             )}
           </div>
-          {/* ── Variant Selection: mirrors the currently-active image/thumbnail ── */}
-          {productImages.length > 1 && (
-            <div style={{ marginBottom: 14 }}>
+
+          {/* ── Select Item chips: show product names, replace "Option N" labels ── */}
+          {group.length > 1 && (
+            <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: C.greyDark, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                Selected: {variantLabels[selectedVariantIndex]}
+                Select Item: <span style={{ color: C.primary }}>{activeProduct.name}</span>
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {variantLabels.map((label, i) => (
-                  <button key={i} onClick={() => selectImageAndVariant(i)}
+                {group.map((p, i) => (
+                  <button key={p.id} onClick={() => selectProduct(i)}
                     style={{
-                      padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: "pointer",
-                      border: i === selectedVariantIndex ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
-                      background: i === selectedVariantIndex ? `${C.primary}12` : C.white,
-                      color: i === selectedVariantIndex ? C.primary : C.text,
+                      padding: "8px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                      border: i === activeIdx ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+                      background: i === activeIdx ? `${C.primary}12` : C.white,
+                      color: i === activeIdx ? C.primary : C.text,
+                      display: "flex", alignItems: "center", gap: 6,
                     }}>
-                    {label}
+                    {((p.images && p.images[0]) || p.image) && (
+                      <img src={(p.images && p.images[0]) || p.image} alt={p.name}
+                        style={{ width: 20, height: 20, borderRadius: 4, objectFit: "cover", flexShrink: 0 }} />
+                    )}
+                    {p.name.length > 14 ? p.name.slice(0, 14) + "…" : p.name}
+                    {i === activeIdx && <span style={{ fontSize: 10 }}>✓</span>}
                   </button>
                 ))}
               </div>
             </div>
           )}
-          <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, marginBottom: 10 }} onClick={addToCart}>Add to Cart</button>
-          {product.sellerId && product.sellerId !== user?.uid && (
+
+          {/* ── Add to Cart: always adds the currently-viewed product ── */}
+          <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, marginBottom: 10 }} onClick={addToCart}>
+            Add to Cart{group.length > 1 ? ` — ${activeProduct.name}` : ""}
+          </button>
+          {activeProduct.sellerId && activeProduct.sellerId !== user?.uid && (
             <button style={{ ...S.btn("outline"), width: "100%", padding: 14, fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-              onClick={() => startChat({ id: product.sellerId, name: product.seller, productName: product.name, productId: product.id })}>
+              onClick={() => startChat({ id: activeProduct.sellerId, name: activeProduct.seller, productName: activeProduct.name, productId: activeProduct.id })}>
               💬 Chat with Seller
             </button>
           )}
@@ -2760,6 +2962,9 @@ function ProductDetail({ product, setCart, setPage, user, startChat }) {
     </div>
   );
 }
+
+
+// ── Cart ───────────────────────────────────────────────────────
 
 // ── Cart ───────────────────────────────────────────────────────
 function Cart({ cart, setCart, setPage, user }) {
@@ -6187,6 +6392,7 @@ function Discover({ setPage, setSelectedProduct, user }) {
   );
 }
 
+
 // ── Main App ───────────────────────────────────────────────────
 export default function App() {
   const [user, setUser] = useState(null);
@@ -6194,6 +6400,7 @@ export default function App() {
   const [page, setPage] = useState("home");
   const [cart, setCart] = useState([]);
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [selectedProductGroup, setSelectedProductGroup] = useState(null); // the full group array when opened from RotatingProductCard
   const [chatSeller, setChatSeller] = useState(null);
   const [viewingPublicProfile, setViewingPublicProfile] = useState(null);
   const [previousPage, setPreviousPage] = useState("home");
@@ -6282,23 +6489,7 @@ export default function App() {
     return () => { unsub(); clearTimeout(bannerTimerRef.current); };
   }, [user]);
 
-  if (loading) return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100vh", fontFamily: FONT, background: "linear-gradient(160deg, #e8faf8 0%, #ffffff 60%, #fff8ee 100%)", position: "relative", overflow: "hidden" }}>
-      {/* Background circles for depth */}
-      <div style={{ position: "absolute", top: -80, right: -80, width: 300, height: 300, borderRadius: "50%", background: `${C.primary}10` }} />
-      <div style={{ position: "absolute", bottom: -60, left: -60, width: 240, height: 240, borderRadius: "50%", background: `#F9731610` }} />
-      {/* Logo */}
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 20, zIndex: 1 }}>
-        <img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ width: 180, height: 180, objectFit: "contain", borderRadius: 32, boxShadow: "0 12px 40px rgba(0,168,150,0.2)" }} />
-        {/* Loading dots */}
-        <div style={{ display: "flex", gap: 8 }}>
-          {[0,1,2].map(i => (
-            <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: C.primary, opacity: 0.4 + i * 0.2 }} />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+  if (loading) return <SplashScreen />;
   if (!user) return <Auth setUser={setUser} />;
 
   const NavIcon = ({ id, active }) => {
@@ -6338,13 +6529,13 @@ export default function App() {
 
   const renderPage = () => {
     switch (page) {
-      case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
+      case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setSelectedProductGroup={setSelectedProductGroup} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
       case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} user={user} />;
-      case "product": return <ProductDetail product={selectedProduct} setCart={setCart} setPage={setPage} user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
+      case "product": return <ProductDetail product={selectedProduct} productGroup={selectedProductGroup} setCart={setCart} setPage={setPage} user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
       case "reels": return <ReelsErrorBoundary><ReelsPage user={user} setPage={setPage} setViewingUser={goToPublicProfile} /></ReelsErrorBoundary>;
       case "live": return <LivePage user={user} setPage={setPage} setCart={setCart} />;
-      case "notifications": return <NotificationsPage user={user} setPage={setPage} setChatSeller={setChatSeller} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} />;
+      case "notifications": return <NotificationsPage user={user} setPage={setPage} setChatSeller={setChatSeller} setSelectedProduct={setSelectedProduct} setSelectedProductGroup={setSelectedProductGroup} setViewingPublicProfile={goToPublicProfile} />;
       case "orders": return <OrderTrackingPage user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "location": return <LocationPage user={user} setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "messages": return <Messages user={user} chatSeller={chatSeller} onChatStarted={() => setChatSeller(null)} />;
@@ -6353,8 +6544,8 @@ export default function App() {
       case "recentlyViewed": return <RecentlyViewedPage setPage={setPage} setSelectedProduct={setSelectedProduct} />;
       case "analytics": return <SellerAnalytics user={user} />;
       case "publicProfile": return <PublicProfile profileUser={viewingPublicProfile} currentUser={user} setPage={setPage} setSelectedProduct={setSelectedProduct} previousPage={previousPage} />;
-      case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
-      default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
+      case "admin": return isAdmin ? <Admin /> : <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setSelectedProductGroup={setSelectedProductGroup} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
+      default: return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setSelectedProductGroup={setSelectedProductGroup} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
     }
   };
 
