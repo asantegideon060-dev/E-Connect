@@ -282,6 +282,9 @@ function Auth({ setUser }) {
   const [form, setForm] = useState({ name: "", email: "", password: "", phone: "" });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [focusedField, setFocusedField] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [tabAnimating, setTabAnimating] = useState(false);
 
   const handle = async () => {
     setError(""); setLoading(true);
@@ -307,36 +310,241 @@ function Auth({ setUser }) {
     setLoading(false);
   };
 
+  const switchTab = (login) => {
+    if (loading || isLogin === login) return;
+    setTabAnimating(true);
+    setTimeout(() => { setIsLogin(login); setError(""); setTabAnimating(false); }, 200);
+  };
+
+  // ── Floating product emoji particles ──
+  const PARTICLES = [
+    { emoji: "🛍️", x: "8%",  y: "12%", size: 26, delay: "0s",   dur: "6s"  },
+    { emoji: "👗", x: "85%", y: "8%",  size: 22, delay: "1.2s", dur: "7s"  },
+    { emoji: "📱", x: "70%", y: "22%", size: 20, delay: "0.5s", dur: "5.5s"},
+    { emoji: "👟", x: "15%", y: "35%", size: 24, delay: "2s",   dur: "8s"  },
+    { emoji: "💍", x: "80%", y: "50%", size: 18, delay: "0.8s", dur: "6.5s"},
+    { emoji: "🎧", x: "5%",  y: "60%", size: 22, delay: "1.5s", dur: "7.5s"},
+    { emoji: "👜", x: "88%", y: "70%", size: 20, delay: "0.3s", dur: "5s"  },
+    { emoji: "⌚", x: "20%", y: "75%", size: 18, delay: "2.2s", dur: "6s"  },
+    { emoji: "💄", x: "55%", y: "82%", size: 22, delay: "1s",   dur: "7s"  },
+    { emoji: "🛒", x: "40%", y: "5%",  size: 20, delay: "1.8s", dur: "6.5s"},
+  ];
+
   return (
-    <div style={{ minHeight: "100vh", background: `linear-gradient(135deg, ${C.primary}15, ${C.offWhite})`, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-      <div style={{ ...S.card, padding: 32, maxWidth: 420, width: "100%" }}>
-        <div style={{ textAlign: "center", marginBottom: 28 }}>
-          <img src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg" alt="E-Connect" style={{ height: 80, width: "auto", objectFit: "contain", marginBottom: 4 }} />
-          <div style={{ color: C.greyDark, fontSize: 13 }}>Social Commerce for African Businesses</div>
+    <div style={{ position: "fixed", inset: 0, fontFamily: FONT, overflow: "hidden" }}>
+      <style>{`
+        @keyframes authBgShift {
+          0%   { background-position: 0% 50%; }
+          50%  { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        @keyframes authFloat {
+          0%   { transform: translateY(0px) rotate(0deg); opacity: 0.18; }
+          33%  { opacity: 0.28; }
+          50%  { transform: translateY(-22px) rotate(8deg); opacity: 0.22; }
+          100% { transform: translateY(0px) rotate(0deg); opacity: 0.18; }
+        }
+        @keyframes authCardIn {
+          0%   { opacity: 0; transform: translateY(40px) scale(0.97); }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes authPulseRing {
+          0%   { transform: scale(1); opacity: 0.6; }
+          100% { transform: scale(1.8); opacity: 0; }
+        }
+        @keyframes authTabSlide {
+          0%   { opacity: 1; }
+          50%  { opacity: 0; transform: translateX(${isLogin ? "-" : ""}10px); }
+          100% { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes authNavBubble {
+          0%   { transform: scale(1); }
+          30%  { transform: scale(1.18); }
+          60%  { transform: scale(0.93); }
+          100% { transform: scale(1); }
+        }
+        @keyframes authSpinner {
+          100% { transform: rotate(360deg); }
+        }
+        .auth-input { 
+          width: 100%; box-sizing: border-box; border: none; outline: none;
+          background: rgba(255,255,255,0.12); border-radius: 16px;
+          padding: 15px 18px; font-size: 14px; font-family: ${FONT};
+          color: white; backdrop-filter: blur(8px);
+          border: 1.5px solid rgba(255,255,255,0.15);
+          transition: border-color 0.25s, background 0.25s, box-shadow 0.25s;
+        }
+        .auth-input::placeholder { color: rgba(255,255,255,0.5); }
+        .auth-input:focus {
+          background: rgba(255,255,255,0.22);
+          border-color: rgba(255,255,255,0.55);
+          box-shadow: 0 0 0 3px rgba(255,255,255,0.08);
+        }
+        .auth-btn-main {
+          width: 100%; padding: 15px; border: none; border-radius: 16px; cursor: pointer;
+          font-size: 15px; font-weight: 800; font-family: ${FONT};
+          background: linear-gradient(135deg, rgba(255,255,255,0.95), rgba(255,255,255,0.85));
+          color: #0d7a70; box-shadow: 0 8px 24px rgba(0,0,0,0.25);
+          transition: transform 0.15s, box-shadow 0.15s, opacity 0.2s;
+          letter-spacing: 0.3px;
+        }
+        .auth-btn-main:active { transform: scale(0.97); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        .auth-btn-main:disabled { opacity: 0.65; }
+      `}</style>
+
+      {/* ── Animated gradient background ── */}
+      <div style={{
+        position: "absolute", inset: 0, zIndex: 0,
+        background: "linear-gradient(-45deg, #0d7a70, #14b8a6, #0891b2, #1d4ed8, #7c3aed, #0d7a70)",
+        backgroundSize: "400% 400%",
+        animation: "authBgShift 12s ease infinite",
+      }} />
+
+      {/* ── Dark overlay for depth ── */}
+      <div style={{ position: "absolute", inset: 0, zIndex: 1, background: "rgba(0,0,0,0.38)" }} />
+
+      {/* ── Floating emoji particles ── */}
+      {PARTICLES.map((p, i) => (
+        <div key={i} style={{
+          position: "absolute", left: p.x, top: p.y, fontSize: p.size, zIndex: 2,
+          animation: `authFloat ${p.dur} ${p.delay} ease-in-out infinite`,
+          pointerEvents: "none", userSelect: "none",
+        }}>{p.emoji}</div>
+      ))}
+
+      {/* ── Main scrollable area ── */}
+      <div style={{ position: "absolute", inset: 0, zIndex: 10, overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 20px" }}>
+
+        {/* ── Logo section ── */}
+        <div style={{ textAlign: "center", marginBottom: 28, animation: "authCardIn 0.7s ease-out both" }}>
+          <div style={{ position: "relative", display: "inline-block", marginBottom: 12 }}>
+            {/* Pulsing ring behind logo */}
+            <div style={{ position: "absolute", inset: -8, borderRadius: "50%", background: "rgba(255,255,255,0.15)", animation: "authPulseRing 2.5s ease-out infinite" }} />
+            <img
+              src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg"
+              alt="E-Connect"
+              style={{ width: 88, height: 88, borderRadius: 24, objectFit: "contain", boxShadow: "0 8px 32px rgba(0,0,0,0.35), 0 0 0 3px rgba(255,255,255,0.2)", position: "relative", zIndex: 1, display: "block" }}
+            />
+          </div>
+          <div style={{ color: "white", fontWeight: 900, fontSize: 28, letterSpacing: 1, textShadow: "0 2px 12px rgba(0,0,0,0.3)" }}>E-Connect</div>
+          <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 12, letterSpacing: 2, textTransform: "uppercase", marginTop: 2 }}>Social Commerce · Ghana</div>
         </div>
-        <div style={{ display: "flex", background: C.grey, borderRadius: 10, padding: 4, marginBottom: 24 }}>
-          {["Login", "Register"].map(t => (
-            <button key={t} style={{ flex: 1, background: (t === "Login") === isLogin ? C.white : "transparent", border: "none", borderRadius: 8, padding: "8px", fontWeight: 700, fontSize: 13, cursor: "pointer", color: (t === "Login") === isLogin ? C.primary : C.greyDark, fontFamily: FONT, boxShadow: (t === "Login") === isLogin ? "0 1px 4px rgba(0,0,0,0.1)" : "none" }}
-              onClick={() => { setIsLogin(t === "Login"); setError(""); }}>{t}</button>
-          ))}
+
+        {/* ── Glassmorphism card ── */}
+        <div style={{
+          width: "100%", maxWidth: 400,
+          background: "rgba(255,255,255,0.10)",
+          backdropFilter: "blur(24px) saturate(1.4)",
+          WebkitBackdropFilter: "blur(24px) saturate(1.4)",
+          borderRadius: 28,
+          border: "1.5px solid rgba(255,255,255,0.22)",
+          boxShadow: "0 24px 60px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.15)",
+          padding: "28px 24px 24px",
+          animation: "authCardIn 0.6s 0.1s ease-out both",
+        }}>
+
+          {/* ── Tab switcher (Pinterest-inspired bubble nav) ── */}
+          <div style={{ display: "flex", background: "rgba(0,0,0,0.2)", borderRadius: 20, padding: 4, marginBottom: 24, position: "relative" }}>
+            {/* Sliding pill indicator */}
+            <div style={{
+              position: "absolute", top: 4, bottom: 4,
+              width: "calc(50% - 4px)",
+              left: isLogin ? 4 : "calc(50%)",
+              background: "rgba(255,255,255,0.92)",
+              borderRadius: 16,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+              transition: "left 0.3s cubic-bezier(0.34,1.56,0.64,1)",
+              zIndex: 0,
+            }} />
+            {[{ label: "Login", active: isLogin }, { label: "Register", active: !isLogin }].map(({ label, active }) => (
+              <button key={label}
+                onClick={() => switchTab(label === "Login")}
+                style={{
+                  flex: 1, padding: "10px 0", border: "none", borderRadius: 16, cursor: "pointer",
+                  fontWeight: 800, fontSize: 13, fontFamily: FONT, position: "relative", zIndex: 1,
+                  background: "transparent",
+                  color: active ? "#0d7a70" : "rgba(255,255,255,0.7)",
+                  transition: "color 0.3s",
+                  animation: tabAnimating && active ? "authNavBubble 0.4s ease-out" : "none",
+                }}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* ── Form fields ── */}
+          <div style={{ opacity: tabAnimating ? 0 : 1, transition: "opacity 0.2s", display: "flex", flexDirection: "column", gap: 12 }}>
+            {error && (
+              <div style={{ background: "rgba(239,68,68,0.18)", border: "1px solid rgba(239,68,68,0.4)", color: "#fecaca", borderRadius: 12, padding: "10px 14px", fontSize: 13, fontWeight: 600 }}>
+                ⚠️ {error}
+              </div>
+            )}
+
+            {!isLogin && (
+              <>
+                <div style={{ position: "relative" }}>
+                  <span style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", fontSize: 16 }}>👤</span>
+                  <input className="auth-input" style={{ paddingLeft: 44 }} placeholder="Full name" value={form.name}
+                    onFocus={() => setFocusedField("name")} onBlur={() => setFocusedField(null)}
+                    onChange={e => setForm({ ...form, name: e.target.value })} />
+                </div>
+                <div style={{ position: "relative" }}>
+                  <span style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", fontSize: 16 }}>📞</span>
+                  <input className="auth-input" style={{ paddingLeft: 44 }} placeholder="+233..." value={form.phone}
+                    onFocus={() => setFocusedField("phone")} onBlur={() => setFocusedField(null)}
+                    onChange={e => setForm({ ...form, phone: e.target.value })} />
+                </div>
+              </>
+            )}
+
+            <div style={{ position: "relative" }}>
+              <span style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", fontSize: 16 }}>✉️</span>
+              <input className="auth-input" style={{ paddingLeft: 44 }} type="email" placeholder="Email address"
+                value={form.email} onFocus={() => setFocusedField("email")} onBlur={() => setFocusedField(null)}
+                onChange={e => setForm({ ...form, email: e.target.value })} />
+            </div>
+
+            <div style={{ position: "relative" }}>
+              <span style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", fontSize: 16 }}>🔒</span>
+              <input className="auth-input" style={{ paddingLeft: 44, paddingRight: 48 }}
+                type={showPassword ? "text" : "password"} placeholder="Password"
+                value={form.password} onFocus={() => setFocusedField("password")} onBlur={() => setFocusedField(null)}
+                onChange={e => setForm({ ...form, password: e.target.value })}
+                onKeyDown={e => e.key === "Enter" && handle()} />
+              <button onClick={() => setShowPassword(p => !p)}
+                style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 16, opacity: 0.7, color: "white" }}>
+                {showPassword ? "🙈" : "👁️"}
+              </button>
+            </div>
+
+            {isLogin && (
+              <div style={{ textAlign: "right" }}>
+                <button style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 12, cursor: "pointer", fontFamily: FONT, fontWeight: 600 }}>
+                  Forgot Password?
+                </button>
+              </div>
+            )}
+
+            {/* ── Main action button ── */}
+            <button className="auth-btn-main" style={{ marginTop: 4 }} onClick={handle} disabled={loading}>
+              {loading
+                ? <span style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                    <span style={{ width: 16, height: 16, border: "2.5px solid #0d7a70", borderTopColor: "transparent", borderRadius: "50%", display: "inline-block", animation: "authSpinner 0.7s linear infinite" }} />
+                    Please wait...
+                  </span>
+                : isLogin ? "Login" : "Create Account"}
+            </button>
+          </div>
         </div>
-        {error && <div style={S.alert("error")}>{error}</div>}
-        {!isLogin && (
-          <>
-            <label style={S.label}>Full Name</label>
-            <input style={{ ...S.input, marginBottom: 12 }} placeholder="Your full name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-            <label style={S.label}>Phone Number</label>
-            <input style={{ ...S.input, marginBottom: 12 }} placeholder="+233..." value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} />
-          </>
-        )}
-        <label style={S.label}>Email Address</label>
-        <input style={{ ...S.input, marginBottom: 12 }} placeholder="your@email.com" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
-        <label style={S.label}>Password</label>
-        <input style={{ ...S.input, marginBottom: 20 }} type="password" placeholder="Your password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
-        <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, opacity: loading ? 0.7 : 1 }} onClick={handle} disabled={loading}>
-          {loading ? "Please wait..." : isLogin ? "Login" : "Create Account"}
-        </button>
-        <p style={{ color: C.greyDark, fontSize: 12, textAlign: "center", marginTop: 16 }}>Register with your email to get started</p>
+
+        {/* ── Footer switch text ── */}
+        <div style={{ marginTop: 20, color: "rgba(255,255,255,0.65)", fontSize: 13, textAlign: "center", animation: "authCardIn 0.6s 0.2s ease-out both" }}>
+          {isLogin ? "Don't have an account? " : "Already have an account? "}
+          <button onClick={() => switchTab(!isLogin)}
+            style={{ background: "none", border: "none", color: "white", fontWeight: 800, cursor: "pointer", fontFamily: FONT, fontSize: 13, textDecoration: "underline" }}>
+            {isLogin ? "Sign Up" : "Login"}
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1506,7 +1714,7 @@ function LocationPage({ user, setPage, setSelectedProduct }) {
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 14, marginBottom: 80 }}>
             {filteredProducts.map(p => (
-              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setSelectedProductGroup(null); setPage("product"); }}>
                 <div style={{ height: 130, background: C.grey, overflow: "hidden" }}>
                   {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
                 </div>
@@ -2262,7 +2470,7 @@ function TrendingShoppableVideos({ ads, setViewingPublicProfile, setPage, setCha
 }
 
 // ── Premium Carousel ─────────────────────────────────────────
-function PremiumCarousel({ products, setSelectedProduct, setPage }) {
+function PremiumCarousel({ products, setSelectedProduct, setSelectedProductGroup, setPage }) {
   const [current, setCurrent] = useState(0);
   const [paused, setPaused] = useState(false);
   const timerRef = useRef(null);
@@ -2276,6 +2484,15 @@ function PremiumCarousel({ products, setSelectedProduct, setPage }) {
 
   if (!products.length) return null;
   const p = products[current];
+
+  // Group premium products by seller so swiping in ProductDetail
+  // shows that seller's other premium items too
+  const openProduct = () => {
+    const sellerGroup = products.filter(x => x.sellerId === p.sellerId);
+    setSelectedProduct(p);
+    setSelectedProductGroup(sellerGroup.length > 1 ? sellerGroup : null);
+    setPage("product");
+  };
 
   const handleTouchStart = (e) => { touchStartX.current = e.touches[0].clientX; setPaused(true); };
   const handleTouchEnd = (e) => {
@@ -2295,32 +2512,25 @@ function PremiumCarousel({ products, setSelectedProduct, setPage }) {
         <span style={{ fontSize: 11, color: C.greyDark }}>{products.length} featured</span>
       </div>
 
-      {/* Large banner like MJ's Cuisine */}
       <div style={{ borderRadius: 16, overflow: "hidden", cursor: "pointer", position: "relative", boxShadow: "0 8px 32px rgba(0,0,0,0.18)" }}
-        onClick={() => { setSelectedProduct(p); setPage("product"); }}
+        onClick={openProduct}
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}>
 
-        {/* Big image */}
         <div style={{ height: 220, background: C.grey, position: "relative", overflow: "hidden" }}>
           {p.image
             ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
             : <ProductPlaceholder name={p.name} category={p.category} />}
 
-          {/* Dark gradient overlay */}
           <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0.15) 0%, transparent 40%, rgba(0,0,0,0.75) 100%)" }} />
 
-          {/* Premium badge top left */}
           <div style={{ position: "absolute", top: 12, left: 12, background: "#FFD700", borderRadius: 20, padding: "5px 14px", fontSize: 11, fontWeight: 800, color: "#333", display: "flex", alignItems: "center", gap: 5, boxShadow: "0 2px 8px rgba(0,0,0,0.2)" }}>
             <PremiumBadge size={13} /> Premium ⭐
           </div>
-
-          {/* Trending label top right */}
           <div style={{ position: "absolute", top: 12, right: 12, background: "linear-gradient(135deg, #FF6B6B, #FF8E53)", borderRadius: 20, padding: "5px 12px", fontSize: 11, fontWeight: 800, color: "white" }}>
             🔥 Trending
           </div>
 
-          {/* Store + product info bottom */}
           <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "20px 16px 14px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
               <span style={{ color: "rgba(255,255,255,0.85)", fontSize: 13, fontWeight: 600 }}>{p.seller}</span>
@@ -2334,7 +2544,6 @@ function PremiumCarousel({ products, setSelectedProduct, setPage }) {
           </div>
         </div>
 
-        {/* Dot indicators */}
         {products.length > 1 && (
           <div style={{ background: "#111", padding: "8px 0", display: "flex", gap: 5, justifyContent: "center", alignItems: "center" }}>
             {products.map((_, i) => (
@@ -2662,7 +2871,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setSelectedPro
 
       {/* ── TIER 1: PREMIUM (Large Banner) ── */}
       {filtered.some(p => p.sellerPremium) && (
-        <PremiumCarousel products={filtered.filter(p => p.sellerPremium)} setSelectedProduct={setSelectedProduct} setPage={setPage} />
+        <PremiumCarousel products={filtered.filter(p => p.sellerPremium)} setSelectedProduct={setSelectedProduct} setSelectedProductGroup={setSelectedProductGroup} setPage={setPage} />
       )}
 
       {/* ── NEW: Trending Shoppable Videos (video ads only) ── */}
@@ -2678,7 +2887,7 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setSelectedPro
           <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8 }}>
             {filtered.filter(p => p.sellerVerified && !p.sellerPremium).map(p => (
               <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", minWidth: 200, flexShrink: 0, border: `1.5px solid #1DA1F2` }}
-                onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+                onClick={() => { setSelectedProduct(p); setSelectedProductGroup(null); setPage("product"); }}>
                 <div style={{ height: 130, overflow: "hidden", background: C.grey, position: "relative" }}>
                   {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
                   <div style={{ position: "absolute", top: 8, left: 8, background: "#1DA1F2", borderRadius: 20, padding: "3px 10px", fontSize: 10, fontWeight: 700, color: "white", display: "flex", alignItems: "center", gap: 4 }}>
@@ -4971,7 +5180,7 @@ function PublicProfile({ profileUser, currentUser, setPage, setSelectedProduct, 
           <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 12 }}>Products</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             {products.map(p => (
-              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+              <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setSelectedProductGroup(null); setPage("product"); }}>
                 <div style={{ height: 120, background: C.grey, overflow: "hidden" }}>
                   {p.image ? <img src={p.image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
                 </div>
@@ -5212,7 +5421,7 @@ function RecentlyViewedPage({ setPage, setSelectedProduct }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 80 }}>
           {items.map(p => (
             <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 4px", cursor: "pointer" }}
-              onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+              onClick={() => { setSelectedProduct(p); setSelectedProductGroup(null); setPage("product"); }}>
               <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", background: C.grey, flexShrink: 0 }}>
                 {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
               </div>
@@ -6303,7 +6512,7 @@ function Discover({ setPage, setSelectedProduct, user }) {
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 12 }}>
                 {filteredProducts.filter(p => p.premium).map(p => (
-                  <div key={"prem-" + p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", border: `2px solid #FFD700` }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+                  <div key={"prem-" + p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer", border: `2px solid #FFD700` }} onClick={() => { setSelectedProduct(p); setSelectedProductGroup(null); setPage("product"); }}>
                     <div style={{ height: 120, background: C.grey, overflow: "hidden", position: "relative" }}>
                       {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
                       <div style={{ position: "absolute", top: 6, right: 6, background: "#FFD700", borderRadius: "50%", width: 20, height: 20, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -6325,7 +6534,7 @@ function Discover({ setPage, setSelectedProduct, user }) {
       {tab === "products" && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
           {filteredProducts.map(p => (
-            <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setPage("product"); }}>
+            <div key={p.id} style={{ ...S.card, overflow: "hidden", cursor: "pointer" }} onClick={() => { setSelectedProduct(p); setSelectedProductGroup(null); setPage("product"); }}>
               <div style={{ height: 140, background: C.grey, overflow: "hidden" }}>
                 {p.image ? <img src={p.image} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ProductPlaceholder name={p.name} category={p.category} />}
               </div>
