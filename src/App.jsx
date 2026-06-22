@@ -98,181 +98,219 @@ const S = {
 // 3.2s  — Ghana-flag color wave sweeps across
 // 4.0s  — Whole screen zooms into centre (handled by auth state change)
 function SplashScreen() {
-  const [phase, setPhase] = useState(0); // 0=black, 1=glow, 2=logo, 3=tagline, 4=icons, 5=wave
+  const [phase, setPhase] = useState(0);
+  // Phase timeline (10 seconds total):
+  // 0 → 0.0s  white bg, product icons visible as watermark
+  // 1 → 0.6s  teal wave blob starts rising from bottom
+  // 2 → 2.2s  wave fills to center — logo fades in on teal
+  // 3 → 4.0s  wave fills full screen — "WELCOME" fades in
+  // 4 → 6.0s  "Buy · Sell · Connect" appears, tagline types
+  // 5 → 8.5s  white wave sweeps back up from bottom (exit)
+  // 6 → 10.0s fully teal — transition out
 
   useEffect(() => {
     const timers = [
-      setTimeout(() => setPhase(1), 300),
-      setTimeout(() => setPhase(2), 800),
-      setTimeout(() => setPhase(3), 1600),
-      setTimeout(() => setPhase(4), 2400),
-      setTimeout(() => setPhase(5), 3200),
+      setTimeout(() => setPhase(1), 600),
+      setTimeout(() => setPhase(2), 2200),
+      setTimeout(() => setPhase(3), 4000),
+      setTimeout(() => setPhase(4), 6000),
+      setTimeout(() => setPhase(5), 8500),
+      setTimeout(() => setPhase(6), 10000),
     ];
     return () => timers.forEach(clearTimeout);
   }, []);
 
   const TAGLINE = "Ghana's Social Commerce Platform";
   const [typedChars, setTypedChars] = useState(0);
-
   useEffect(() => {
-    if (phase < 3) return;
+    if (phase < 4) return;
     setTypedChars(0);
     let i = 0;
-    const t = setInterval(() => {
-      i++;
-      setTypedChars(i);
-      if (i >= TAGLINE.length) clearInterval(t);
-    }, 45);
-    return () => clearInterval(t);
+    const iv = setInterval(() => { i++; setTypedChars(i); if (i >= TAGLINE.length) clearInterval(iv); }, 38);
+    return () => clearInterval(iv);
   }, [phase]);
 
-  const ICONS = ["👗", "👟", "📱", "🛍️", "💍", "🎧", "👜", "⌚"];
+  // Background product icons as watermark pattern
+  const PATTERN_ICONS = ["👗","👟","📱","🛍️","💍","🎧","👜","⌚","💄","🛒","👒","🧴","📦","💼","🎀"];
 
   return (
-    <div style={{
-      position: "fixed", inset: 0, background: "#050a0a",
-      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-      overflow: "hidden", fontFamily: FONT,
-      transition: phase >= 5 ? "transform 0.8s ease-in" : "none",
-    }}>
+    <div style={{ position: "fixed", inset: 0, overflow: "hidden", fontFamily: FONT, background: "#f0faf9" }}>
       <style>{`
-        @keyframes glowPulse {
-          0%, 100% { opacity: 0.3; transform: scale(1); }
-          50% { opacity: 0.7; transform: scale(1.15); }
+        @keyframes splashWaveRise {
+          0%   { clip-path: ellipse(65% 0% at 50% 100%); }
+          30%  { clip-path: ellipse(75% 30% at 50% 100%); }
+          60%  { clip-path: ellipse(85% 60% at 50% 100%); }
+          100% { clip-path: ellipse(120% 100% at 50% 100%); }
         }
-        @keyframes floatUp {
-          0% { transform: translateY(120px) scale(0.6); opacity: 0; }
-          30% { opacity: 1; }
-          100% { transform: translateY(-80px) scale(1); opacity: 0; }
+        @keyframes splashWaveFill {
+          0%   { clip-path: ellipse(120% 100% at 50% 100%); }
+          100% { clip-path: ellipse(200% 200% at 50% 100%); }
         }
-        @keyframes waveSlide {
-          0% { transform: translateX(-110%); }
-          100% { transform: translateX(110%); }
+        @keyframes splashLogoIn {
+          0%   { opacity: 0; transform: scale(0.7) translateY(20px); }
+          60%  { transform: scale(1.05) translateY(-4px); }
+          100% { opacity: 1; transform: scale(1) translateY(0); }
         }
-        @keyframes logoIn {
-          0% { opacity: 0; transform: scale(0.6); filter: blur(8px); }
-          100% { opacity: 1; transform: scale(1); filter: blur(0px); }
+        @keyframes splashFadeIn {
+          0%   { opacity: 0; transform: translateY(16px); }
+          100% { opacity: 1; transform: translateY(0); }
         }
-        @keyframes ringPop {
-          0% { transform: scale(0.5); opacity: 0; }
-          60% { transform: scale(1.1); opacity: 1; }
-          100% { transform: scale(1); opacity: 1; }
+        @keyframes splashWelcome {
+          0%   { opacity: 0; letter-spacing: 12px; }
+          100% { opacity: 0.9; letter-spacing: 6px; }
         }
-        @keyframes shimmerGold {
-          0% { left: -60%; }
+        @keyframes splashIconFloat {
+          0%, 100% { transform: translateY(0px); }
+          50% { transform: translateY(-8px); }
+        }
+        @keyframes splashWhiteWipeUp {
+          0%   { clip-path: ellipse(65% 0% at 50% 100%); }
+          100% { clip-path: ellipse(200% 200% at 50% 100%); }
+        }
+        @keyframes splashShimmer {
+          0%   { left: -80%; }
           100% { left: 160%; }
         }
-        @keyframes cursorBlink {
-          0%, 100% { opacity: 1; } 50% { opacity: 0; }
+        @keyframes splashPulseRing {
+          0%   { transform: scale(0.9); opacity: 0.5; }
+          50%  { transform: scale(1.06); opacity: 0.8; }
+          100% { transform: scale(0.9); opacity: 0.5; }
+        }
+        @keyframes splashTypeTag {
+          from { opacity: 0; } to { opacity: 1; }
         }
       `}</style>
 
-      {/* ── Radial glow behind logo ── */}
+      {/* ── White background with subtle product icon watermark ── */}
+      <div style={{ position: "absolute", inset: 0, background: "#f0faf9", zIndex: 0 }}>
+        <div style={{ position: "absolute", inset: 0, display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 0, opacity: 0.07, userSelect: "none", pointerEvents: "none" }}>
+          {Array.from({ length: 50 }).map((_, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "center", height: 72, fontSize: 28,
+              animation: `splashIconFloat ${2.5 + (i % 5) * 0.4}s ${(i % 7) * 0.3}s ease-in-out infinite`
+            }}>{PATTERN_ICONS[i % PATTERN_ICONS.length]}</div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Rising teal wave ── */}
       {phase >= 1 && (
         <div style={{
-          position: "absolute", width: 340, height: 340, borderRadius: "50%",
-          background: `radial-gradient(circle, ${C.primary}35 0%, transparent 70%)`,
-          animation: "glowPulse 2s ease-in-out infinite",
+          position: "absolute", inset: 0, zIndex: 2,
+          background: `linear-gradient(160deg, ${C.primary} 0%, #0a8c80 50%, #0d7a70 100%)`,
+          animation: phase === 1 ? "splashWaveRise 1.6s cubic-bezier(0.4,0,0.2,1) forwards" :
+                     phase >= 2 && phase < 5 ? "splashWaveFill 1.4s cubic-bezier(0.4,0,0.2,1) forwards" : "none",
+          clipPath: phase >= 3 ? "none" : undefined,
+        }}>
+          {/* Shimmer highlight on the teal */}
+          <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
+            <div style={{
+              position: "absolute", top: "30%", bottom: 0, width: "45%",
+              background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.08), transparent)",
+              animation: "splashShimmer 3s ease-in-out 1s infinite",
+            }} />
+          </div>
+        </div>
+      )}
+
+      {/* ── White exit-wave sweeping up (phase 5) ── */}
+      {phase >= 5 && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 8, background: "#f0faf9",
+          animation: "splashWhiteWipeUp 1.5s cubic-bezier(0.4,0,0.2,1) forwards",
         }} />
       )}
 
-      {/* ── Outer decorative rings ── */}
-      {phase >= 1 && (
-        <>
-          <div style={{ position: "absolute", width: 280, height: 280, borderRadius: "50%", border: `1px solid ${C.primary}18`, animation: "ringPop 0.6s ease-out forwards" }} />
-          <div style={{ position: "absolute", width: 360, height: 360, borderRadius: "50%", border: `1px solid ${C.primary}10`, animation: "ringPop 0.8s ease-out forwards" }} />
-          <div style={{ position: "absolute", width: 440, height: 440, borderRadius: "50%", border: `1px solid ${C.primary}08`, animation: "ringPop 1s ease-out forwards" }} />
-        </>
-      )}
+      {/* ── Logo + Text layer (above teal wave) ── */}
+      {phase >= 2 && phase < 6 && (
+        <div style={{
+          position: "absolute", inset: 0, zIndex: 5,
+          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 0,
+        }}>
 
-      {/* ── Logo ── */}
-      {phase >= 2 && (
-        <div style={{ zIndex: 10, display: "flex", flexDirection: "column", alignItems: "center", gap: 22 }}>
-          <div style={{ position: "relative", animation: "logoIn 0.7s cubic-bezier(0.34,1.56,0.64,1) forwards" }}>
-            <img
-              src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg"
-              alt="E-Connect"
-              style={{
-                width: 130, height: 130, borderRadius: 30,
-                boxShadow: `0 0 60px ${C.primary}60, 0 0 120px ${C.primary}25, 0 20px 40px rgba(0,0,0,0.5)`,
-                border: `1px solid ${C.primary}40`,
-              }}
-            />
-            {/* Gold shimmer sweep over logo */}
+          {/* Pulsing ring around logo */}
+          <div style={{
+            width: 150, height: 150, borderRadius: "50%",
+            background: "rgba(255,255,255,0.08)",
+            animation: "splashPulseRing 2.4s ease-in-out infinite",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            marginBottom: 20,
+          }}>
+            {/* Logo */}
             <div style={{
-              position: "absolute", inset: 0, borderRadius: 30, overflow: "hidden", pointerEvents: "none"
+              position: "relative",
+              animation: "splashLogoIn 0.9s cubic-bezier(0.34,1.56,0.64,1) forwards",
             }}>
-              <div style={{
-                position: "absolute", top: 0, bottom: 0, width: "60%",
-                background: "linear-gradient(90deg, transparent, rgba(255,220,80,0.25), transparent)",
-                animation: "shimmerGold 2s ease-in-out 1s infinite",
-              }} />
+              <img
+                src="https://res.cloudinary.com/dxmmsq0gq/image/upload/WhatsApp_Image_2026-06-09_at_9.31.32_PM_ficnea.jpg"
+                alt="E-Connect"
+                style={{
+                  width: 120, height: 120, borderRadius: 28, display: "block",
+                  boxShadow: "0 12px 48px rgba(0,0,0,0.25), 0 0 0 3px rgba(255,255,255,0.3)",
+                }}
+              />
+              {/* Gold shimmer sweep */}
+              <div style={{ position: "absolute", inset: 0, borderRadius: 28, overflow: "hidden", pointerEvents: "none" }}>
+                <div style={{
+                  position: "absolute", top: 0, bottom: 0, width: "55%",
+                  background: "linear-gradient(90deg, transparent, rgba(255,235,80,0.3), transparent)",
+                  animation: "splashShimmer 2.5s ease-in-out 0.5s infinite",
+                }} />
+              </div>
             </div>
           </div>
 
           {/* Brand name */}
-          <div style={{ textAlign: "center" }}>
-            <div style={{ color: "white", fontWeight: 900, fontSize: 32, letterSpacing: 2, textShadow: `0 0 20px ${C.primary}80` }}>
+          <div style={{ textAlign: "center", animation: "splashFadeIn 0.8s 0.3s ease-out both" }}>
+            <div style={{ color: "white", fontWeight: 900, fontSize: 36, letterSpacing: 1.5, textShadow: "0 2px 16px rgba(0,0,0,0.2)" }}>
               E-Connect
             </div>
-            <div style={{ color: `${C.primary}`, fontWeight: 500, fontSize: 11, letterSpacing: 4, textTransform: "uppercase", marginTop: 4, opacity: 0.8 }}>
+            <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11, letterSpacing: 5, textTransform: "uppercase", marginTop: 3 }}>
               Easy Connect
             </div>
           </div>
 
-          {/* Tagline typewriter */}
+          {/* WELCOME */}
           {phase >= 3 && (
-            <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 13, letterSpacing: 0.5, minHeight: 20, textAlign: "center" }}>
+            <div style={{
+              marginTop: 36, color: "rgba(255,255,255,0.85)", fontSize: 22, fontWeight: 700,
+              letterSpacing: 6, textTransform: "uppercase",
+              animation: "splashWelcome 1.2s ease-out forwards",
+            }}>
+              WELCOME
+            </div>
+          )}
+
+          {/* Tagline typewriter */}
+          {phase >= 4 && (
+            <div style={{
+              marginTop: 14, color: "rgba(255,255,255,0.65)", fontSize: 13, textAlign: "center",
+              minHeight: 22, maxWidth: 280, lineHeight: 1.5,
+              animation: "splashFadeIn 0.5s ease-out both",
+            }}>
               {TAGLINE.slice(0, typedChars)}
-              <span style={{ animation: "cursorBlink 0.8s infinite", color: C.primary, fontWeight: 700 }}>|</span>
+              <span style={{ opacity: typedChars < TAGLINE.length ? 1 : 0, color: "rgba(255,255,255,0.8)" }}>|</span>
             </div>
           )}
         </div>
       )}
 
-      {/* ── Floating market icons drifting up ── */}
-      {phase >= 4 && ICONS.map((icon, i) => (
-        <div key={i} style={{
-          position: "absolute",
-          left: `${10 + i * 11}%`,
-          bottom: 0,
-          fontSize: 22,
-          animation: `floatUp ${1.2 + i * 0.15}s ease-out ${i * 0.12}s forwards`,
-          zIndex: 5,
-          pointerEvents: "none",
+      {/* ── Bottom bar ── */}
+      {phase >= 3 && phase < 5 && (
+        <div style={{
+          position: "absolute", bottom: 52, left: 0, right: 0, zIndex: 6, textAlign: "center",
+          animation: "splashFadeIn 1s 0.5s ease-out both",
         }}>
-          {icon}
-        </div>
-      ))}
-
-      {/* ── Ghana flag colour wave ── */}
-      {phase >= 5 && (
-        <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden", zIndex: 8 }}>
-          {[
-            { color: "#006B3F", delay: "0s" },     // Green
-            { color: "#FCD116", delay: "0.15s" },  // Gold
-            { color: "#CE1126", delay: "0.3s" },   // Red
-          ].map((stripe, i) => (
-            <div key={i} style={{
-              position: "absolute",
-              top: 0, bottom: 0,
-              width: "55%",
-              background: `${stripe.color}18`,
-              animation: `waveSlide 1s ease-in-out ${stripe.delay} forwards`,
-            }} />
-          ))}
+          {/* Ghana flag stripe */}
+          <div style={{ display: "flex", justifyContent: "center", gap: 6, marginBottom: 10 }}>
+            {["#CE1126","#FCD116","#006B3F"].map((c, i) => (
+              <div key={i} style={{ width: 28, height: 4, borderRadius: 2, background: c, opacity: 0.85 }} />
+            ))}
+          </div>
+          <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10, letterSpacing: 3, textTransform: "uppercase" }}>
+            BUY · SELL · CONNECT
+          </div>
         </div>
       )}
-
-      {/* ── Bottom tagline bar ── */}
-      <div style={{
-        position: "absolute", bottom: 48, textAlign: "center",
-        opacity: phase >= 2 ? 1 : 0, transition: "opacity 1s",
-      }}>
-        <div style={{ color: "rgba(255,255,255,0.25)", fontSize: 11, letterSpacing: 2 }}>
-          BUY · SELL · CONNECT
-        </div>
-      </div>
     </div>
   );
 }
