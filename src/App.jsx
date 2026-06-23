@@ -2996,12 +2996,14 @@ function Home({ user, cart, setCart, setPage, setSelectedProduct, setSelectedPro
 
 // ── Product Detail ─────────────────────────────────────────────
 function ProductDetail({ product, productGroup, setCart, setPage, user, startChat }) {
-  // ── Active group index: which product in the group is being viewed ──
-  // When a single product is opened (no group), we treat it as a group of 1.
   const group = (productGroup && productGroup.length > 1) ? productGroup : [product];
   const initialIdx = productGroup ? productGroup.findIndex(p => p.id === product.id) : 0;
 
-  const [activeIdx, setActiveIdx] = useState(Math.max(0, initialIdx));
+  // ── Dual-index state: which PRODUCT in the group, and which IMAGE within it ──
+  const [activeIdx, setActiveIdx] = useState(Math.max(0, initialIdx));       // group index
+  const [currentImageIndex, setCurrentImageIndex] = useState(0);             // image-within-product index
+  const [selectedVariantIndex, setSelectedVariantIndex] = useState(0);       // mirrors currentImageIndex, tracked separately
+
   const [review, setReview] = useState("");
   const [rating, setRating] = useState(5);
   const [reviews, setReviews] = useState([]);
@@ -3009,59 +3011,80 @@ function ProductDetail({ product, productGroup, setCart, setPage, user, startCha
   const [sellerData, setSellerData] = useState(null);
   const pageTopRef = useRef(null);
 
-  // The product that all detail text, price, and actions are bound to
   const activeProduct = group[activeIdx] || group[0];
+
+  // ── Images for the active product ──
+  const productImages = (activeProduct.images && activeProduct.images.length > 0)
+    ? activeProduct.images
+    : (activeProduct.image ? [activeProduct.image] : []);
+
+  // ── Variant labels: use seller-provided labels, or auto-generate from image index ──
+  // For a grouped view, the "variants" are the products themselves.
+  // For a single-product view, variants are the images within that product.
+  const imageVariantLabels = productImages.map((_, i) =>
+    activeProduct.variantLabels?.[i] || `Variant ${i + 1}`
+  );
+
+  // ── Sync helper: updates all three indices together ──
+  const selectImageAndVariant = (i) => {
+    setCurrentImageIndex(i);
+    setSelectedVariantIndex(i);
+  };
+
+  // Reset image index whenever the active group product changes
+  useEffect(() => {
+    setCurrentImageIndex(0);
+    setSelectedVariantIndex(0);
+  }, [activeIdx]);
 
   const selectProduct = (i) => {
     setActiveIdx(i);
-    // Scroll to top so the image change is immediately visible
     pageTopRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  useEffect(() => {
-    if (!activeProduct?.id) return;
-    const q = query(collection(db, "reviews"), where("productId", "==", activeProduct.id));
-    getDocs(q).then(snap => setReviews(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(() => {});
-  }, [activeProduct?.id]);
-
-  useEffect(() => {
-    if (!activeProduct?.id || !activeProduct?.sellerId) return;
-    addDoc(collection(db, "productViews"), {
-      productId: activeProduct.id, sellerId: activeProduct.sellerId, viewedAt: serverTimestamp(),
-    }).catch(() => {});
-    getDoc(doc(db, "users", activeProduct.sellerId)).then(d => {
-      if (d.exists()) setSellerData(d.data());
-    }).catch(() => {});
-    try {
-      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
-      const updated = [activeProduct.id, ...rv.filter(id => id !== activeProduct.id)].slice(0, 20);
-      localStorage.setItem("econnect-recently-viewed", JSON.stringify(updated));
-    } catch (e) {}
-  }, [activeProduct?.id]);
-
-  // Reset to initial product if the product prop changes (navigating from elsewhere)
   useEffect(() => {
     const idx = productGroup ? productGroup.findIndex(p => p.id === product?.id) : 0;
     setActiveIdx(Math.max(0, idx));
   }, [product?.id]);
 
+  useEffect(() => {
+    if (!activeProduct?.id) return;
+    getDocs(query(collection(db, "reviews"), where("productId", "==", activeProduct.id)))
+      .then(snap => setReviews(snap.docs.map(d => ({ id: d.id, ...d.data() })))).catch(() => {});
+  }, [activeProduct?.id]);
+
+  useEffect(() => {
+    if (!activeProduct?.id || !activeProduct?.sellerId) return;
+    addDoc(collection(db, "productViews"), { productId: activeProduct.id, sellerId: activeProduct.sellerId, viewedAt: serverTimestamp() }).catch(() => {});
+    getDoc(doc(db, "users", activeProduct.sellerId)).then(d => { if (d.exists()) setSellerData(d.data()); }).catch(() => {});
+    try {
+      const rv = JSON.parse(localStorage.getItem("econnect-recently-viewed") || "[]");
+      localStorage.setItem("econnect-recently-viewed", JSON.stringify([activeProduct.id, ...rv.filter(id => id !== activeProduct.id)].slice(0, 20)));
+    } catch (e) {}
+  }, [activeProduct?.id]);
+
   if (!activeProduct) return null;
 
-  // ── Images: use the active product's images array, or its single image ──
-  const productImages = (activeProduct.images && activeProduct.images.length > 0)
-    ? activeProduct.images
-    : (activeProduct.image ? [activeProduct.image] : []);
+  const shopStatus = sellerData ? getShopStatus({ ...activeProduct, ...sellerData }) : null;
 
+  // ── addToCart captures BOTH the group-product index AND the image/variant index ──
   const addToCart = () => {
     const cartItem = {
       ...activeProduct,
       qty: 1,
-      selectedImage: productImages[0] || activeProduct.image,
-      selectedVariant: activeProduct.name,
+      currentImageIndex,
+      selectedVariantIndex,
+      selectedImageIndex: currentImageIndex,
+      selectedImage: productImages[currentImageIndex] || activeProduct.image,
+      selectedVariant: productImages.length > 1
+        ? imageVariantLabels[selectedVariantIndex]
+        : activeProduct.name,
     };
     setCart(prev => {
-      const ex = prev.find(i => i.id === activeProduct.id);
-      if (ex) return prev.map(i => i.id === activeProduct.id ? { ...i, qty: i.qty + 1 } : i);
+      // Separate cart lines per product+variant combination
+      const key = `${activeProduct.id}-${selectedVariantIndex}`;
+      const ex = prev.find(i => `${i.id}-${i.selectedVariantIndex ?? 0}` === key);
+      if (ex) return prev.map(i => `${i.id}-${i.selectedVariantIndex ?? 0}` === key ? { ...i, qty: i.qty + 1 } : i);
       return [...prev, cartItem];
     });
     setPage("cart");
@@ -3070,21 +3093,19 @@ function ProductDetail({ product, productGroup, setCart, setPage, user, startCha
   const submitReview = async () => {
     if (!review.trim()) return;
     await addDoc(collection(db, "reviews"), { productId: activeProduct.id, text: review, rating, createdAt: serverTimestamp() });
-    setSubmitted(true);
-    setReview("");
+    setSubmitted(true); setReview("");
   };
-
-  const shopStatus = sellerData ? getShopStatus({ ...activeProduct, ...sellerData }) : null;
 
   return (
     <div style={S.page} ref={pageTopRef}>
       <button style={{ ...S.btn("grey"), marginBottom: 16, color: C.text }} onClick={() => setPage("home")}>← Back</button>
       <div style={S.card}>
 
-        {/* ── Main image: carousel if the active product has multiple images ── */}
+        {/* ── Main image carousel (swipeable, manual-only) ── */}
         <div style={{ height: 280, overflow: "hidden", borderRadius: "14px 14px 0 0", background: C.grey, position: "relative" }}>
           {productImages.length > 1
-            ? <ProductImageCarousel images={productImages} height={280} autoRotate={false} />
+            ? <ProductImageCarousel images={productImages} height={280} autoRotate={false}
+                activeIndex={currentImageIndex} onIndexChange={selectImageAndVariant} />
             : productImages[0]
               ? <img src={productImages[0]} alt={activeProduct.name} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               : <ProductPlaceholder name={activeProduct.name} category={activeProduct.category} />}
@@ -3095,7 +3116,21 @@ function ProductDetail({ product, productGroup, setCart, setPage, user, startCha
           )}
         </div>
 
-        {/* ── Thumbnail row: one thumb per PRODUCT in the group ── */}
+        {/* ── Image thumbnail row (within the active product) ── */}
+        {productImages.length > 1 && (
+          <div style={{ display: "flex", gap: 8, padding: "12px 14px 0", overflowX: "auto" }}>
+            {productImages.map((img, i) => (
+              <div key={i} onClick={() => selectImageAndVariant(i)}
+                style={{ width: 52, height: 52, borderRadius: 10, overflow: "hidden", flexShrink: 0, cursor: "pointer",
+                  border: i === currentImageIndex ? `2.5px solid ${C.primary}` : `2px solid transparent`,
+                  opacity: i === currentImageIndex ? 1 : 0.55, transition: "all 0.2s" }}>
+                <img src={img} alt={`Photo ${i + 1}`} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── Group product thumbnail row (only when multiple products in group) ── */}
         {group.length > 1 && (
           <div style={{ display: "flex", gap: 8, padding: "12px 14px 0", overflowX: "auto" }}>
             {group.map((p, i) => {
@@ -3103,9 +3138,10 @@ function ProductDetail({ product, productGroup, setCart, setPage, user, startCha
               return (
                 <div key={p.id} onClick={() => selectProduct(i)}
                   style={{ flexShrink: 0, cursor: "pointer", textAlign: "center", width: 60 }}>
-                  <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden", border: i === activeIdx ? `2.5px solid ${C.primary}` : `2px solid transparent`, opacity: i === activeIdx ? 1 : 0.55, transition: "all 0.2s", marginBottom: 4 }}>
-                    {thumb
-                      ? <img src={thumb} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  <div style={{ width: 56, height: 56, borderRadius: 10, overflow: "hidden",
+                    border: i === activeIdx ? `2.5px solid ${C.primary}` : `2px solid transparent`,
+                    opacity: i === activeIdx ? 1 : 0.55, transition: "all 0.2s", marginBottom: 4 }}>
+                    {thumb ? <img src={thumb} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                       : <ProductPlaceholder name={p.name} category={p.category} />}
                   </div>
                   <div style={{ fontSize: 9, fontWeight: i === activeIdx ? 800 : 500, color: i === activeIdx ? C.primary : C.greyDark, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -3118,7 +3154,7 @@ function ProductDetail({ product, productGroup, setCart, setPage, user, startCha
         )}
 
         <div style={{ padding: 20 }}>
-          {/* ── All text dynamically bound to activeProduct ── */}
+          {/* ── Dynamic product info ── */}
           <div style={{ fontSize: 12, color: C.greyDark, marginBottom: 4 }}>{activeProduct.category}</div>
           <h2 style={{ fontWeight: 800, fontSize: 22, margin: "0 0 4px" }}>{activeProduct.name}</h2>
           <div style={{ color: C.greyDark, fontSize: 13, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
@@ -3147,37 +3183,70 @@ function ProductDetail({ product, productGroup, setCart, setPage, user, startCha
             )}
           </div>
 
-          {/* ── Select Item chips: show product names, replace "Option N" labels ── */}
-          {group.length > 1 && (
+          {/* ══ VARIANT SELECTION ══════════════════════════════════════════
+              Case A: Single product with multiple images → image-based variants
+              Case B: Group of products → product-name chips
+              Both appear right above Add to Cart per the spec.           */}
+
+          {/* Case A — single product, multiple photos = choose which variant/colour */}
+          {group.length === 1 && productImages.length > 1 && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: C.greyDark, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                Select Item: <span style={{ color: C.primary }}>{activeProduct.name}</span>
+                Variant: <span style={{ color: C.primary, textTransform: "none" }}>{imageVariantLabels[selectedVariantIndex]}</span>
               </div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {group.map((p, i) => (
-                  <button key={p.id} onClick={() => selectProduct(i)}
+                {productImages.map((img, i) => (
+                  <button key={i} onClick={() => selectImageAndVariant(i)}
                     style={{
-                      padding: "8px 14px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer",
-                      border: i === activeIdx ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
-                      background: i === activeIdx ? `${C.primary}12` : C.white,
-                      color: i === activeIdx ? C.primary : C.text,
-                      display: "flex", alignItems: "center", gap: 6,
+                      padding: "6px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700,
+                      cursor: "pointer", display: "flex", alignItems: "center", gap: 7,
+                      border: i === selectedVariantIndex ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+                      background: i === selectedVariantIndex ? `${C.primary}12` : C.white,
+                      color: i === selectedVariantIndex ? C.primary : C.text,
+                      transition: "all 0.18s",
                     }}>
-                    {((p.images && p.images[0]) || p.image) && (
-                      <img src={(p.images && p.images[0]) || p.image} alt={p.name}
-                        style={{ width: 20, height: 20, borderRadius: 4, objectFit: "cover", flexShrink: 0 }} />
-                    )}
-                    {p.name.length > 14 ? p.name.slice(0, 14) + "…" : p.name}
-                    {i === activeIdx && <span style={{ fontSize: 10 }}>✓</span>}
+                    <img src={img} alt={imageVariantLabels[i]}
+                      style={{ width: 22, height: 22, borderRadius: 5, objectFit: "cover", flexShrink: 0 }} />
+                    {imageVariantLabels[i]}
+                    {i === selectedVariantIndex && <span style={{ fontSize: 11 }}>✓</span>}
                   </button>
                 ))}
               </div>
             </div>
           )}
 
-          {/* ── Add to Cart: always adds the currently-viewed product ── */}
+          {/* Case B — group of products = select which product */}
+          {group.length > 1 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.greyDark, marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                Select Item: <span style={{ color: C.primary, textTransform: "none" }}>{activeProduct.name}</span>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {group.map((p, i) => (
+                  <button key={p.id} onClick={() => selectProduct(i)}
+                    style={{
+                      padding: "6px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700,
+                      cursor: "pointer", display: "flex", alignItems: "center", gap: 7,
+                      border: i === activeIdx ? `2px solid ${C.primary}` : `1px solid ${C.border}`,
+                      background: i === activeIdx ? `${C.primary}12` : C.white,
+                      color: i === activeIdx ? C.primary : C.text,
+                      transition: "all 0.18s",
+                    }}>
+                    {((p.images && p.images[0]) || p.image) && (
+                      <img src={(p.images && p.images[0]) || p.image} alt={p.name}
+                        style={{ width: 22, height: 22, borderRadius: 5, objectFit: "cover", flexShrink: 0 }} />
+                    )}
+                    {p.name.length > 16 ? p.name.slice(0, 16) + "…" : p.name}
+                    {i === activeIdx && <span style={{ fontSize: 11 }}>✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Add to Cart (always bound to exact active product + variant) ── */}
           <button style={{ ...S.btn(), width: "100%", padding: 14, fontSize: 15, marginBottom: 10 }} onClick={addToCart}>
-            Add to Cart{group.length > 1 ? ` — ${activeProduct.name}` : ""}
+            Add to Cart{group.length > 1 ? ` — ${activeProduct.name}` : productImages.length > 1 ? ` — ${imageVariantLabels[selectedVariantIndex]}` : ""}
           </button>
           {activeProduct.sellerId && activeProduct.sellerId !== user?.uid && (
             <button style={{ ...S.btn("outline"), width: "100%", padding: 14, fontSize: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
