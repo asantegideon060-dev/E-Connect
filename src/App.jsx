@@ -1271,29 +1271,99 @@ function StoriesBar({ user, setPage, setViewingPublicProfile }) {
             <input id="storyFileInput" type="file" accept="image/*,video/*" style={{ display: "none" }} onChange={handleFileSelect} />
           </div>
 
-          {/* One ring per user — green if unread, grey if all viewed */}
+          {/* One tray entry per user — SVG segmented ring + latest-story thumbnail */}
           {storyGroups.map(group => {
             const isViewed = viewedUsers.has(group.userId);
-            const ringColor = isViewed
-              ? "rgba(180,180,180,0.6)"
-              : `linear-gradient(135deg, ${C.primary}, ${C.accent})`;
-            const hasMultiple = group.items.length > 1;
+            const totalSegments = group.items.length;
+            const ringColor = isViewed ? "#d1d5db" : "#00a884";
+
+            // ── DYNAMIC THUMBNAIL: show the latest story's media, not the profile photo ──
+            // Uses the most recent story item's imageUrl (works for both image and video stories).
+            // Falls back to profile photo, then generic avatar.
+            const latestStory = group.items[group.items.length - 1];
+            const thumbSrc = latestStory?.imageUrl || latestStory?.mediaUrl || group.userPhoto || null;
+
+            // ── SVG segmented ring geometry ──
+            const SIZE = 62;          // outer diameter
+            const STROKE = 2.8;       // ring stroke width
+            const GAP = totalSegments > 1 ? 3 : 0;  // gap between segments (degrees)
+            const CENTER = SIZE / 2;
+            const RADIUS = CENTER - STROKE / 2 - 1;
+            const CIRC = 2 * Math.PI * RADIUS;
+            const segAngle = 360 / totalSegments;
+            const gapAngle = totalSegments > 1 ? GAP : 0;
+            const segFraction = (segAngle - gapAngle) / 360;
+            const dashLen = CIRC * segFraction;
+            const dashGap = CIRC * (gapAngle / 360);
+
             return (
               <div key={group.userId} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, cursor: "pointer", minWidth: 64 }}
                 onClick={() => openGroup(group)}>
-                <div style={{ width: 62, height: 62, borderRadius: "50%", background: ringColor, padding: isViewed ? 2 : 2.5, position: "relative" }}>
-                  <div style={{ width: "100%", height: "100%", borderRadius: "50%", overflow: "hidden", background: C.grey, border: "2px solid white" }}>
-                    {group.userPhoto
-                      ? <img src={group.userPhoto} alt={group.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👤</div>}
+
+                {/* Container for SVG ring + circular thumbnail */}
+                <div style={{ position: "relative", width: SIZE, height: SIZE }}>
+
+                  {/* ── Circular cropped thumbnail (latest story media) ── */}
+                  <div style={{
+                    position: "absolute",
+                    inset: STROKE + 2,  // inset by ring stroke + small gap = the white border effect
+                    borderRadius: "50%",
+                    overflow: "hidden",
+                    background: C.grey,
+                    border: `2px solid white`,
+                  }}>
+                    {thumbSrc
+                      ? <img
+                          className="status-thumb-image"
+                          src={thumbSrc}
+                          alt={group.userName}
+                          style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                        />
+                      : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>👤</div>}
                   </div>
-                  {/* Story count badge */}
-                  {hasMultiple && (
-                    <div style={{ position: "absolute", bottom: 0, right: 0, background: C.primary, border: "1.5px solid white", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "white", fontWeight: 800 }}>
-                      {group.items.length}
+
+                  {/* ── SVG segmented ring, rendered on top ── */}
+                  <svg
+                    width={SIZE} height={SIZE}
+                    style={{ position: "absolute", inset: 0, transform: "rotate(-90deg)" }}
+                    viewBox={`0 0 ${SIZE} ${SIZE}`}
+                  >
+                    {Array.from({ length: totalSegments }).map((_, i) => {
+                      // Each segment starts where the previous ended + gap
+                      const startAngle = i * segAngle + gapAngle / 2;
+                      const startFrac = startAngle / 360;
+                      // strokeDashoffset shifts the start of the dash pattern around the circle
+                      const offset = CIRC - CIRC * startFrac;
+                      return (
+                        <circle
+                          key={i}
+                          cx={CENTER} cy={CENTER} r={RADIUS}
+                          fill="none"
+                          stroke={ringColor}
+                          strokeWidth={STROKE}
+                          strokeDasharray={`${dashLen} ${CIRC - dashLen}`}
+                          strokeDashoffset={offset}
+                          strokeLinecap="round"
+                          style={{ transition: "stroke 0.4s ease" }}
+                        />
+                      );
+                    })}
+                  </svg>
+
+                  {/* Story count badge (only if multiple stories) */}
+                  {totalSegments > 1 && (
+                    <div style={{
+                      position: "absolute", bottom: 0, right: 0,
+                      background: ringColor, border: "1.5px solid white",
+                      borderRadius: "50%", width: 17, height: 17,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: 8, color: "white", fontWeight: 900, zIndex: 2,
+                    }}>
+                      {totalSegments}
                     </div>
                   )}
                 </div>
+
                 <span style={{ fontSize: 10, color: isViewed ? C.greyDark : C.text, fontWeight: isViewed ? 500 : 700, textAlign: "center", maxWidth: 62, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {group.userId === user?.uid ? "You" : group.userName}
                 </span>
