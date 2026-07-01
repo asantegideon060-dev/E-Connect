@@ -1871,9 +1871,23 @@ function OrderTrackingPage({ user, startChat }) {
     // Customer view: orders placed BY this user
     getDocs(query(collection(db, "orders"), where("userId", "==", user.uid), orderBy("createdAt", "desc")))
       .then(snap => { setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); });
-    // Seller view: orders addressed TO this seller (by sellerId field set at order creation)
-    getDocs(query(collection(db, "orders"), where("sellerId", "==", user.uid), orderBy("createdAt", "desc")))
-      .then(snap => setSellerOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
+    // Seller view: orders addressed TO this seller
+    // Note: no orderBy here to avoid requiring a composite Firestore index.
+    // We sort client-side instead.
+    getDocs(query(collection(db, "orders"), where("sellerId", "==", user.uid)))
+      .then(snap => {
+        const sorted = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+        setSellerOrders(sorted);
+      }).catch(() => {
+        // Fallback: if index missing, try without filter and filter client-side
+        getDocs(collection(db, "orders")).then(snap => {
+          const mine = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+            .filter(o => o.sellerId === user.uid || o.items?.some(i => i.sellerId === user.uid))
+            .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+          setSellerOrders(mine);
+        });
+      });
   }, [user]);
 
   const updateOrderStatus = async (orderId, newStatus, order) => {
@@ -2118,11 +2132,11 @@ function NotificationsPage({ user, setPage, setChatSeller, setSelectedProduct, s
     if (!user) return;
     const q = query(
       collection(db, "notifications"),
-      where("toUserId", "==", user.uid),
-      orderBy("createdAt", "desc")
+      where("toUserId", "==", user.uid)
     );
     const unsub = onSnapshot(q, snap => {
-      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
       // Deduplicate: collapse consecutive notifications with the same type+message+fromUserId
       // (keeps the most recent, but counts how many were collapsed)
       const deduped = [];
@@ -5811,7 +5825,7 @@ function Profile({ user, setPage, setUser, theme, setTheme, setViewingPublicProf
   const fetchMyContent = async () => {
     if (!user) return;
     const [reelsSnap, adsSnap] = await Promise.all([
-      getDocs(query(collection(db, "reels"), where("userId", "==", user.uid), orderBy("createdAt", "desc"))),
+      getDocs(query(collection(db, "reels"), where("userId", "==", user.uid))),
       getDocs(query(collection(db, "ads"), where("userId", "==", user.uid))),
     ]);
     setMyReels(reelsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(r => !r.deleted));
@@ -6925,7 +6939,7 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     const mountedAt = Date.now();
-    const q = query(collection(db, "notifications"), where("toUserId", "==", user.uid), orderBy("createdAt", "desc"), limit(20));
+    const q = query(collection(db, "notifications"), where("toUserId", "==", user.uid), limit(20));
     const unsub = onSnapshot(q, snap => {
       snap.docChanges().forEach(change => {
         if (change.type !== "added") return;
