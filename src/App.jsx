@@ -1868,21 +1868,26 @@ function OrderTrackingPage({ user, startChat }) {
   useEffect(() => {
     if (!user) return;
     setLoading(true);
+    // Customer view: orders placed BY this user
     getDocs(query(collection(db, "orders"), where("userId", "==", user.uid), orderBy("createdAt", "desc")))
       .then(snap => { setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setLoading(false); });
-    getDocs(query(collection(db, "orders")))
-      .then(snap => {
-        const mine = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(o =>
-          o.items?.some(i => i.sellerId === user.uid)
-        );
-        setSellerOrders(mine);
-      });
+    // Seller view: orders addressed TO this seller (by sellerId field set at order creation)
+    getDocs(query(collection(db, "orders"), where("sellerId", "==", user.uid), orderBy("createdAt", "desc")))
+      .then(snap => setSellerOrders(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
   }, [user]);
 
-  const updateOrderStatus = async (orderId, newStatus, buyerId) => {
+  const updateOrderStatus = async (orderId, newStatus, order) => {
     await setDoc(doc(db, "orders", orderId), { status: newStatus, updatedAt: serverTimestamp() }, { merge: true });
     const statusInfo = getStatus(newStatus);
-    await sendNotification(buyerId, "order", `Your order status has been updated to: ${statusInfo.label} ${statusInfo.icon}`, "E-Connect", { orderId });
+    // Notify the CUSTOMER (buyer) — not the admin
+    const buyerId = order?.userId;
+    if (buyerId) {
+      await sendNotification(buyerId, "order",
+        `Your order status has been updated to: ${statusInfo.label} ${statusInfo.icon}`,
+        order?.sellerName || "Seller",
+        { orderId }
+      );
+    }
     setSellerOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     setOrders(prev => prev.map(o => o.id === orderId ? { ...o, status: newStatus } : o));
     if (selectedOrder?.id === orderId) setSelectedOrder(prev => ({ ...prev, status: newStatus }));
@@ -2006,7 +2011,7 @@ function OrderTrackingPage({ user, startChat }) {
                     <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                       {ORDER_STATUSES.map(s => (
                         <button key={s.key} style={{ background: order.status === s.key ? s.color : C.grey, color: order.status === s.key ? "white" : C.text, border: "none", borderRadius: 20, padding: "6px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}
-                          onClick={() => updateOrderStatus(order.id, s.key, order.userId)}>
+                          onClick={() => updateOrderStatus(order.id, s.key, order)}>
                           {s.icon} {s.label}
                         </button>
                       ))}
@@ -3377,13 +3382,50 @@ function Cart({ cart, setCart, setPage, user }) {
   const handleOrder = async () => {
     if (!form.name || !form.phone) return;
     setLoading(true);
-    await addDoc(collection(db, "orders"), {
-      items: cart, total, customerName: form.name, customerPhone: form.phone,
-      address: form.address, delivery: form.delivery, userId: user?.uid || "guest",
-      status: "pending", paymentMethod: "momo",
-      createdAt: serverTimestamp()
-    });
-    setDone(true); setCart([]);
+    try {
+      // Group cart items by seller so each seller gets their own order doc
+      const sellerMap = new Map();
+      cart.forEach(item => {
+        const sid = item.sellerId || "unknown";
+        if (!sellerMap.has(sid)) sellerMap.set(sid, []);
+        sellerMap.get(sid).push(item);
+      });
+
+      for (const [sellerId, items] of sellerMap) {
+        const sellerTotal = items.reduce((s, i) => s + i.price * i.qty, 0);
+        const orderRef = await addDoc(collection(db, "orders"), {
+          items, total: sellerTotal,
+          sellerId,                          // ← links order to the shop owner
+          sellerName: items[0]?.seller || "",
+          customerName: form.name,
+          customerPhone: form.phone,
+          customerAddress: form.address,
+          address: form.address,
+          delivery: form.delivery,
+          userId: user?.uid || "guest",
+          customerDisplayName: user?.displayName || form.name,
+          status: "pending",
+          paymentMethod: "momo",
+          createdAt: serverTimestamp(),
+        });
+
+        // Notify the SELLER directly — not the admin
+        if (sellerId && sellerId !== "unknown") {
+          await sendNotification(
+            sellerId, "order",
+            `🛒 New order from ${form.name}! GH₵${sellerTotal} · ${form.delivery} · ${items.map(i => i.name).join(", ")}`,
+            form.name,
+            { orderId: orderRef.id, fromUserId: user?.uid || null }
+          );
+        }
+      }
+
+      setDone(true);
+      setCart([]);
+    } catch (err) {
+      console.error("Order failed:", err);
+      alert("Failed to place order. Please try again.");
+    }
     setLoading(false);
     setTimeout(() => { setDone(false); setCheckout(false); setPage("orders"); }, 3000);
   };
@@ -3993,21 +4035,27 @@ function ReelsPage({ user, setPage, setViewingUser }) {
   const [likesReelId, setLikesReelId] = useState(null);
   const [followProcessing, setFollowProcessing] = useState({});
   const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
 
   const touchStartY = useRef(0);
   const videoRefs = useRef({});
   const overlayOpenRef = useRef(false);
   const REEL_CATEGORIES = ["Entertainment", "Fashion", "Food", "Tech", "Sports", "Beauty", "Business", "Music", "Comedy"];
 
-  // Track on-screen keyboard so the Comments sheet can shrink and avoid
-  // overflow/clipping when the keyboard pushes content up.
+  // Track keyboard height precisely so the panel can shift up by exactly
+  // that amount, keeping the input row always visible above the keyboard.
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   useEffect(() => {
     if (!window.visualViewport) return;
     const vv = window.visualViewport;
-    const baseHeight = window.innerHeight;
-    const onResize = () => setKeyboardOpen(vv.height < baseHeight * 0.75);
+    const onResize = () => {
+      const kbHeight = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      setKeyboardHeight(kbHeight);
+      setKeyboardOpen(kbHeight > 80);
+    };
     vv.addEventListener("resize", onResize);
-    return () => vv.removeEventListener("resize", onResize);
+    vv.addEventListener("scroll", onResize);
+    return () => { vv.removeEventListener("resize", onResize); vv.removeEventListener("scroll", onResize); };
   }, []);
 
   const fetchReels = async () => {
@@ -4315,18 +4363,23 @@ function ReelsPage({ user, setPage, setViewingUser }) {
           onClick={() => setMuted(!muted)}>{muted ? "🔇" : "🔊"}</button>
       </div>
 
-      {/* Bottom Info */}
-      <div style={{ position: "absolute", bottom: 90, left: 16, right: 80 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, cursor: "pointer" }}
-          onClick={() => setViewingUser && setViewingUser({ uid: reel.userId, displayName: reel.userName, photoURL: reel.userPhoto })}>
+      {/* Bottom Info — username taps to profile */}
+      <div style={{ position: "absolute", bottom: 90, left: 16, right: 80, zIndex: 15 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8, cursor: "pointer", pointerEvents: "all" }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (reel.userId && setViewingUser) {
+              setViewingUser({ uid: reel.userId, displayName: reel.userName, photoURL: reel.userPhoto });
+            }
+          }}>
           <div style={{ width: 36, height: 36, borderRadius: "50%", overflow: "hidden", border: "2px solid white", background: "#333", flexShrink: 0 }}>
             {reel.userPhoto
               ? <img src={reel.userPhoto} alt={reel.userName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
               : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: 16 }}>👤</div>}
           </div>
           <div>
-            <div style={{ color: "white", fontWeight: 800, fontSize: 15 }}>@{reel.userName}</div>
-            <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>{reel.createdAt?.toDate ? reel.createdAt.toDate().toLocaleDateString("en-GB", { day: "numeric", month: "short" }) : ""}</div>
+            <div style={{ color: "white", fontWeight: 800, fontSize: 15, textDecoration: "underline", textDecorationColor: "rgba(255,255,255,0.4)" }}>@{reel.userName}</div>
+            <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>Tap to view profile</div>
           </div>
         </div>
         <div style={{ color: "rgba(255,255,255,0.9)", fontSize: 13, lineHeight: 1.5 }}>{reel.description}</div>
@@ -4347,12 +4400,25 @@ function ReelsPage({ user, setPage, setViewingUser }) {
         </div>
       )}
 
-      {/* Comments Panel */}
+      {/* Comments Panel — fixed so it lifts correctly above the keyboard */}
       {showComments && (
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, background: "rgba(15,15,15,0.97)", borderRadius: "20px 20px 0 0", height: keyboardOpen ? "85vh" : "65vh", maxHeight: keyboardOpen ? "85vh" : "65vh", zIndex: 20, display: "flex", flexDirection: "column", transition: "height 0.2s" }}
+        <div style={{
+          position: "fixed",
+          left: 0, right: 0,
+          bottom: keyboardHeight,       // lifts exactly above the keyboard
+          height: keyboardOpen ? "55vh" : "65vh",  // shorter when keyboard is up so content stays visible
+          background: "rgba(15,15,15,0.98)",
+          borderRadius: keyboardOpen ? "14px 14px 0 0" : "20px 20px 0 0",
+          zIndex: 200,
+          display: "flex", flexDirection: "column",
+          transition: "bottom 0.22s ease, height 0.22s ease",
+          boxShadow: "0 -4px 32px rgba(0,0,0,0.5)",
+        }}
           onTouchStart={e => { e.stopPropagation(); overlayOpenRef.current = true; }}
-          onTouchEnd={e => { e.stopPropagation(); }}
+          onTouchEnd={e => e.stopPropagation()}
           onTouchMove={e => e.stopPropagation()}
+          onPointerDown={e => e.stopPropagation()}
+          onPointerUp={e => e.stopPropagation()}
           onMouseDown={e => e.stopPropagation()}
           onMouseUp={e => e.stopPropagation()}
           onClick={e => e.stopPropagation()}>
@@ -4387,7 +4453,9 @@ function ReelsPage({ user, setPage, setViewingUser }) {
               </div>
             ))}
           </div>
-          <div style={{ padding: "12px 14px", borderTop: "1px solid rgba(255,255,255,0.1)", display: "flex", gap: 10, alignItems: "center", background: "#111" }}>
+          <div style={{ padding: "12px 14px", borderTop: "1px solid rgba(255,255,255,0.1)", display: "flex", gap: 10, alignItems: "center", background: "#111", touchAction: "none" }}
+            onTouchStart={e => e.stopPropagation()}
+            onTouchEnd={e => e.stopPropagation()}>
             <div style={{ width: 34, height: 34, borderRadius: "50%", overflow: "hidden", background: "#333", flexShrink: 0 }}>
               {user?.photoURL ? <img src={user.photoURL} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: "white" }}>👤</div>}
             </div>
@@ -6610,7 +6678,7 @@ function Admin() {
 }
 
 // ── Discover ───────────────────────────────────────────────────
-function Discover({ setPage, setSelectedProduct, user }) {
+function Discover({ setPage, setSelectedProduct, setSelectedProductGroup, user }) {
   const [products, setProducts] = useState([]);
   const [sellers, setSellers] = useState([]);
   const [search, setSearch] = useState("");
@@ -6916,7 +6984,7 @@ export default function App() {
   const renderPage = () => {
     switch (page) {
       case "home": return <Home user={user} cart={cart} setCart={setCart} setPage={setPage} setSelectedProduct={setSelectedProduct} setSelectedProductGroup={setSelectedProductGroup} setViewingPublicProfile={goToPublicProfile} setChatSeller={setChatSeller} />;
-      case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} user={user} />;
+      case "discover": return <Discover setPage={setPage} setSelectedProduct={setSelectedProduct} setSelectedProductGroup={setSelectedProductGroup} user={user} />;
       case "product": return <ProductDetail product={selectedProduct} productGroup={selectedProductGroup} setCart={setCart} setPage={setPage} user={user} startChat={(seller) => { setChatSeller(seller); setPage("messages"); }} />;
       case "cart": return <Cart cart={cart} setCart={setCart} setPage={setPage} user={user} />;
       case "reels": return <ReelsErrorBoundary><ReelsPage user={user} setPage={setPage} setViewingUser={goToPublicProfile} /></ReelsErrorBoundary>;
